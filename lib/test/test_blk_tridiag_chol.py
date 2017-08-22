@@ -24,6 +24,7 @@ lowermat = np.bmat([[npF,   npZ,   npZ,   npZ],
                     [npZ,   npZ,   npB.T, npG]])
 cholmat = lowermat.dot(lowermat.T)
 
+
 def test_compute_chol():
     L = np.linalg.cholesky(npA)
     C = npZ
@@ -35,19 +36,20 @@ def test_compute_chol():
     LL = np.linalg.cholesky(D)
 
     LLL, CCC = blk._compute_chol([tf.constant(L), tf.constant(C)],
-                             [tf.constant(A), tf.constant(B)])
+                                 [tf.constant(A), tf.constant(B)])
 
     with tf.Session() as sess:
         npt.assert_allclose(LLL.eval(), LL)
         npt.assert_allclose(CCC.eval(), CC, rtol=1e-5)
 
+
 def test_blk_tridiag_chol():
-    alist = [cholmat[i:(i+2),i:(i+2)] for i in range(0, cholmat.shape[0], 2)]
-    blist = [cholmat[(i+2):(i+4),i:(i+2)].T for i in range(0, cholmat.shape[0] - 2, 2)]
+    alist = [cholmat[i:(i+2), i:(i+2)] for i in range(0, cholmat.shape[0], 2)]
+    blist = [cholmat[(i+2):(i+4), i:(i+2)].T
+             for i in range(0, cholmat.shape[0] - 2, 2)]
 
     theDiag = tf.constant(np.array(alist))
     theOffDiag = tf.constant(np.array(blist))
-
     R = blk.blk_tridiag_chol(theDiag, theOffDiag)
 
     with tf.Session() as sess:
@@ -72,11 +74,36 @@ def test_blk_chol_inv():
 
     # now solve C * x = b by inverting one Cholesky factor of C at a time
     ib = blk.blk_chol_inv(theDiag, theOffDiag, b)
-    tfx = blk.blk_chol_inv(theDiag, theOffDiag, ib, lower=False, transpose=True)
+    tfx = blk.blk_chol_inv(theDiag, theOffDiag, ib, lower=False,
+                           transpose=True)
 
     with tf.Session() as sess:
         ib_val = ib.eval()
         tfx_val = tfx.eval()
-
     npt.assert_allclose(ib_val.flatten(), xl, atol=1e-5, rtol=1e-4)
     npt.assert_allclose(tfx_val.flatten(), x, atol=1e-5, rtol=3e-3)
+
+
+def test_blk_chol_mtimes():
+    xx = np.array([1, 2, 3, 4, 5, 6, 7, 8])
+    bl = lowermat.T.dot(xx)
+    b = cholmat.dot(xx)
+
+    alist = [npF, npC, npE, npG]
+    blist = [npB.T, npD.T, npB.T]
+    theDiag = tf.constant(np.array(alist))
+    theOffDiag = tf.constant(np.array(blist))
+    x = tf.expand_dims(tf.constant(npb), -1)
+
+    ix = blk.blk_chol_mtimes(theDiag, theOffDiag, x, lower=False,
+                             transpose=True)
+
+    tfb = blk.blk_chol_mtimes(theDiag, theOffDiag, ix)
+    with tf.Session() as sess:
+        ix_val = ix.eval()
+        tfb_val = tfb.eval()
+
+    npt.assert_allclose(ix_val.flatten(), np.array(bl).flatten(),
+                        atol=1e-5, rtol=1e-4)
+    npt.assert_allclose(tfb_val.flatten(), np.array(b).flatten(),
+                        atol=1e-5, rtol=1e-4)
