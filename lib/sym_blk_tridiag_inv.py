@@ -2,7 +2,7 @@ import tensorflow as tf
 
 
 def compute_sym_blk_tridiag(AA, BB, iia=None, iib=None):
-    '''
+    """
     Symbolically compute block tridiagonal terms of the inverse of a
     *symmetric* block tridiagonal matrix.
 
@@ -31,7 +31,7 @@ def compute_sym_blk_tridiag(AA, BB, iia=None, iib=None):
     currently implemented.
 
     (c) Evan Archer, 2015
-    '''
+    """
     BB = -BB
 
     # Set up some parameters
@@ -103,7 +103,7 @@ def compute_sym_blk_tridiag(AA, BB, iia=None, iib=None):
 
 
 def compute_sym_blk_tridiag_inv_b(S, D, b):
-    '''
+    """
     Symbolically solve Cx = b for x, where C is assumed to be *symmetric* block
     matrix.
 
@@ -121,7 +121,7 @@ def compute_sym_blk_tridiag_inv_b(S, D, b):
    Matrices"
 
     (c) Evan Archer, 2015
-    '''
+    """
     print(b)
     nT = tf.shape(b)[0]
     d = tf.shape(b)[1]

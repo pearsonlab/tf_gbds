@@ -25,24 +25,6 @@ lowermat = np.bmat([[npF,   npZ,   npZ,   npZ],
 cholmat = lowermat.dot(lowermat.T)
 
 
-def test_compute_chol():
-    L = np.linalg.cholesky(npA)
-    C = npZ
-    A = npA
-    B = npB
-
-    CC = np.linalg.solve(L, B).T
-    D = A - CC.dot(CC.T)
-    LL = np.linalg.cholesky(D)
-
-    LLL, CCC = blk._compute_chol([tf.constant(L), tf.constant(C)],
-                                 [tf.constant(A), tf.constant(B)])
-
-    with tf.Session() as sess:
-        npt.assert_allclose(LLL.eval(), LL)
-        npt.assert_allclose(CCC.eval(), CC, rtol=1e-5)
-
-
 def test_blk_tridiag_chol():
     alist = [cholmat[i:(i+2), i:(i+2)] for i in range(0, cholmat.shape[0], 2)]
     blist = [cholmat[(i+2):(i+4), i:(i+2)].T

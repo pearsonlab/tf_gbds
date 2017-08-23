@@ -7,22 +7,6 @@ here: https://github.com/earcher/vilds/blob/master/code/lib/blk_tridiag_chol_too
 import tensorflow as tf
 
 
-def _compute_chol(acc,  inputs):
-    """
-    Compute the Cholesky decomposition of a symmetric block tridiagonal matrix.
-    acc is the output of the previous loop
-    inputs is a tuple of inputs
-    """
-    L, _ = acc
-    A, B = inputs
-
-    C = tf.transpose(tf.matrix_solve(L, B))
-    D = A - tf.matmul(C, tf.transpose(C))
-    L = tf.cholesky(D)
-
-    return [L, C]
-
-
 def blk_tridiag_chol(A, B):
     """
     Compute the cholesky decomposition of a symmetric, positive definite
@@ -39,16 +23,31 @@ def blk_tridiag_chol(A, B):
         * R[1] - [T-1 x n x n] tensor of (lower) 1st block off-diagonal
         elements of Cholesky
     """
+    def _step(acc,  inputs):
+        """
+        Compute the Cholesky decomposition of a symmetric block tridiagonal
+        matrix.
+        acc is the output of the previous loop
+        inputs is a tuple of inputs
+        """
+        LL, _ = acc
+        AA, BB = inputs
+
+        CC = tf.transpose(tf.matrix_solve(LL, BB))
+        DD = AA - tf.matmul(CC, tf.transpose(CC))
+        LL = tf.cholesky(DD)
+        return [LL, CC]
+
     L = tf.cholesky(A[0])
     C = tf.zeros_like(B[0])
 
-    R = tf.scan(_compute_chol, [A[1:], B], initializer=[L, C])
+    R = tf.scan(_step, [A[1:], B], initializer=[L, C])
     R[0] = tf.concat([tf.expand_dims(L, 0), R[0]], 0)
     return R
 
 
 def blk_chol_inv(A, B, b, lower=True, transpose=False):
-    '''
+    """
     Solve the equation Cx = b for x, where C is assumed to be a
     block-bi-diagonal matrix ( where only the first (lower or upper)
     off-diagonal block is nonzero.
@@ -66,7 +65,7 @@ def blk_chol_inv(A, B, b, lower=True, transpose=False):
           the problem C^T x = b with a representation of C.)
     Outputs:
     x - solution of Cx = b
-    '''
+    """
     def _step(acc, inputs):
         x = acc
         A, B, b = inputs
@@ -86,8 +85,9 @@ def blk_chol_inv(A, B, b, lower=True, transpose=False):
         X = tf.concat([tf.expand_dims(xN, 0), X], 0)[::-1]
     return X
 
+
 def blk_chol_mtimes(A, B, x, lower=True, transpose=False):
-    '''
+    """
     Evaluate Cx = b, where C is assumed to be a
     block-bi-diagonal matrix ( where only the first (lower or upper)
     off-diagonal block is nonzero.
@@ -104,7 +104,7 @@ def blk_chol_mtimes(A, B, x, lower=True, transpose=False):
           the problem C^T x = b with a representation of C.)
     Outputs:
     b - result of Cx = b
-    '''
+    """
     def _lower_step(acc, input):
         A, B, x1, x2 = input
         return tf.matmul(A, x1) + tf.matmul(B, x2)
