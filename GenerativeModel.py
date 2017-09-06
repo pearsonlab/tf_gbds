@@ -164,7 +164,6 @@ class LDS(GenerativeModel):
 
         # Call the neural network output a rate, basically to keep things
         # consistent with the PLDS class
-        # self.rate = layers.get_output(self.NN_XtoY, inputs=self.Xsamp)
         self.rate = self.NN_XtoY.output
 
     def sampleX(self, _N):
@@ -199,7 +198,7 @@ class LDS(GenerativeModel):
 
     def getParams(self):
         return [self.A] + [self.QChol] + [self.Q0Chol] + [self.RChol]
-        + [self.x0] + tf.contrib.keras.layers.variables(self.NN_XtoY)
+        + [self.x0] + self.NN_XtoY.variables
 
     def evaluateLogDensity(self, X, Y):
         # Create a new graph which computes self.rate after replacing
