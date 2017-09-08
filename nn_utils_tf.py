@@ -41,17 +41,17 @@ def get_network(batch_size, input_dim, output_dim, hidden_dim, num_layers,
     PKbias_layers = []
     NN = Sequential()
     #K.set_learning_phase(0)
-    NN.add(InputLayer(input_shape=input_dim, batch_size=batch_size))
+    NN.add(InputLayer(batch_input_shape=(batch_size, input_dim), name="Input"))
     if filt_size is not None:  # first layer convolution
         # rearrange dims for convolution
-        NN.add(Permute(dims=(2, 1)))
+        NN.add(Permute(dims=(2, 1), name="Permute1"))
         # custom pad so that no timepoint gets input from future
-        NN.add(ZeroPadding1D(padding=(filt_size - 1, 0)))
+        NN.add(ZeroPadding1D(padding=(filt_size - 1, 0), name="Padding"))
         # Perform convolution (no pad, no filter flip (for interpretability))
         NN.add(Conv1D(filters=hidden_dim, kernel_size=filt_size, 
-            padding='valid', activation=hidden_nonlin))
+            padding='valid', activation=hidden_nonlin, name="Conv"))
         # rearrange dims for dense layers
-        NN.add(Permute(dims=(2, 1)))
+        NN.add(Permute(dims=(2, 1), name="Permute2"))
     for i in range(num_layers):
         if is_shooter and add_pklayers:
             if row_sparse:
@@ -69,13 +69,15 @@ def get_network(batch_size, input_dim, output_dim, hidden_dim, num_layers,
 
         if batchnorm and i < num_layers - 1 and i != 0:
             NN.add(Dense(layer_dim, 
-                kernel_initializer=tf.random_normal_initializer(stddev=init_std)))
-            NN.add(BatchNormalization())  # set initializer for hyperparams
-            NN.add(Activation(activation=layer_nonlin))
+                   kernel_initializer=tf.random_normal_initializer(stddev=init_std), 
+                   name="Dense%s" % i))
+            NN.add(BatchNormalization(name="BatchNorm%s" % i))  # set initializer for hyperparams
+            NN.add(Activation(activation=layer_nonlin, name="Activation%s" % i))
         else:
             NN.add(Dense(layer_dim, 
-                activation=layer_nonlin,
-                kernel_initializer=tf.random_normal_initializer(stddev=init_std)))
+                   kernel_initializer=tf.random_normal_initializer(stddev=init_std), 
+                   name="Dense%s" % i))
+            NN.add(Activation(activation=layer_nonlin, name="Activation%s" % i))
     if add_pklayers:
         return NN, PKbias_layers
     else:
