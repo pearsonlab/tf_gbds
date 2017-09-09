@@ -80,7 +80,7 @@ class SmoothingLDSTimeSeries(RecognitionModel):
                  nrng=None):
         """
         :parameters:
-            - Input : 'y' theano.tensor.var.TensorVariable (n_input)
+            - Input : 'y' tensorflow placeholder (n_input)
                 Observation matrix based on which we produce q(x)
             - RecognitionParams : (dictionary)
                 Dictionary of timeseries-specific parameters. Contents:
@@ -229,3 +229,39 @@ class SmoothingLDSTimeSeries(RecognitionModel):
         out['Mu'] = np.asarray(self.Mu.eval({self.Input: yy}),
                                dtype=np.float32)
         return out
+
+
+class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
+    """
+    SmoothingLDSTimeSeries that uses past observations in addition to current
+    to evaluate the latent.
+    """
+    def __init__(self, RecognitionParams, Input, xDim, yDim, ntrials,
+                 srng=None, nrng=None):
+        """
+        :parameters:
+            - Input : 'y' tensorflow placeholder (n_input)
+                Observation matrix based on which we produce q(x)
+            - RecognitionParams : (dictionary)
+                Dictionary of timeseries-specific parameters. Contents:
+                     * A -
+                     * NN paramers...
+                     * others... TODO
+            - xDim, yDim, zDim : (integers) dimension of
+                latent space (x) and observation (y)
+        """
+        self.ntrials = np.cast[np.float32](ntrials)
+        if 'lag' in RecognitionParams:
+            self.lag = RecognitionParams['lag']
+        else:
+            self.lag = 5
+
+        # manipulate input to include past observations (up to lag) in each row
+        for i in range(1, self.lag + 1):
+            lagged = tf.concat([tf.reshape(Input[0, :yDim], [1, yDim]),
+                               Input[:-1, -yDim:]], 0)
+            Input = tf.concat([Input, lagged], 1)
+        self.Input1 = Input
+        super(SmoothingPastLDSTimeSeries, self).__init__(RecognitionParams,
+                                                         Input, xDim, yDim,
+                                                         srng, nrng)

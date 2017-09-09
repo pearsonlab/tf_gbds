@@ -79,3 +79,56 @@ def test_smoothing_LDS_time_series_recognition():
 
         npt.assert_allclose(output['Vsm'], V.eval(), atol=1e-5, rtol=1e-4)
         npt.assert_allclose(output['VVsm'], VV.eval(), atol=1e-5, rtol=1e-4)
+
+
+def test_smoothing_past_LDS_time_series_recognition():
+    xDim = 2
+    yDim = 5
+    lag = 5
+    Data = np.reshape(np.arange(0, 50), [10, 5])
+
+    Inputt = Data
+    for i in range(1, lag + 1):
+        lagged = np.concatenate([Inputt[0, :yDim].reshape((1, yDim)),
+                                Inputt[:-1, -yDim:]], 0)
+        Inputt = np.concatenate([Inputt, lagged], 1)
+
+    Input = tf.placeholder(tf.float32, shape=(None, yDim), name='Input')
+
+    mu_nn = tf.contrib.keras.layers.Input((None, yDim * lag + yDim))
+    mu_nn_d = (tf.contrib.keras.layers.Dense(xDim, activation="linear",
+               kernel_initializer=tf.orthogonal_initializer())(mu_nn))
+    NN_Mu = tf.contrib.keras.models.Model(inputs=mu_nn, outputs=mu_nn_d)
+
+    lambda_nn = tf.contrib.keras.layers.Input((None, yDim * lag + yDim))
+    lambda_nn_d = (tf.contrib.keras.layers.Dense(xDim*xDim,
+                   activation="linear",
+                   kernel_initializer=tf.orthogonal_initializer())(lambda_nn))
+    NN_Lambda = tf.contrib.keras.models.Model(inputs=lambda_nn,
+                                              outputs=lambda_nn_d)
+
+    lambdax_nn = tf.contrib.keras.layers.Input((None, yDim * lag + yDim))
+    lambdax_nn_d = (tf.contrib.keras.layers.Dense(xDim*xDim,
+                    activation="linear",
+                    kernel_initializer=tf.orthogonal_initializer())
+                    (lambdax_nn))
+    NN_LambdaX = tf.contrib.keras.models.Model(inputs=lambdax_nn,
+                                               outputs=lambdax_nn_d)
+
+    A = .5*np.diag(np.ones(xDim))
+    QinvChol = np.eye(xDim)
+    Q0invChol = np.eye(xDim)
+
+    RecognitionParams = ({'NN_Mu': {'network': NN_Mu},
+                          'NN_Lambda': {'network': NN_Lambda},
+                          'NN_LambdaX': {'network': NN_LambdaX},
+                          'A': A,
+                          'QinvChol': QinvChol,
+                          'Q0invChol': Q0invChol})
+
+    rm = R.SmoothingPastLDSTimeSeries(RecognitionParams, Input, 2, 5, 100)
+    with tf.Session() as sess:
+        sess.run(tf.initialize_all_variables())
+        Input1 = rm.Input1.eval(feed_dict={Input: Data})
+
+        npt.assert_allclose(Inputt, Input1, atol=1e-5, rtol=1e-4)
