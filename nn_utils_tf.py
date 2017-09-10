@@ -25,7 +25,7 @@ rewrite in tensorflow
 import tensorflow as tf
 #from keras import backend as K
 from keras.models import Sequential
-from keras.layers import Activation, BatchNormalization, Conv1D, Dense, InputLayer, Permute, ZeroPadding1D
+from keras.layers import Activation, BatchNormalization, Conv1D, Dense, InputLayer, ZeroPadding1D
 from layers import PKBiasLayer, PKRowBiasLayer
 
 
@@ -41,17 +41,17 @@ def get_network(batch_size, input_dim, output_dim, hidden_dim, num_layers,
     PKbias_layers = []
     NN = Sequential()
     #K.set_learning_phase(0)
-    NN.add(InputLayer(batch_input_shape=(batch_size, input_dim), name="Input"))
+    NN.add(InputLayer(input_shape=(batch_size, input_dim), name="Input"))
     if filt_size is not None:  # first layer convolution
         # rearrange dims for convolution
-        NN.add(Permute(dims=(2, 1), name="Permute1"))
+        #NN.add(Permute(dims=(2, 1), name="Permute1"))
         # custom pad so that no timepoint gets input from future
         NN.add(ZeroPadding1D(padding=(filt_size - 1, 0), name="Padding"))
         # Perform convolution (no pad, no filter flip (for interpretability))
         NN.add(Conv1D(filters=hidden_dim, kernel_size=filt_size, 
             padding='valid', activation=hidden_nonlin, name="Conv"))
         # rearrange dims for dense layers
-        NN.add(Permute(dims=(2, 1), name="Permute2"))
+        #NN.add(Permute(dims=(2, 1), name="Permute2"))
     for i in range(num_layers):
         if is_shooter and add_pklayers:
             if row_sparse:
