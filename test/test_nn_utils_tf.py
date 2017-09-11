@@ -1,6 +1,6 @@
 import tensorflow as tf
 from tensorflow.contrib.keras import models
-from nn_utils_tf import get_network
+from tf_gbds.nn_utils_tf import get_network
 
 
 batch_size = 256
