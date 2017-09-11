@@ -136,8 +136,7 @@ class LDS(GenerativeModel):
         else:
             # Define a neural network that maps the latent state into the
             # output
-            gen_nn = tf.contrib.keras.layers.Input((None, xDim),
-                                                   tensor=self.Xsamp)
+            gen_nn = tf.contrib.keras.layers.Input((None, xDim))
             gen_nn_d = (tf.contrib.keras.layers.Dense(yDim,
                         activation="linear",
                         kernel_initializer=tf.orthogonal_initializer())
@@ -164,7 +163,7 @@ class LDS(GenerativeModel):
 
         # Call the neural network output a rate, basically to keep things
         # consistent with the PLDS class
-        self.rate = self.NN_XtoY.output
+        self.rate = self.NN_XtoY(self.Xsamp)
 
     def sampleX(self, _N):
         _x0 = np.asarray(self.x0.eval(), dtype=np.float32)
