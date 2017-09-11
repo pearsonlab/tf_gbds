@@ -4,6 +4,9 @@ import tensorflow as tf
 import numpy.testing as npt
 import tf_gbds.GenerativeModel as G
 
+np.random.seed(1234)
+tf.set_random_seed(1234)
+
 
 def test_generative_model():
     gm = G.GenerativeModel(None, 5, 10)
