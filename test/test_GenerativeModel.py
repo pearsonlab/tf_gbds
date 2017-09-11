@@ -74,4 +74,4 @@ def test_LDS_forward():
         npt.assert_allclose(resY, resy)
         npt.assert_allclose(resX, resx)
         assert logpdf < 0
-        npt.assert_approx_equal(logpdf, lpdf)
+        npt.assert_allclose(logpdf, lpdf, atol=1e-4, rtol=1e-4)
