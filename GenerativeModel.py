@@ -184,8 +184,8 @@ class LDS(GenerativeModel):
     def sampleY(self):
         """ Return a symbolic sample from the generative model. """
         return self.rate + tf.matmul(tf.random_normal((tf.shape(self.Xsamp)[0],
-                                     self.yDim)), tf.transpose(tf.diag
-                                                               (self.RChol)))
+                                     self.yDim), seed=1234),
+                                     tf.transpose(tf.diag(self.RChol)))
 
     def sampleXY(self, _N):
         """ Return numpy samples from the generative model. """

@@ -4,6 +4,9 @@ import tensorflow as tf
 import numpy.testing as npt
 import tf_gbds.GenerativeModel as G
 
+np.random.seed(1234)
+tf.set_random_seed(1234)
+
 
 def test_generative_model():
     gm = G.GenerativeModel(None, 5, 10)
@@ -71,4 +74,4 @@ def test_LDS_forward():
         npt.assert_allclose(resY, resy)
         npt.assert_allclose(resX, resx)
         assert logpdf < 0
-        npt.assert_approx_equal(logpdf, lpdf)
+        npt.assert_allclose(logpdf, lpdf, atol=1e-4, rtol=1e-4)
