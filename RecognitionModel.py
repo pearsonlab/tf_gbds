@@ -296,7 +296,7 @@ class SmoothingTimeSeries(RecognitionModel):
 
 #        print RecognitionParams
 
-        self.Tt = Input.shape[0]
+        self.Tt = tf.shape(Input)[0]
         # These variables allow us to control whether the network is
         # deterministic or not (if we use Dropout)
         self.mu_train = RecognitionParams['NN_Mu']['is_train']
@@ -311,8 +311,8 @@ class SmoothingTimeSeries(RecognitionModel):
         lambda_net_out = self.NN_Lambda(self.Input)
 
         self.NN_LambdaX = RecognitionParams['NN_LambdaX']['network']
-        lambdaX_net_out = self.NN_LambdaX(tf.concat([self.Input[:-1],
-                                                     self.Input[1:]], axis=1))
+        lambdaX_net_in = tf.concat([self.Input[:-1], self.Input[1:]], axis=1)
+        lambdaX_net_out = self.NN_LambdaX(lambdaX_net_in)
 
         # Lambda will automatically be of size [T x xDim x xDim]
         self.AAChol = (tf.reshape(lambda_net_out, [self.Tt, xDim, xDim])
@@ -328,18 +328,18 @@ class SmoothingTimeSeries(RecognitionModel):
 
         # Diagonals must be PSD
         diagsquare = tf.matmul(self.AAChol, tf.transpose(self.AAChol,
-                                                         perm=(0, 2, 1)))
+                                                         perm=[0, 2, 1]))
         odsquare = tf.matmul(self.BBChol, tf.transpose(self.BBChol,
-                                                       perm=(0, 2, 1)))
+                                                       perm=[0, 2, 1]))
         self.AA = (diagsquare
                    + tf.concat([tf.expand_dims(
-                    tf.zeros([self.xDim, self.xDim]), 0), odsquare])
+                    tf.zeros([self.xDim, self.xDim]), 0), odsquare], axis=0)
                    + 1e-6*tf.eye(self.xDim))
         self.BB = tf.matmul(self.AAChol[:-1], tf.transpose(self.BBChol,
-                                                           perm=(0, 2, 1)))
+                                                           perm=[0, 2, 1]))
 
         # compute Cholesky decomposition
-        self.the_chol = blk.blk_tridag_chol(self.AA, self.BB)
+        self.the_chol = blk.blk_tridiag_chol(self.AA, self.BB)
 
         # symbolic recipe for computing the the diagonal (V) and
         # off-diagonal (VV) blocks of the posterior covariance
@@ -351,10 +351,12 @@ class SmoothingTimeSeries(RecognitionModel):
         # of the cholesky factor (twice the log).
         # Determinant of the Cholesky factor is the product of the diagonal
         # elements of the block-diagonal.
-        def comp_log_det(L):
-            return tf.reduce_sum(tf.log(tf.diag_part(L)))
-        self.ln_determinant = -2*tf.reduce_sum(
-            tf.scan(fn=comp_log_det, elems=self.the_chol[0])[0])
+        def comp_log_det(acc, inputs):
+            L = inputs[0]
+            return tf.reduce_sum(tf.log(tf.diag(L)))
+        self.ln_determinant = -2*tf.reduce_sum(tf.scan(comp_log_det,
+                                               [self.the_chol[0]],
+                                               initializer=0.0))
 
     def getSample(self):
         normSamps = tf.random_normal([self.Tt, self.xDim])
@@ -380,6 +382,7 @@ class SmoothingTimeSeries(RecognitionModel):
                                  dtype=np.float32)
         out['Mu'] = np.asarray(self.Mu.eval({self.Input: yy}),
                                dtype=np.float32)
+        return out
 
 
 class MeanFieldGaussian(RecognitionModel):
@@ -405,7 +408,7 @@ class MeanFieldGaussian(RecognitionModel):
                 latent space (x), observation (y)
         '''
         super(MeanFieldGaussian, self).__init__(Input, xDim, yDim, srng, nrng)
-        self.Tt = Input.shape[0]
+        self.Tt = tf.shape(Input)[0]
         self.mu_train = RecognitionParams['NN_Mu']['is_train']
         self.NN_Mu = RecognitionParams['NN_Mu']['network']
         self.postX = self.NN_Mu(self.Input)
@@ -442,8 +445,8 @@ class MeanFieldGaussian(RecognitionModel):
         out['xsm'] = np.asarray(self.postX.eval({self.Input: yy}),
                                 dtype=np.float32)
         V = tf.matmul(self.LambdaChol, tf.transpose(self.LambdaChol,
-                                                    perms=(0, 2, 1)))
+                                                    perm=[0, 2, 1]))
         out['Vsm'] = np.asarray(V.eval({self.Input: yy}), dtype=np.float32)
         out['VVsm'] = np.zeros([yy.shape[0]-1, self.xDim, self.xDim],
-                               dtype=tf.float32)
+                               dtype=np.float32)
         return out

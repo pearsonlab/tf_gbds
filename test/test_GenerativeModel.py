@@ -4,11 +4,14 @@ import tensorflow as tf
 import numpy.testing as npt
 import tf_gbds.GenerativeModel as G
 
+np.random.seed(1234)
+tf.set_random_seed(1234)
+
 
 def test_generative_model():
     gm = G.GenerativeModel(None, 5, 10)
 
-    print(gm.Xsamp)
+    assert isinstance(gm.Xsamp, tf.Tensor)
 
 
 def test_LDS():
@@ -51,8 +54,6 @@ def test_LDS_forward():
         resx = x[1:] - x[:x.shape[0]-1].dot(A.T)
         resx0 = x[0] - x0
 
-        print(resx0.shape, Lambda0.shape)
-
         lpdf = -(resy.T.dot(resy) * np.diag(Rinv)).sum()
         lpdf += -(resx.T.dot(resx) * Lambda).sum()
         lpdf += -(resx0.dot(Lambda0).dot(resx0))
@@ -69,9 +70,8 @@ def test_LDS_forward():
         resY = mm.resY.eval()
         resX = mm.resX.eval()
         logpdf = t_logpdf.eval()
-        print(resx0, resX0)
         npt.assert_allclose(resX0, resx0)
         npt.assert_allclose(resY, resy)
         npt.assert_allclose(resX, resx)
         assert logpdf < 0
-        npt.assert_approx_equal(logpdf, lpdf)
+        npt.assert_allclose(logpdf, lpdf, atol=1e-4, rtol=1e-4)
