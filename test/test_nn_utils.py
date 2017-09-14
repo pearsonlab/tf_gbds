@@ -1,7 +1,6 @@
 import tensorflow as tf
 from tensorflow.contrib.keras import models
 from tf_gbds.nn_utils import get_network
-from tf_gbds.layers import PKBiasLayer
 
 
 batch_size = 256
@@ -23,11 +22,11 @@ def test_nn_utils_bias():
     assert len(PKbias_layers) == num_layers
 
     params_count = ((filt_size * input_dim + 1) * hidden_dim +
-        num_biases * hidden_dim * 2 * num_layers +
-        hidden_dim * 4 * (num_layers - 2) +
-        (hidden_dim + 1) * hidden_dim * (num_layers - 1) +
-        (hidden_dim + 1) * output_dim)
-    # Convolutional layer + PKBias layers + BatchNorm layer(s) + Dense layers
+                    num_biases * hidden_dim * 2 * num_layers +
+                    hidden_dim * 4 * (num_layers - 2) +
+                    (hidden_dim + 1) * hidden_dim * (num_layers - 1) +
+                    (hidden_dim + 1) * output_dim)
+    # ConvolutionalLayer + PKBiasLayers + BatchNormLayer(s) + DenseLayers
     assert NN.count_params() == params_count
 
     pad_shape = tf.TensorShape.as_list(
@@ -41,6 +40,7 @@ def test_nn_utils_bias():
     output_shape = tf.TensorShape.as_list(output.shape)
     assert output_shape == [batch_size, output_dim]
 
+
 def test_nn_utils_rowbias():
     NN, PKbias_layers = get_network(
         batch_size, input_dim, output_dim, hidden_dim, num_layers,
@@ -50,11 +50,11 @@ def test_nn_utils_rowbias():
     assert len(PKbias_layers) == num_layers
 
     params_count = ((filt_size * input_dim + 1) * hidden_dim +
-        num_biases * hidden_dim * 2 * num_layers +
-        hidden_dim * 4 * (num_layers - 2) +
-        (hidden_dim + 1) * hidden_dim * (num_layers - 1) +
-        (hidden_dim + 1) * output_dim)
-    # Convolutional layer + PKRowBias layers + BatchNorm layer(s) + Dense layers
+                    num_biases * hidden_dim * 2 * num_layers +
+                    hidden_dim * 4 * (num_layers - 2) +
+                    (hidden_dim + 1) * hidden_dim * (num_layers - 1) +
+                    (hidden_dim + 1) * output_dim)
+    # ConvolutionalLayer + PKRowBiasLayers + BatchNormLayer(s) + DenseLayers
     assert NN.count_params() == params_count
 
     pad_shape = tf.TensorShape.as_list(

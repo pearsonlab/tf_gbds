@@ -46,7 +46,7 @@ class PKBiasLayer(layers.Layer):
         self.mode = tf.zeros(num_biases)
         self.srng = srng
         self.k = np.cast[backend.floatx()](params['k'])
-        
+
         self.m = self.add_variable(name='m', shape=[num_biases, num_inputs],
                                    initializer=param_init)
         self.log_s = self.add_variable(name='log_s',
@@ -70,7 +70,7 @@ class PKBiasLayer(layers.Layer):
 
     def call(self, inputs):
         act_biases = tf.matmul(tf.reshape(tf.cast(
-            self.mode, backend.floatx()),[1, -1]), self.biases)
+            self.mode, backend.floatx()), [1, -1]), self.biases)
         return inputs + act_biases
 
     def set_mode(self, mode):
