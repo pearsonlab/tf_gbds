@@ -58,11 +58,13 @@ def get_network(batch_size, input_dim, output_dim, hidden_dim, num_layers,
     for i in range(num_layers):
         if is_shooter and add_pklayers:
             if row_sparse:
-                PK_bias = PKRowBiasLayer(NN, srng, PKLparams)
+                PK_bias = PKRowBiasLayer(NN, srng, PKLparams,
+                                         name="PKRowBias%s" % (i+1))
             else:
-                PK_bias = PKBiasLayer(NN, srng, PKLparams)
+                PK_bias = PKBiasLayer(NN, srng, PKLparams,
+                                      name="PKBias%s" % (i+1))
             PKbias_layers.append(PK_bias)
-            NN = PK_bias
+            NN.add(PK_bias)
         if i == num_layers - 1:
             layer_dim = output_dim
             layer_nonlin = output_nonlin
@@ -72,20 +74,20 @@ def get_network(batch_size, input_dim, output_dim, hidden_dim, num_layers,
 
         if batchnorm and i < num_layers - 1 and i != 0:
             NN.add(layers.Dense(
-                layer_dim, name="Dense%s" % i,
+                layer_dim, name="Dense%s" % (i+1),
                 kernel_initializer=tf.random_normal_initializer(
                     stddev=init_std)))
             NN.add(layers.BatchNormalization(name="BatchNorm%s" % i))
             # may set initializer for hyperparams
             NN.add(layers.Activation(activation=layer_nonlin,
-                                     name="Activation%s" % i))
+                                     name="Activation%s" % (i+1)))
         else:
             NN.add(layers.Dense(
-                layer_dim, name="Dense%s" % i,
+                layer_dim, name="Dense%s" % (i+1),
                 kernel_initializer=tf.random_normal_initializer(
                     stddev=init_std)))
             NN.add(layers.Activation(activation=layer_nonlin,
-                                     name="Activation%s" % i))
+                                     name="Activation%s" % (i+1)))
     if add_pklayers:
         return NN, PKbias_layers
     else:
