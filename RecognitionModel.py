@@ -1,6 +1,7 @@
 """
 Base class for a generative model and linear dynamical system implementation.
-Based on Evan Archer's code here: https://github.com/earcher/vilds/blob/master/code/RecognitionModel.py
+Based on Evan Archer's code here:
+https://github.com/earcher/vilds/blob/master/code/RecognitionModel.py
 """
 import tensorflow as tf
 import numpy as np
@@ -265,3 +266,187 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
         super(SmoothingPastLDSTimeSeries, self).__init__(RecognitionParams,
                                                          Input, xDim, yDim,
                                                          srng, nrng)
+
+
+class SmoothingTimeSeries(RecognitionModel):
+    '''
+    A "smoothing" recognition model. The constructor accepts neural networks
+    which are used to parameterize mu and Sigma.
+
+    x ~ N( mu(y), sigma(y) )
+
+    '''
+
+    def __init__(self, RecognitionParams, Input, xDim, yDim, srng=None,
+                 nrng=None):
+        '''
+        :parameters:
+            - Input : 'y' theano.tensor.var.TensorVariable (n_input)
+                Observation matrix based on which we produce q(x)
+            - RecognitionParams : (dictionary)
+                Dictionary of timeseries-specific parameters. Contents:
+                     * A -
+                     * NN paramers...
+                     * others... TODO
+            - xDim, yDim, zDim : (integers) dimension of
+                latent space (x) and observation (y)
+        '''
+        super(SmoothingTimeSeries, self).__init__(Input, xDim, yDim, srng,
+                                                  nrng)
+
+#        print RecognitionParams
+
+        self.Tt = tf.shape(Input)[0]
+        # These variables allow us to control whether the network is
+        # deterministic or not (if we use Dropout)
+        self.mu_train = RecognitionParams['NN_Mu']['is_train']
+        self.lambda_train = RecognitionParams['NN_Lambda']['is_train']
+
+        # This is the neural network that parameterizes the state mean, mu
+        self.NN_Mu = RecognitionParams['NN_Mu']['network']
+        # Mu will automatically be of size [T x xDim]
+        self.Mu = self.NN_Mu(self.Input)
+
+        self.NN_Lambda = RecognitionParams['NN_Lambda']['network']
+        lambda_net_out = self.NN_Lambda(self.Input)
+
+        self.NN_LambdaX = RecognitionParams['NN_LambdaX']['network']
+        lambdaX_net_in = tf.concat([self.Input[:-1], self.Input[1:]], axis=1)
+        lambdaX_net_out = self.NN_LambdaX(lambdaX_net_in)
+
+        # Lambda will automatically be of size [T x xDim x xDim]
+        self.AAChol = (tf.reshape(lambda_net_out, [self.Tt, xDim, xDim])
+                       + tf.eye(xDim))
+        self.BBChol = tf.reshape(lambdaX_net_out, [self.Tt-1, xDim, xDim])
+        # + 1e-6*tf.eye(xDim)
+
+        self._initialize_posterior_distribution(RecognitionParams)
+
+    def _initialize_posterior_distribution(self, RecognitionParams):
+
+        # put together the total precision matrix
+
+        # Diagonals must be PSD
+        diagsquare = tf.matmul(self.AAChol, tf.transpose(self.AAChol,
+                                                         perm=[0, 2, 1]))
+        odsquare = tf.matmul(self.BBChol, tf.transpose(self.BBChol,
+                                                       perm=[0, 2, 1]))
+        self.AA = (diagsquare
+                   + tf.concat([tf.expand_dims(
+                    tf.zeros([self.xDim, self.xDim]), 0), odsquare], axis=0)
+                   + 1e-6*tf.eye(self.xDim))
+        self.BB = tf.matmul(self.AAChol[:-1], tf.transpose(self.BBChol,
+                                                           perm=[0, 2, 1]))
+
+        # compute Cholesky decomposition
+        self.the_chol = blk.blk_tridiag_chol(self.AA, self.BB)
+
+        # symbolic recipe for computing the the diagonal (V) and
+        # off-diagonal (VV) blocks of the posterior covariance
+        self.V, self.VV, self.S = sym.compute_sym_blk_tridiag(self.AA,
+                                                              self.BB)
+        self.postX = self.Mu
+
+        # The determinant of the covariance is the square of the determinant
+        # of the cholesky factor (twice the log).
+        # Determinant of the Cholesky factor is the product of the diagonal
+        # elements of the block-diagonal.
+        def comp_log_det(acc, inputs):
+            L = inputs[0]
+            return tf.reduce_sum(tf.log(tf.diag(L)))
+        self.ln_determinant = -2*tf.reduce_sum(tf.scan(comp_log_det,
+                                               [self.the_chol[0]],
+                                               initializer=0.0))
+
+    def getSample(self):
+        normSamps = tf.random_normal([self.Tt, self.xDim])
+        return self.postX + blk.blk_chol_inv(self.the_chol[0],
+                                             self.the_chol[1], normSamps,
+                                             lower=False, transpose=True)
+
+    def evalEntropy(self):
+        return (self.ln_determinant/2
+                + self.xDim*self.Tt/2.0*(1+np.log(2*np.pi)))
+
+    def getParams(self):
+        return (self.NN_Mu.variables + self.NN_Lambda.variables
+                + self.NN_LambdaX.variables)
+
+    def get_summary(self, yy):
+        out = {}
+        out['xsm'] = np.asarray(self.postX.eval({self.Input: yy}),
+                                dtype=np.float32)
+        out['Vsm'] = np.asarray(self.V.eval({self.Input: yy}),
+                                dtype=np.float32)
+        out['VVsm'] = np.asarray(self.VV.eval({self.Input: yy}),
+                                 dtype=np.float32)
+        out['Mu'] = np.asarray(self.Mu.eval({self.Input: yy}),
+                               dtype=np.float32)
+        return out
+
+
+class MeanFieldGaussian(RecognitionModel):
+    '''
+    Define a mean field variational approximate posterior (Recognition Model).
+    Here, "mean field" is over time, so that for
+    x = (x_1, \dots, x_t, \dots, x_T):
+
+    x ~ \prod_{t=1}^T N( mu_t(y_t), sigma_t(y_t) ).
+
+    Each covariance sigma_t is a full [n x n] covariance matrix (where n is
+    the size of the latent space).
+
+    '''
+
+    def __init__(self, RecognitionParams, Input, xDim, yDim, srng=None,
+                 nrng=None):
+        '''
+        :parameters:
+            - Input : 'y' theano.tensor.var.TensorVariable (n_input)
+                Observation matrix based on which we produce q(x)
+            - xDim, yDim, zDim : (integers) dimension of
+                latent space (x), observation (y)
+        '''
+        super(MeanFieldGaussian, self).__init__(Input, xDim, yDim, srng, nrng)
+        self.Tt = tf.shape(Input)[0]
+        self.mu_train = RecognitionParams['NN_Mu']['is_train']
+        self.NN_Mu = RecognitionParams['NN_Mu']['network']
+        self.postX = self.NN_Mu(self.Input)
+
+        self.lambda_train = RecognitionParams['NN_Lambda']['is_train']
+        self.NN_Lambda = RecognitionParams['NN_Lambda']['network']
+
+        lambda_net_out = self.NN_Lambda(self.Input)
+        self.LambdaChol = tf.reshape(lambda_net_out, [self.Tt, xDim, xDim])
+
+    def getParams(self):
+        network_params = self.NN_Mu.variables + self.NN_Lambda.variables
+        return network_params
+
+    def evalEntropy(self):
+        def compTrace(Rt):
+            return tf.log(tf.abs(tf.matrix_determinant(Rt)))
+        theDet, updates = tf.scan(fn=compTrace, elems=[self.LambdaChol])
+        return (tf.reduce_sum(theDet)
+                + self.xDim*self.Tt/2.0 * (1 + np.log(2*np.pi)))
+
+    def getSample(self):
+
+        normSamps = tf.random_normal([self.Tt, self.xDim])
+
+        def SampOneStep(SampRt, nsampt):
+            return tf.matmul(nsampt, tf.transpose(SampRt))
+        retSamp = tf.scan(fn=SampOneStep,
+                          elems=[self.LambdaChol, normSamps])[0]
+        return retSamp + self.postX
+
+    def get_summary(self, yy):
+        out = {}
+        out['xsm'] = np.asarray(self.postX.eval({self.Input: yy}),
+                                dtype=np.float32)
+        V = tf.matmul(self.LambdaChol, tf.transpose(self.LambdaChol,
+                                                    perm=[0, 2, 1]))
+        out['Vsm'] = np.asarray(V.eval({self.Input: yy}), dtype=np.float32)
+        out['VVsm'] = np.zeros([yy.shape[0]-1, self.xDim, self.xDim],
+                               dtype=np.float32)
+        return out

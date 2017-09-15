@@ -1,29 +1,9 @@
 """
-The MIT License (MIT)
-Copyright (c) 2015 Evan Archer
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Base class for a generative model and linear dynamical system implementation.
+Based on Evan Archer's code here: https://github.com/earcher/vilds/blob/master/code/GenerativeModel.py
 """
-
 import tensorflow as tf
 import numpy as np
-import tf_gbds.layers as layers
 
 
 class GenerativeModel(object):
@@ -42,7 +22,7 @@ class GenerativeModel(object):
 
         # internal RV for generating sample
         self.Xsamp = tf.placeholder(tf.float32,
-                                    shape=(None, None), name='Xsamp')
+                                    shape=(None, xDim), name='Xsamp')
 
     def evaluateLogDensity(self):
         """
@@ -156,18 +136,23 @@ class LDS(GenerativeModel):
         else:
             # Define a neural network that maps the latent state into the
             # output
-            gen_nn = layers.InputLayer((None, xDim))
-            self.NN_XtoY = layers.DenseLayer(gen_nn, yDim,
-                                             nonlinearity=tf.identity,
-                                             W=tf.orthogonal_initializer())
+            gen_nn = tf.contrib.keras.layers.Input((None, xDim))
+            gen_nn_d = (tf.contrib.keras.layers.Dense(yDim,
+                        activation="linear",
+                        kernel_initializer=tf.orthogonal_initializer())
+                        (gen_nn))
+            self.NN_XtoY = tf.contrib.keras.models.Model(inputs=gen_nn,
+                                                         outputs=gen_nn_d)
 
         # set to our lovely initial initial_values
         if 'C' in GenerativeParams:
-            tf.assign(self.NN_XtoY.W, GenerativeParams['C'].astype(np.float32))
-
+            self.NN_XtoY.set_weights([GenerativeParams['C']
+                                      .astype(np.float32),
+                                      self.NN_XtoY.get_weights()[1]])
         if 'd' in GenerativeParams:
-            tf.assign(self.NN_XtoY.b, GenerativeParams['d'].astype(np.float32))
-
+            self.NN_XtoY.set_weights([self.NN_XtoY.get_weights()[0],
+                                      GenerativeParams['d']
+                                      .astype(np.float32)])
         # we assume diagonal covariance (RChol is a vector)
         self.Rinv = 1./(self.RChol**2)
         # tf.matrix_inverse(tf.matmul(self.RChol ,T.transpose(self.RChol)))
@@ -178,7 +163,7 @@ class LDS(GenerativeModel):
 
         # Call the neural network output a rate, basically to keep things
         # consistent with the PLDS class
-        self.rate = layers.get_output(self.NN_XtoY, inputs=self.Xsamp)
+        self.rate = self.NN_XtoY(self.Xsamp)
 
     def sampleX(self, _N):
         _x0 = np.asarray(self.x0.eval(), dtype=np.float32)
@@ -199,8 +184,8 @@ class LDS(GenerativeModel):
     def sampleY(self):
         """ Return a symbolic sample from the generative model. """
         return self.rate + tf.matmul(tf.random_normal((tf.shape(self.Xsamp)[0],
-                                     self.yDim)), tf.transpose(tf.diag
-                                                               (self.RChol)))
+                                     self.yDim), seed=1234),
+                                     tf.transpose(tf.diag(self.RChol)))
 
     def sampleXY(self, _N):
         """ Return numpy samples from the generative model. """
@@ -212,7 +197,7 @@ class LDS(GenerativeModel):
 
     def getParams(self):
         return [self.A] + [self.QChol] + [self.Q0Chol] + [self.RChol]
-        + [self.x0] + layers.get_all_params(self.NN_XtoY)
+        + [self.x0] + self.NN_XtoY.variables
 
     def evaluateLogDensity(self, X, Y):
         # Create a new graph which computes self.rate after replacing
