@@ -161,8 +161,8 @@ class SmoothingLDSTimeSeries(RecognitionModel):
         self.AA = (self.Lambda + tf.concat([tf.expand_dims(tf.zeros([self.xDim,
                    self.xDim]), 0), self.LambdaX], 0) + AQinvArepPlusQ)
         self.BB = (tf.matmul(self.LambdaChol[:-1],
-                             tf.transpose(self.LambdaXChol, perm=[0, 2, 1]))
-                   + AQinvrep)
+                             tf.transpose(self.LambdaXChol, perm=[0, 2, 1])) +
+                   AQinvrep)
 
         # symbolic recipe for computing the the diagonal (V) and
         # off-diagonal (VV) blocks of the posterior covariance
@@ -315,8 +315,8 @@ class SmoothingTimeSeries(RecognitionModel):
         lambdaX_net_out = self.NN_LambdaX(lambdaX_net_in)
 
         # Lambda will automatically be of size [T x xDim x xDim]
-        self.AAChol = (tf.reshape(lambda_net_out, [self.Tt, xDim, xDim])
-                       + tf.eye(xDim))
+        self.AAChol = (tf.reshape(lambda_net_out, [self.Tt, xDim, xDim]) +
+                       tf.eye(xDim))
         self.BBChol = tf.reshape(lambdaX_net_out, [self.Tt-1, xDim, xDim])
         # + 1e-6*tf.eye(xDim)
 
@@ -331,10 +331,9 @@ class SmoothingTimeSeries(RecognitionModel):
                                                          perm=[0, 2, 1]))
         odsquare = tf.matmul(self.BBChol, tf.transpose(self.BBChol,
                                                        perm=[0, 2, 1]))
-        self.AA = (diagsquare
-                   + tf.concat([tf.expand_dims(
-                    tf.zeros([self.xDim, self.xDim]), 0), odsquare], axis=0)
-                   + 1e-6*tf.eye(self.xDim))
+        self.AA = (diagsquare + tf.concat(
+            [tf.expand_dims(tf.zeros([self.xDim, self.xDim]), 0),
+             odsquare], axis=0) + 1e-6*tf.eye(self.xDim))
         self.BB = tf.matmul(self.AAChol[:-1], tf.transpose(self.BBChol,
                                                            perm=[0, 2, 1]))
 
@@ -365,12 +364,12 @@ class SmoothingTimeSeries(RecognitionModel):
                                              lower=False, transpose=True)
 
     def evalEntropy(self):
-        return (self.ln_determinant/2
-                + self.xDim*self.Tt/2.0*(1+np.log(2*np.pi)))
+        return (self.ln_determinant/2 +
+                self.xDim*self.Tt/2.0*(1+np.log(2*np.pi)))
 
     def getParams(self):
-        return (self.NN_Mu.variables + self.NN_Lambda.variables
-                + self.NN_LambdaX.variables)
+        return (self.NN_Mu.variables + self.NN_Lambda.variables +
+                self.NN_LambdaX.variables)
 
     def get_summary(self, yy):
         out = {}
@@ -427,8 +426,8 @@ class MeanFieldGaussian(RecognitionModel):
         def compTrace(Rt):
             return tf.log(tf.abs(tf.matrix_determinant(Rt)))
         theDet, updates = tf.scan(fn=compTrace, elems=[self.LambdaChol])
-        return (tf.reduce_sum(theDet)
-                + self.xDim*self.Tt/2.0 * (1 + np.log(2*np.pi)))
+        return (tf.reduce_sum(theDet) +
+                self.xDim*self.Tt/2.0 * (1 + np.log(2*np.pi)))
 
     def getSample(self):
 
