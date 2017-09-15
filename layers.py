@@ -22,10 +22,11 @@ SOFTWARE.
 """
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib.keras import backend, layers
+from tensorflow.contrib.keras import backend
+from tensorflow.contrib.keras import layers as keras_layers
 
 
-class PKBiasLayer(layers.Layer):
+class PKBiasLayer(keras_layers.Layer):
     """
     This layer draws different biases (depending on the mode)
     from a normal distribution, then adds them to the input
@@ -88,7 +89,7 @@ class PKBiasLayer(layers.Layer):
         return ELBO / nbatches
 
 
-class PKRowBiasLayer(layers.Layer):
+class PKRowBiasLayer(keras_layers.Layer):
     """
     This layer draws different biases (depending on the mode)
     from a normal distribution, then adds them to the input.
