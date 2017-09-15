@@ -1,8 +1,10 @@
 """
 Base class for a generative model and linear dynamical system implementation.
-Based on Evan Archer's code here: https://github.com/earcher/vilds/blob/master/code/GenerativeModel.py
+Based on Evan Archer's code here:
+https://github.com/earcher/vilds/blob/master/code/GenerativeModel.py
 """
 import tensorflow as tf
+from tensorflow.contrib.keras import layers, models
 import numpy as np
 
 
@@ -21,8 +23,8 @@ class GenerativeModel(object):
         self.nrng = nrng
 
         # internal RV for generating sample
-        self.Xsamp = tf.placeholder(tf.float32,
-                                    shape=(None, xDim), name='Xsamp')
+        self.Xsamp = tf.placeholder(tf.float32, shape=(None, xDim),
+                                    name='Xsamp')
 
     def evaluateLogDensity(self):
         """
@@ -136,13 +138,12 @@ class LDS(GenerativeModel):
         else:
             # Define a neural network that maps the latent state into the
             # output
-            gen_nn = tf.contrib.keras.layers.Input((None, xDim))
-            gen_nn_d = (tf.contrib.keras.layers.Dense(yDim,
+            gen_nn = layers.Input(batch_shape=(None, xDim))
+            gen_nn_d = (layers.Dense(yDim,
                         activation="linear",
                         kernel_initializer=tf.orthogonal_initializer())
                         (gen_nn))
-            self.NN_XtoY = tf.contrib.keras.models.Model(inputs=gen_nn,
-                                                         outputs=gen_nn_d)
+            self.NN_XtoY = models.Model(inputs=gen_nn, outputs=gen_nn_d)
 
         # set to our lovely initial initial_values
         if 'C' in GenerativeParams:
@@ -182,13 +183,13 @@ class LDS(GenerativeModel):
         return x_vals.astype(np.float32)
 
     def sampleY(self):
-        """ Return a symbolic sample from the generative model. """
+        # Return a symbolic sample from the generative model.
         return self.rate + tf.matmul(tf.random_normal((tf.shape(self.Xsamp)[0],
                                      self.yDim), seed=1234),
                                      tf.transpose(tf.diag(self.RChol)))
 
     def sampleXY(self, _N):
-        """ Return numpy samples from the generative model. """
+        # Return numpy samples from the generative model.
         X = self.sampleX(_N)
         nprand = np.random.randn(X.shape[0], self.yDim).astype(np.float32)
         _RChol = np.asarray(self.RChol.eval(), dtype=np.float32)
@@ -196,8 +197,8 @@ class LDS(GenerativeModel):
         return [X, Y]
 
     def getParams(self):
-        return [self.A] + [self.QChol] + [self.Q0Chol] + [self.RChol]
-        + [self.x0] + self.NN_XtoY.variables
+        return ([self.A] + [self.QChol] + [self.Q0Chol] + [self.RChol] +
+                [self.x0] + self.NN_XtoY.variables)
 
     def evaluateLogDensity(self, X, Y):
         # Create a new graph which computes self.rate after replacing
@@ -221,15 +222,78 @@ class LDS(GenerativeModel):
                                                self.Lambda0),
                                      tf.reshape(self.resX0, [-1, 1]))
 
-        LogDensity += (0.5*tf.reduce_sum(tf.log(self.Rinv))
-                       * (tf.shape(Y, out_type=tf.float32)[0]))
+        LogDensity += (0.5*tf.reduce_sum(tf.log(self.Rinv)) *
+                       (tf.shape(Y, out_type=tf.float32)[0]))
 
-        LogDensity += (0.5*tf.log(tf.matrix_determinant(self.Lambda))
-                       * (tf.shape(Y, out_type=tf.float32)[0]-1))
+        LogDensity += (0.5*tf.log(tf.matrix_determinant(self.Lambda)) *
+                       (tf.shape(Y, out_type=tf.float32)[0]-1))
 
         LogDensity += 0.5*tf.log(tf.matrix_determinant(self.Lambda0))
 
-        LogDensity += (-0.5*(self.xDim + self.yDim)*np.log(2*np.pi)
-                       * tf.shape(Y, out_type=tf.float32)[0])
+        LogDensity += (-0.5*(self.xDim + self.yDim)*np.log(2*np.pi) *
+                       tf.shape(Y, out_type=tf.float32)[0])
 
+        return LogDensity
+
+
+class PLDS(LDS):
+    """
+    Gaussian linear dynamical system with Poisson count observations. Inherits
+    Gaussian linear dynamics sampling code from the LDS; implements a Poisson
+    density evaluation for discrete (count) data.
+    """
+    def __init__(self, GenerativeParams, xDim, yDim, srng=None, nrng=None):
+        # The LDS class expects "RChol" for Gaussian observations - we just
+        # pass a dummy
+        GenerativeParams['RChol'] = np.ones(1)
+        super(PLDS, self).__init__(GenerativeParams, xDim, yDim, srng, nrng)
+
+        # Currently we emulate a PLDS by having an exponential output
+        # nonlinearity. Next step will be to generalize this to more flexible
+        # output nonlinearities...
+        if GenerativeParams['output_nlin'] == 'exponential':
+            self.rate = tf.exp(self.NN_XtoY(self.Xsamp))
+        elif GenerativeParams['output_nlin'] == 'sigmoid':
+            self.rate = tf.nn.sigmoid(self.NN_XtoY(self.Xsamp))
+        elif GenerativeParams['output_nlin'] == 'softplus':
+            self.rate = tf.nn.softplus(self.NN_XtoY(self.Xsamp))
+        else:
+            raise Exception('Unknown output nonlinearity specification!')
+
+    def getParams(self):
+        return ([self.A] + [self.QChol] + [self.Q0Chol] + [self.x0] +
+                self.NN_XtoY.variables)
+
+    def sampleY(self):
+        # Return a symbolic sample from the generative model.
+        return tf.random_poisson(lam=self.rate, shape=tf.shape(self.rate),
+                                 seed=1234)
+
+    def sampleXY(self, _N):
+        # Return real-valued (numpy) samples from the generative model.
+        X = self.sampleX(_N)
+        Y = np.random.poisson(lam=self.rate.eval({self.Xsamp: X}))
+        return [X, Y]
+
+    def evaluateLogDensity(self, X, Y):
+        # This is the log density of the generative model (*not* negated)
+        Ypred = tf.contrib.graph_editor.graph_replace(self.rate,
+                                                      {self.Xsamp: X})
+        resY = Y-Ypred
+        self.resY = resY
+        resX = X[1:]-tf.matmul(X[:-1], tf.transpose(self.A))
+        self.resX = resX
+        resX0 = X[0]-self.x0
+        self.resX0 = resX0
+        LatentDensity = (-0.5*tf.matmul(tf.matmul(tf.expand_dims(
+          resX0, 0), self.Lambda0), tf.transpose(tf.expand_dims(resX0, 0))) -
+                         0.5*tf.reduce_sum(resX*tf.matmul(resX,
+                                                          self.Lambda)) +
+                         0.5*tf.log(tf.matrix_determinant(self.Lambda)) *
+                         (tf.shape(Y, out_type=tf.float32)[0]-1) +
+                         0.5*tf.log(tf.matrix_determinant(self.Lambda0)) -
+                         0.5*(self.xDim)*np.log(2*np.pi) *
+                         (tf.shape(Y, out_type=tf.float32)[0]))
+        PoisDensity = tf.reduce_sum(Y*tf.log(Ypred)-Ypred-tf.lgamma(Y+1))
+        LogDensity = LatentDensity + PoisDensity
         return LogDensity
