@@ -192,24 +192,27 @@ class SmoothingLDSTimeSeries(RecognitionModel):
         # elements of the block-diagonal.
         def comp_log_det(acc, inputs):
             L = inputs[0]
-            return tf.reduce_sum(tf.log(tf.diag(L)))
+            return tf.reduce_sum(tf.log(tf.diag_part(L)))
         self.ln_determinant = -2*tf.reduce_sum(tf.scan(comp_log_det,
                                                [self.the_chol[0]],
                                                initializer=0.0))
+        self.scan = tf.scan(comp_log_det, [self.the_chol[0]], initializer=0.0)
 
     def getSample(self):
         normSamps = tf.random_normal([self.Tt, self.xDim])
         return self.postX + blk.blk_chol_inv(self.the_chol[0],
-                                             self.the_chol[1], normSamps,
+                                             self.the_chol[1],
+                                             tf.expand_dims(normSamps, -1),
                                              lower=False, transpose=True)
 
     def evalEntropy(self):
         # we want it to be smooth, this is a prior on being smooth... #
-        entropy = (self.ln_determinant/2 + self.xDim*self.Tt/2.0 * (1 +
-                   np.log(2 * np.pi)))
+        entropy = (self.ln_determinant/2 + self.xDim *
+                   tf.cast(self.Tt, tf.float32)/2.0 * (1 + np.log(2 * np.pi)))
+
         if self.p is not None:  # penalize noise
-            entropy += self.p * tf.reduce_sum(tf.log(tf.diag(self.Qinv)))
-            entropy += self.p * tf.reduce_sum(tf.log(tf.diag(self.Q0inv)))
+            entropy += self.p * tf.reduce_sum(tf.log(tf.diag_part(self.Qinv)))
+            entropy += self.p * tf.reduce_sum(tf.log(tf.diag_part(self.Q0inv)))
         return entropy
 
     def getDynParams(self):
@@ -353,7 +356,7 @@ class SmoothingTimeSeries(RecognitionModel):
         # elements of the block-diagonal.
         def comp_log_det(acc, inputs):
             L = inputs[0]
-            return tf.reduce_sum(tf.log(tf.diag(L)))
+            return tf.reduce_sum(tf.log(tf.diag_part(L)))
         self.ln_determinant = -2*tf.reduce_sum(tf.scan(comp_log_det,
                                                [self.the_chol[0]],
                                                initializer=0.0))
@@ -361,7 +364,8 @@ class SmoothingTimeSeries(RecognitionModel):
     def getSample(self):
         normSamps = tf.random_normal([self.Tt, self.xDim])
         return self.postX + blk.blk_chol_inv(self.the_chol[0],
-                                             self.the_chol[1], normSamps,
+                                             self.the_chol[1],
+                                             tf.expand_dims(normSamps, -1),
                                              lower=False, transpose=True)
 
     def evalEntropy(self):
