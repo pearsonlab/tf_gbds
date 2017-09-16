@@ -26,7 +26,7 @@ import tensorflow as tf
 from tensorflow.contrib.keras import layers as keras_layers
 from tensorflow.contrib.keras import models
 # from keras import backend as K
-from layers import PKBiasLayer, PKRowBiasLayer
+from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
 
 
 def get_network(batch_size, input_dim, output_dim, hidden_dim, num_layers,

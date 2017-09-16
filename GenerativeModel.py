@@ -223,15 +223,15 @@ class LDS(GenerativeModel):
                                      tf.reshape(self.resX0, [-1, 1]))
 
         LogDensity += (0.5*tf.reduce_sum(tf.log(self.Rinv)) *
-                       (tf.shape(Y, out_type=tf.float32)[0]))
+                       (tf.cast(tf.shape(Y)[0], tf.float32)))
 
         LogDensity += (0.5*tf.log(tf.matrix_determinant(self.Lambda)) *
-                       (tf.shape(Y, out_type=tf.float32)[0]-1))
+                       (tf.cast(tf.shape(Y)[0]-1, tf.float32)))
 
         LogDensity += 0.5*tf.log(tf.matrix_determinant(self.Lambda0))
 
         LogDensity += (-0.5*(self.xDim + self.yDim)*np.log(2*np.pi) *
-                       tf.shape(Y, out_type=tf.float32)[0])
+                       tf.cast(tf.shape(Y)[0], tf.float32))
 
         return LogDensity
 

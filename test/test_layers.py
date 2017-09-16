@@ -3,7 +3,7 @@ import numpy.testing as npt
 from scipy.special import gammaln, psi
 import tensorflow as tf
 from tensorflow.contrib.keras import layers, models
-from layers import DLGMLayer, PKBiasLayer, PKRowBiasLayer
+from tf_gbds.layers import DLGMLayer, PKBiasLayer, PKRowBiasLayer
 
 np.random.seed(1234)
 tf.set_random_seed(1234)
