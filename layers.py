@@ -166,8 +166,8 @@ class DLGMLayer(keras_layers.Layer):
                   axis=1))) + tf.reduce_sum(self.batch_Tr_C) -
                   tf.reduce_sum(self.batch_ld_C) - length))
         weight_reg = ((0.5 / self.k) *
-                      tf.reduce_sum(tf.sqrt(self.W**2)) *
-                      tf.reduce_sum(tf.sqrt(self.G**2)))
+                      tf.sqrt(tf.reduce_sum(self.W**2)) *
+                      tf.sqrt(tf.reduce_sum(self.G**2)))
         return -(weight_reg + KL_div)
 
     def compute_output_shape(self, input_shape):
