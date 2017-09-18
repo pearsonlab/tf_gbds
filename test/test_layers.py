@@ -5,9 +5,6 @@ import tensorflow as tf
 from tensorflow.contrib.keras import layers, models
 from tf_gbds.layers import DLGMLayer, PKBiasLayer, PKRowBiasLayer
 
-np.random.seed(1234)
-tf.set_random_seed(123)
-
 
 def test_DLGMLayer():
 
@@ -67,7 +64,7 @@ def test_DLGMLayer():
     for i in range(batch_u.shape[0]):
         u = batch_u[i]
         unc_d = batch_unc_d[i]
-        d = np.log(1 + np.exp(np.maximum(unc_d, -15.0)))
+        d = np.log1p(np.exp(np.maximum(unc_d, -15.0)))
         D_inv = np.diag(1.0 / d)
         eta = 1.0 / (u.T.dot(D_inv).dot(u) + 1.0)
         C = D_inv - eta * D_inv.dot(u).dot(u.T).dot(D_inv)
