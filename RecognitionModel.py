@@ -149,10 +149,10 @@ class SmoothingLDSTimeSeries(RecognitionModel):
         AQinvrep = tf.tile(-tf.matmul(tf.transpose(self.A), self.Qinv),
                            [self.Tt-1, 1])
         # off-diagonal blocks (upper triangle)
-        AQinvrep = tf.reshape(AQinvrep, [self.Tt-1, 2, 2])
+        AQinvrep = tf.reshape(AQinvrep, [self.Tt-1, self.xDim, self.xDim])
         self.AQinvrep = AQinvrep
         AQinvArep = tf.tile(AQinvA + self.Qinv, [self.Tt-2, 1])
-        AQinvArep = tf.reshape(AQinvArep, [self.Tt-2, 2, 2])
+        AQinvArep = tf.reshape(AQinvArep, [self.Tt-2, self.xDim, self.xDim])
         AQinvArepPlusQ = tf.concat([tf.expand_dims(self.Q0inv + AQinvA, 0),
                                    AQinvArep, tf.expand_dims(self.Qinv, 0)], 0)
 
