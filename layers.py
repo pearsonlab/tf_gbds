@@ -41,7 +41,7 @@ class DLGMLayer(keras_layers.Layer):
     """
     def __init__(self, incoming, num_units, srng, rec_nets, k,
                  output_layer=False, extra_noise=0.01,
-                 param_init=tf.random_normal_initializer(0, 0.01, seed=1234),
+                 param_init=tf.random_normal_initializer(0, 0.01),
                  nonlinearity=tf.nn.relu,
                  **kwargs):
         super(DLGMLayer, self).__init__(**kwargs)
@@ -107,7 +107,7 @@ class DLGMLayer(keras_layers.Layer):
             # since softplus will turn low numbers into 0, which become NaNs
             # when inverted
             u, unc_d = inputs
-            d = tf.log(1+tf.exp(tf.maximum(unc_d, -15.0)))
+            d = tf.nn.softplus(tf.maximum(unc_d, -15.0))
             D_inv = tf.diag(1.0 / d)
             eta = 1.0 / (tf.matmul(tf.matmul(tf.transpose(u), D_inv), u) + 1.0)
             C = D_inv - eta*tf.matmul(tf.matmul(tf.matmul(D_inv, u),
