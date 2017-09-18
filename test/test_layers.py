@@ -6,7 +6,7 @@ from tensorflow.contrib.keras import layers, models
 from tf_gbds.layers import DLGMLayer, PKBiasLayer, PKRowBiasLayer
 
 np.random.seed(1234)
-tf.set_random_seed(1234)
+tf.set_random_seed(123)
 
 
 def test_DLGMLayer():
