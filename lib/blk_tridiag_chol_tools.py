@@ -1,7 +1,7 @@
 """
 Tensorflow implementation of functions to perform the Cholesky factorization
-of a block tridiagonal matrix. Ported from Evan Archer's implementation
-here: https://github.com/earcher/vilds/blob/master/code/lib/blk_tridiag_chol_tools.py
+of a block tridiagonal matrix. Ported from Evan Archer's implementation here:
+https://github.com/earcher/vilds/blob/master/code/lib/blk_tridiag_chol_tools.py
 """
 
 import tensorflow as tf
