@@ -290,10 +290,10 @@ class PLDS(LDS):
                          0.5*tf.reduce_sum(resX*tf.matmul(resX,
                                                           self.Lambda)) +
                          0.5*tf.log(tf.matrix_determinant(self.Lambda)) *
-                         (tf.shape(Y, out_type=tf.float32)[0]-1) +
+                         (tf.cast(tf.shape(Y)[0]-1, tf.float32)) +
                          0.5*tf.log(tf.matrix_determinant(self.Lambda0)) -
                          0.5*(self.xDim)*np.log(2*np.pi) *
-                         (tf.shape(Y, out_type=tf.float32)[0]))
+                         (tf.cast(tf.shape(Y)[0], tf.float32)))
         PoisDensity = tf.reduce_sum(Y*tf.log(Ypred)-Ypred-tf.lgamma(Y+1))
         LogDensity = LatentDensity + PoisDensity
         return LogDensity
