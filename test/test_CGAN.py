@@ -6,8 +6,8 @@ import tf_gbds.CGAN as C
 
 
 def test_CGAN():
-    nlayers_G = 5
-    nlayers_D = 10
+    nlayers_G = 1
+    nlayers_D = 2
     ndims_condition = 3
     ndims_noise = 4
     ndims_hidden = 5 
@@ -76,15 +76,10 @@ def test_CGAN():
                                                training=True)
         print(interp_discr_out)
 
-        gradients = tf.gradients(tf.reduce_sum(interp_discr_out), (tf.constant(interpolates, tf.float32)))
-        init = tf.global_variables_initializer()
-
-        with tf.Session() as sess:
-            sess.run(init)
-            grad_value = sess.run(grad)
-            print(grad_value)
+        gradients = tf.gradients(tf.reduce_sum(interp_discr_out), tf.constant(interpolates, tf.float32))
+        print(gradients)
+        #gradients = tf.gradients(tf.reduce_sum(interp_discr_out), tf.constant(interpolates, tf.float32)).eval()
         
-
         slopes = np.sqrt((gradients**2).sum(axis=1))  # gradient norms
         gradient_penalty = np.mean((slopes - 1)**2)
         cost -= cg.lmbda * gradient_penalty
@@ -131,8 +126,10 @@ def test_WGAN():
         alpha = np.random.rand(wg.batch_size, 1)
         interpolates = alpha * real_data + ((1 - alpha) * fake_data)
         interp_discr_out = wg.get_discr_vals(tf.constant(interpolates, tf.float32),
-                                               training=True).eval()
-        gradients = np.gradient(interp_discr_out.sum(), interpolates)
+                                               training=True)
+        
+        gradients = tf.gradients(tf.reduce_sum(interp_discr_out), tf.constant(interpolates, tf.float32))
+        
         slopes = np.sqrt((gradients**2).sum(axis=1))  # gradient norms
         gradient_penalty = np.mean((slopes - 1)**2)
         wcost -= wg.lmbda * gradient_penalty

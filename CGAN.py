@@ -111,7 +111,7 @@ class CGAN(object):
         interp_discr_out = self.get_discr_vals(interpolates, conditions,
                                                training=True)
         gradients = tf.gradients(tf.reduce_sum(interp_discr_out), interpolates)
-        slopes = tf.sqrt((gradients**2).sum(axis=1))  # gradient norms
+        slopes = tf.sqrt(tf.reduce_sum(gradients**2, axis=1))  # gradient norms
         gradient_penalty = tf.reduce_mean((slopes - 1)**2)
         cost -= self.lmbda * gradient_penalty
         return cost
@@ -119,7 +119,7 @@ class CGAN(object):
     def get_gen_cost(self, gen_data, conditions):
         fake_discr_out = self.get_discr_vals(gen_data, conditions,
                                              training=True)
-        cost = fake_discr_out.mean()
+        cost = tf.reduce_mean(fake_discr_out)
         return cost
 
 
@@ -205,8 +205,8 @@ class WGAN(object):
         interpolates = alpha * real_data + ((1 - alpha) * fake_data)
         interp_discr_out = self.get_discr_vals(interpolates,
                                                training=True)
-        gradients = tf.gradients(interp_discr_out.sum(), interpolates)
-        slopes = tf.sqrt((gradients**2).sum(axis=1))  # gradient norms
+        gradients = tf.gradients(tf.reduce_sum(interp_discr_out), interpolates)
+        slopes = tf.sqrt(tf.reduce_sum(gradients**2, axis=1))  # gradient norms
         gradient_penalty = tf.reduce_mean((slopes - 1)**2)
         cost -= self.lmbda * gradient_penalty
         return cost
@@ -214,5 +214,5 @@ class WGAN(object):
     def get_gen_cost(self, gen_data):
         fake_discr_out = self.get_discr_vals(gen_data,
                                              training=True)
-        cost = fake_discr_out.mean()
+        cost = tf.reduce_mean(fake_discr_out)
         return cost
