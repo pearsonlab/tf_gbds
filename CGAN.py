@@ -1,5 +1,4 @@
 import tensorflow as tf
-import numpy as np
 from tf_gbds.nn_utils import get_network
 
 
@@ -16,10 +15,9 @@ class CGAN(object):
     def __init__(self, nlayers_G, nlayers_D, ndims_condition, ndims_noise,
                  ndims_hidden, ndims_data, batch_size, srng,
                  lmbda=10.0,
-                 nonlinearity=tf.contrib.keras.activations.relu, init_std_G=1.0,
-                 init_std_D=0.005,
-                 condition_noise=None, condition_scale=None,
-                 instance_noise=None):
+                 nonlinearity=tf.contrib.keras.activations.relu,
+                 init_std_G=1.0, init_std_D=0.005, condition_noise=None,
+                 condition_scale=None, instance_noise=None):
         # Neural network (G) that generates data to match the real data
         self.gen_net = get_network(batch_size,
                                    ndims_condition + ndims_noise, ndims_data,
@@ -53,7 +51,8 @@ class CGAN(object):
         # scale of each condition dimension, used for normalization
         self.condition_scale = condition_scale
         # scale of added noise to data input into discriminator
-        # http://www.inference.vc/instance-noise-a-trick-for-stabilising-gan-training/
+        # http://www.inference.vc/instance-noise-a-trick-for-stabilising-
+        # gan-training/
         self.instance_noise = instance_noise
 
     def get_generated_data(self, conditions, training=False):
@@ -69,9 +68,9 @@ class CGAN(object):
                                        self.ndims_noise]) - 1
         # noise = tf.random_normal((conditions.shape[0],
         #                           self.ndims_noise))
-        inp = tf.concat([noise, conditions],1)
+        inp = tf.concat([noise, conditions], 1)
         gen_data = self.gen_net(inp)
-                                            
+
         return gen_data
 
     def get_discr_vals(self, data, conditions, training=False):
@@ -87,9 +86,9 @@ class CGAN(object):
         if self.instance_noise is not None and training:
             data += (self.instance_noise *
                      tf.random_normal((tf.shape(data))))
-        inp = tf.concat([data, conditions],1)
+        inp = tf.concat([data, conditions], 1)
         discr_probs = self.discr_net(inp)
-                                                
+
         return discr_probs
 
     def get_gen_params(self):
@@ -134,21 +133,18 @@ class WGAN(object):
     def __init__(self, nlayers_G, nlayers_D, ndims_noise,
                  ndims_hidden, ndims_data, batch_size, srng,
                  lmbda=10.0,
-                 nonlinearity=tf.contrib.keras.activations.relu, init_std_G=1.0,
-                 init_std_D=0.005,
-                 instance_noise=None):
+                 nonlinearity=tf.contrib.keras.activations.relu,
+                 init_std_G=1.0, init_std_D=0.005, instance_noise=None):
         # Neural network (G) that generates data to match the real data
-        self.gen_net = get_network(batch_size,
-                                   ndims_noise, ndims_data,
+        self.gen_net = get_network(batch_size, ndims_noise, ndims_data,
                                    ndims_hidden, nlayers_G,
                                    init_std=init_std_G,
                                    hidden_nonlin=nonlinearity,
                                    batchnorm=True)
-        # Neural network (D) that discriminates between real and generated data
-        self.discr_net = get_network(batch_size,
-                                     ndims_data, 1,
-                                     ndims_hidden, nlayers_D,
-                                     init_std=init_std_D,
+        # Neural network (D) that discriminates between real and generated
+        # data
+        self.discr_net = get_network(batch_size, ndims_data, 1, ndims_hidden,
+                                     nlayers_D, init_std=init_std_D,
                                      hidden_nonlin=nonlinearity,
                                      batchnorm=False)
         # lambda hyperparam (scale of gradient penalty)
@@ -164,7 +160,8 @@ class WGAN(object):
         # number of dimensions in the data
         self.ndims_data = ndims_data
         # scale of added noise to data input into discriminator
-        # http://www.inference.vc/instance-noise-a-trick-for-stabilising-gan-training/
+        # http://www.inference.vc/instance-noise-a-trick-for-stabilising-gan-
+        # training/
         self.instance_noise = instance_noise
 
     def get_generated_data(self, N, training=False):
@@ -184,7 +181,7 @@ class WGAN(object):
             data += (self.instance_noise *
                      tf.random_normal((data.shape)))
         discr_probs = self.discr_net(data)
-                                             
+
         return discr_probs
 
     def get_gen_params(self):
@@ -203,16 +200,15 @@ class WGAN(object):
         #  Gradient penalty from "Improved Training of Wasserstein GANs"
         alpha = tf.random_uniform((self.batch_size, 1))
         interpolates = alpha * real_data + ((1 - alpha) * fake_data)
-        interp_discr_out = self.get_discr_vals(interpolates,
-                                               training=True)
-        gradients = tf.gradients(tf.reduce_sum(interp_discr_out), interpolates)
+        interp_discr_out = self.get_discr_vals(interpolates, training=True)
+        gradients = tf.gradients(tf.reduce_sum(interp_discr_out),
+                                 interpolates)
         slopes = tf.sqrt(tf.reduce_sum(gradients**2, axis=1))  # gradient norms
         gradient_penalty = tf.reduce_mean((slopes - 1)**2)
         cost -= self.lmbda * gradient_penalty
         return cost
 
     def get_gen_cost(self, gen_data):
-        fake_discr_out = self.get_discr_vals(gen_data,
-                                             training=True)
+        fake_discr_out = self.get_discr_vals(gen_data, training=True)
         cost = tf.reduce_mean(fake_discr_out)
         return cost
