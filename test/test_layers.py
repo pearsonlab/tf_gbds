@@ -26,7 +26,7 @@ def test_DLGMLayer():
                   kernel_initializer=tf.orthogonal_initializer())(unc_d_nn))
     unc_d_net = models.Model(inputs=unc_d_nn, outputs=unc_d_nn_d)
 
-    Data = np.reshape(np.arange(0, 50), [10, 5])
+    Data = np.reshape(np.arange(-5, 45, dtype=np.float32), [10, 5])
 
     rec_nets = ({'mu_net': mu_net, 'u_net': u_net, 'unc_d_net': unc_d_net})
 
@@ -64,7 +64,7 @@ def test_DLGMLayer():
     for i in range(batch_u.shape[0]):
         u = batch_u[i]
         unc_d = batch_unc_d[i]
-        d = np.log1p(np.exp(np.maximum(unc_d, -15.0)))
+        d = np.log1p(np.exp(np.maximum(unc_d, -15.0)), dtype=np.float32)
         D_inv = np.diag(1.0 / d)
         eta = 1.0 / (u.T.dot(D_inv).dot(u) + 1.0)
         C = D_inv - eta * D_inv.dot(u).dot(u.T).dot(D_inv)
@@ -75,6 +75,7 @@ def test_DLGMLayer():
         # original coefficient from paper is above
         coeff = eta / (1.0 + np.sqrt(eta))
         R = np.sqrt(D_inv) - coeff * D_inv.dot(u).dot(u.T).dot(np.sqrt(D_inv))
+
         batch_Tr_C.append(Tr_C)
         batch_ld_C.append(ld_C)
         batch_R.append(R)
@@ -102,25 +103,25 @@ def test_DLGMLayer():
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         batch_mu = lm.batch_mu.eval()
-        test_rand = np.reshape(np.arange(0, 40, dtype=np.float32), [10, 4])
         batch_xi = (batch_mu + np.squeeze(np.matmul(lm.batch_R.eval(),
                     np.expand_dims(test_rand, axis=2))))
 
         test_batch_xi = (lm.batch_mu + tf.squeeze(tf.matmul(lm.batch_R,
-                         tf.expand_dims(tf.constant(test_rand), -1))))
+                         tf.expand_dims(tf.constant(test_rand, tf.float32),
+                                        -1))))
 
-        activation = np.matmul(Data.astype(np.float32), W) + b
+        activation = np.matmul(np.maximum(Data, 0), W) + b
         xi = batch_xi
         activation += np.matmul(xi, G)
 
         inputs = tf.constant(Data, dtype=tf.float32)
         activation_lm = tf.matmul(lm.nonlinearity(inputs), lm.W) + lm.b
-
-        activation_lm += tf.matmul(xi, lm.G)
+        activation_lm += tf.matmul(tf.constant(xi, tf.float32), lm.G)
+        activation_lm = activation_lm.eval()
 
         npt.assert_allclose(batch_xi, test_batch_xi.eval(), atol=1e-5,
                             rtol=1e-4)
-        npt.assert_allclose(activation_lm.eval(), activation, atol=1e-3,
+        npt.assert_allclose(activation_lm, activation, atol=1e-3,
                             rtol=1e-4)
 
 
