@@ -6,6 +6,7 @@ https://github.com/earcher/vilds/blob/master/code/GenerativeModel.py
 import tensorflow as tf
 from tensorflow.contrib.keras import layers, models
 import numpy as np
+from tf_gbds.CGAN import CGAN, WGAN
 
 
 class GenerativeModel(object):
@@ -234,6 +235,338 @@ class LDS(GenerativeModel):
                        tf.cast(tf.shape(Y)[0], tf.float32))
 
         return LogDensity
+
+
+class GBDS(GenerativeModel):
+    """
+    Goal-Based Dynamical System
+
+    Inputs:
+    - GenerativeParams: A dictionary of parameters for the model
+        Entries include:
+        - get_states: function that calculates current state from position
+        - pen_eps: Penalty on control signal noise, epsilon
+        - pen_sigma: Penalty on goals state noise, sigma
+        - pen_g: Two penalties on goal state leaving boundaries (Can be set
+                 None)
+        - bounds_g: Boundaries corresponding to above penalties
+        - NN_postJ_mu: Neural network that parametrizes the mean of the
+                       posterior of J (i.e. mu and sigma), conditioned on
+                       goals
+        - NN_postJ_sigma: Neural network that parametrizes the covariance of
+                          the posterior of J (i.e. mu and sigma), conditioned
+                          on goals
+        - yCols: Columns of Y this agent corresponds to. Used to index columns
+                 in real data to compare against generated data.
+        - vel: Maximum velocity of each dimension in yCols.
+    - yDim: Number of dimensions for this agent
+    - yDim_in: Number of total dimensions in the data
+    - srng: Theano symbolic random number generator (theano RandomStreams
+            object)
+    - nrng: Numpy random number generator
+    """
+    def __init__(self, GenerativeParams, yDim, yDim_in, srng=None, nrng=None):
+        super(GBDS, self).__init__(GenerativeParams, yDim, yDim, srng,
+                                   nrng)
+        self.yDim_in = yDim_in  # dimension of observation input
+        self.JDim = self.yDim * 2  # dimension of CGAN output
+        # function that calculates states from positions
+        self.get_states = GenerativeParams['get_states']
+
+        # penalty on epsilon (noise on control signal)
+        if 'pen_eps' in GenerativeParams:
+            self.pen_eps = GenerativeParams['pen_eps']
+        else:
+            self.pen_eps = None
+
+        # penalty on sigma (noise on goal state)
+        if 'pen_sigma' in GenerativeParams:
+            self.pen_sigma = GenerativeParams['pen_sigma']
+        else:
+            self.pen_sigma = None
+
+        # penalties on goal state passing boundaries
+        if 'pen_g' in GenerativeParams:
+            self.pen_g = GenerativeParams['pen_g']
+        else:
+            self.pen_g = (None, None)
+
+        # corresponding boundaries for pen_g
+        if 'bounds_g' in GenerativeParams:
+            self.bounds_g = GenerativeParams['bounds_g']
+        else:
+            self.bounds_g = (1.0, 1.5)
+
+        # technically part of the recognition model, but it's here for
+        # convenience
+        self.NN_postJ_mu = GenerativeParams['NN_postJ_mu']
+        self.NN_postJ_sigma = GenerativeParams['NN_postJ_sigma']
+
+        # which dimensions of Y to predict
+        self.yCols = GenerativeParams['yCols']
+
+        # velocity for each observation dimension
+        self.vel = tf.constant(GenerativeParams['vel'], tf.float32)
+
+        # coefficients for PID controller (one for each dimension)
+        # https://en.wikipedia.org/wiki/PID_controller#Discrete_implementation
+        unc_Kp = tf.Variable(initial_value=np.zeros((self.yDim, 1)),
+                             name='unc_Kp', dtype=tf.float32)
+        unc_Ki = tf.Variable(initial_value=np.zeros((self.yDim, 1)),
+                             name='unc_Ki', dtype=np.float32)
+        unc_Kd = tf.Variable(initial_value=np.zeros((self.yDim, 1)),
+                             name='unc_Kd', dtype=np.float32)
+
+        # create list of PID controller parameters for easy access in
+        # getParams
+        # self.PID_params = [unc_Kp]
+        self.PID_params = [unc_Kp, unc_Ki, unc_Kd]
+
+        # constrain PID controller parameters to be positive
+        self.Kp = tf.nn.softplus(unc_Kp)
+        # self.Ki = unc_Ki
+        self.Ki = tf.nn.softplus(unc_Ki)
+        # self.Kd = unc_Kd
+        self.Kd = tf.nn.softplus(unc_Kd)
+
+        # calculate coefficients to be placed in convolutional filter
+        t_coeff = self.Kp + self.Ki + self.Kd
+        t1_coeff = -self.Kp - 2 * self.Kd
+        t2_coeff = self.Kd
+
+        # concatenate coefficients into filter
+        self.L = tf.concat([t_coeff, t1_coeff, t2_coeff], axis=1)
+
+        # noise coefficient on goal states
+        self.unc_sigma = tf.Variable(initial_value=-7 * np.ones((1,
+                                                                 self.yDim)),
+                                     name='unc_sigma', dtype=tf.float32)
+        self.sigma = tf.nn.softplus(self.unc_sigma)
+
+        # noise coefficient on control signals
+        self.unc_eps = tf.Variable(initial_value=-11 * np.ones((1,
+                                                                self.yDim)),
+                                   name='unc_eps', dtype=tf.float32)
+        self.eps = tf.nn.softplus(self.unc_eps)
+
+    def init_CGAN(self, *args, **kwargs):
+        """
+        Initialize Conditional Generative Adversarial Network that generates
+        Gaussian mixture components, J (mu and sigma), from states and random
+        noise
+
+        Look at CGAN.py for initialization parameters.
+
+        This function exists so that a control model can be trained, and
+        then, several cGANs can be trained using that control model.
+        """
+        kwargs['srng'] = self.srng
+        self.CGAN_J = CGAN(*args, **kwargs)
+
+    def init_GAN(self, *args, **kwargs):
+        """
+        Initialize Generative Adversarial Network that generates
+        initial goal state, g_0, from random noise
+
+        Look at CGAN.py for initialization parameters.
+
+        This function exists so that a control model can be trained, and
+        then, several GANs can be trained using that control model.
+        """
+        kwargs['srng'] = self.srng
+        self.GAN_g0 = WGAN(*args, **kwargs)
+
+    def get_preds(self, Y, training=False, post_g=None, gen_g=None,
+                  extra_conds=None):
+        """
+        Return the predicted next J, g, U, and Y for each point in Y.
+
+        For training: provide post_g, sample from the posterior,
+                      which is used to calculate the ELBO
+        For generating new data: provide gen_g, the generated goal states up
+                                 to the current timepoint
+        """
+        if training and post_g is None:
+            raise Exception(
+                "Must provide sample of g from posterior during training")
+        # Draw next goals based on force
+        if post_g is not None:  # Calculate next goals from posterior
+            postJ = self.draw_postJ(post_g)
+            J = None
+            # not generating J from CGAN, using sample from posterior
+            J_mu = postJ[:, :self.yDim]
+            J_lambda = tf.nn.softplus(postJ[:, self.yDim:])
+            next_g = (post_g[:-1] + J_lambda * J_mu) / (1 + J_lambda)
+        elif gen_g is not None:  # Generate next goals
+            # get states from position
+            states = self.get_states(Y)
+            if extra_conds is not None:
+                states = tf.concat([states, extra_conds], axis=1)
+            # Get external force from CGAN
+            J = self.CGAN_J.get_generated_data(states, training=training)
+            J_mu = J[:, :self.yDim]
+            J_lambda = tf.nn.softplus(J[:, self.yDim:])
+            goal = ((gen_g[(-1,)] + J_lambda[(-1,)] * J_mu[(-1,)]) /
+                    (1 + J_lambda[(-1,)]))
+            var = self.sigma**2 / (1 + J_lambda[(-1,)])
+            goal += tf.random_normal(goal.shape, seed=1234) * tf.sqrt(var)
+            next_g = tf.concat([gen_g[1:], goal], axis=0)
+        else:
+            raise Exception("Goal states must be provided " +
+                            "(either posterior or generated)")
+        # PID Controller for next control point
+        if post_g is not None:  # calculate error from posterior goals
+            error = post_g[1:] - Y[:, self.yCols]
+        else:  # calculate error from generated goals
+            error = next_g - Y[:, self.yCols]
+
+        # Assume control starts at zero
+        Uprev = tf.concat([tf.zeros([1, self.yDim]),
+                           tf.atanh((Y[1:, self.yCols] -
+                                     Y[:-1, self.yCols]) /
+                                    tf.reshape(self.vel, [1, self.yDim]))],
+                          axis=0)
+        Udiff = []
+        for i in range(self.yDim):
+            # get current error signal and corresponding filter
+            signal = error[:, i]
+            filt = tf.reshape(self.L[i], [-1, 1, 1, 1])
+            # zero pad beginning
+            signal = tf.reshape(tf.concat([tf.zeros(2), signal], axis=0),
+                                [1, 1, -1, 1])
+            res = tf.nn.conv2d(signal, filt, strides=[1, 1, 1, 1],
+                               padding="VALID", data_format="NCHW")
+            res = tf.reshape(res, [-1, 1])
+            Udiff.append(res)
+        if len(Udiff) > 1:
+            Udiff = tf.concat([*Udiff], axis=1)
+        else:
+            Udiff = Udiff[0]
+        if post_g is None:  # Add control signal noise to generated data
+            Udiff += self.eps * tf.random_normal(Udiff.shape)
+        Upred = Uprev + Udiff
+        # get predicted Y
+        Ypred = (Y[:, self.yCols] +
+                 tf.reshape(self.vel, [1, self.yDim]) * tf.tanh(Upred))
+
+        return J, next_g, Upred, Ypred
+
+    def draw_postJ(self, g):
+        """
+        Calculate posterior of J using current and next goal
+        """
+        # get current and next goal
+        g_stack = tf.cast(tf.concat([g[:-1], g[1:]], axis=1), tf.float32)
+        postJ_mu = self.NN_postJ_mu(g_stack)
+        batch_unc_sigma = tf.reshape(self.NN_postJ_sigma(g_stack),
+                                     [-1, self.JDim, self.JDim])
+
+        def constrain_sigma(acc, unc_sigma):
+            unc_sigma = tf.squeeze(unc_sigma, 0)
+            return (tf.diag(tf.nn.softplus(tf.diag_part(unc_sigma))) +
+                    (unc_sigma - tf.matrix_band_part(unc_sigma, 0, -1)))
+
+        postJ_sigma = tf.scan(fn=constrain_sigma,
+                              elems=[batch_unc_sigma],
+                              initializer=tf.zeros([self.JDim, self.JDim]))
+        postJ = postJ_mu + tf.squeeze(tf.matmul(
+            postJ_sigma, tf.random_normal([tf.shape(g_stack)[0].eval(),
+                                           self.JDim, 1], seed=1234)), 2)
+        return postJ
+
+    def evaluateGANLoss(self, post_g0, mode='D'):
+        """
+        Evaluate loss of GAN
+        Mode is D for discriminator, G for generator
+        """
+        if self.GAN_g0 is None:
+            raise Exception("Must initiate GAN before calling")
+        # Get external force from CGAN
+        gen_g0 = self.GAN_g0.get_generated_data(tf.shape(post_g0)[0].eval(),
+                                                training=True)
+        if mode == 'D':
+            return self.GAN_g0.get_discr_cost(post_g0, gen_g0)
+        elif mode == 'G':
+            return self.GAN_g0.get_gen_cost(gen_g0)
+        else:
+            raise Exception("Invalid mode. Provide 'G' for generator loss " +
+                            "or 'D' for discriminator loss.")
+
+    def evaluateCGANLoss(self, postJ, states, mode='D'):
+        """
+        Evaluate loss of cGAN
+        Mode is D for discriminator, G for generator
+        """
+        if self.CGAN_J is None:
+            raise Exception("Must initiate cGAN before calling")
+        # Get external force from CGAN
+        genJ = self.CGAN_J.get_generated_data(states, training=True)
+        if mode == 'D':
+            return self.CGAN_J.get_discr_cost(postJ, genJ, states)
+        elif mode == 'G':
+            return self.CGAN_J.get_gen_cost(genJ, states)
+        else:
+            raise Exception("Invalid mode. Provide 'G' for generator loss " +
+                            "or 'D' for discriminator loss.")
+
+    def evaluateLogDensity(self, g, Y):
+        '''
+        Return a theano function that evaluates the log-density of the
+        GenerativeModel.
+
+        g: Goal state time series (sample from the recognition model)
+        Y: Time series of positions
+        '''
+        # Calculate real control signal
+        U_true = tf.atanh((Y[1:, self.yCols] - Y[:-1, self.yCols]) /
+                          self.vel.set_shape([1, self.yDim]))
+        # Get predictions for next timestep (at each timestep except for last)
+        # disregard last timestep bc we don't know the next value, thus, we
+        # can't calculate the error
+        Jpred, g_pred, Upred, Ypred = self.get_preds(Y[:-1], training=True,
+                                                     post_g=g)
+        # calculate loss on control signal
+        resU = U_true - Upred
+        LogDensity = -tf.reduce_sum(resU**2 / (2 * self.eps**2))
+        LogDensity -= (0.5 * tf.log(2 * np.pi) +
+                       tf.reduce_sum(tf.log(self.eps)))
+
+        # calculate loss on goal state
+        res_g = g[1:] - g_pred
+        LogDensity -= tf.reduce_sum(res_g**2 / (2 * self.sigma**2))
+        LogDensity -= (0.5 * tf.log(2 * np.pi) +
+                       tf.reduce_sum(tf.log(self.sigma)))
+
+        # linear penalty on goal state escaping game space
+        if self.pen_g[0] is not None:
+            LogDensity -= (self.pen_g[0] * tf.reduce_sum(
+                tf.nn.relu(g_pred - self.bounds_g[0])))
+            LogDensity -= (self.pen_g[0] * tf.reduce_sum(
+                tf.nn.relu(-g_pred - self.bounds_g[0])))
+        if self.pen_g[1] is not None:
+            LogDensity -= (self.pen_g[1] * tf.reduce_sum(
+                tf.nn.relu(g_pred - self.bounds_g[1])))
+            LogDensity -= (self.pen_g[1] * tf.reduce_sum(
+                tf.nn.relu(-g_pred - self.bounds_g[1])))
+
+        # penalty on eps
+        if self.pen_eps is not None:
+            LogDensity -= self.pen_eps * tf.reduce_sum(self.unc_eps)
+
+        # penalty on sigma
+        if self.pen_sigma is not None:
+            LogDensity -= self.pen_sigma * tf.reduce_sum(self.unc_sigma)
+
+        return LogDensity
+
+    def getParams(self):
+        '''
+        Return the learnable parameters of the model
+        '''
+        rets = self.NN_postJ_mu.variables
+        rets += self.NN_postJ_sigma.variables
+        rets += self.PID_params + [self.unc_eps]  # + [self.unc_sigma]
+        return rets
 
 
 class PLDS(LDS):
