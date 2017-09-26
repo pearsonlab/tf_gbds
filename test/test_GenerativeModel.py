@@ -84,14 +84,13 @@ def test_GBDS():
                          'NN_postJ_mu': get_network(16, 4, 4, 8, 4),
                          'NN_postJ_sigma': get_network(16, 4, 16, 8, 4),
                          'yCols': np.arange(2),
-                         'vel': 2 * np.ones(2)})
+                         'vel': 2 * np.ones((2, 1))})
     mm = G.GBDS(GenerativeParams, 2, 3)
 
     mm.init_CGAN(ndims_condition=6, ndims_noise=2, ndims_hidden=8,
                  ndims_data=3, nlayers_G=3, nlayers_D=3, batch_size=16)
     mm.init_GAN(ndims_noise=2, ndims_hidden=8, ndims_data=2, nlayers_G=3,
                 nlayers_D=3, batch_size=16)
-
 
     assert {'pen_eps', 'pen_sigma', 'pen_g', 'bounds_g', 'PID_params',
             'Kp', 'Ki', 'Kd', 'L', 'sigma', 'eps'}.issubset(set(dir(mm)))
@@ -123,40 +122,52 @@ def test_GBDS():
                 np.triu(postJ_unc_sigma[i]))
         postJ = postJ_mu + np.squeeze(np.matmul(
             postJ_sigma, tf.random_normal([16, 4, 1], seed=1234).eval()), 2)
-        npt.assert_allclose(mm.draw_postJ(post_g).eval(), postJ, atol=1e-5, rtol=1e-4)
+        npt.assert_allclose(mm.draw_postJ(post_g).eval(), postJ,
+                            atol=1e-5, rtol=1e-4)
 
         J_mu = postJ[:, :2]
         J_lambda = np.log1p(np.exp(postJ[:, 2:]))
         next_g_1 = (post_g[:-1] + J_lambda * J_mu) / (1 + J_lambda)
         npt.assert_allclose(next_g_tr.eval(), next_g_1, atol=1e-5, rtol=1e-4)
 
-        # gen_g = np.random.rand(16, 2)
-        # J_gen, next_g_gen, Upred_gen, Ypred_gen = mm.get_preds(Y,
-        #                                                        training=False,
-        #                                                        post_g=None,
-        #                                                        gen_g=gen_g)
-        # J_mu = J_gen[:, :2]
-        # J_lambda = np.log1p(np.exp(J_gen[:, 2:]))
-        # goal = ((gen_g[(-1,)] + J_lambda[(-1,)] * J_mu[(-1,)]) /
-        #             (1 + J_lambda[(-1,)]))
-        # var = mm.sigma.eval()**2 / (1 + J_lambda[(-1,)])
-        # goal += tf.random_normal(goal.shape, seed=1234).eval() * np.sqrt(var)
-        # next_g_2 = np.vtack((gen_g[1:], goal))
-        # npt.assert_allclose(next_g_gen.eval(), next_g_2, atol=1e-5, rtol=1e-4)
+        gen_g = np.random.rand(16, 2)
+        J_gen = mm.CGAN_J.get_generated_data(
+            mm.get_states(Y), training=False).eval(
+            feed_dict={"BatchNorm1/keras_learning_phase:0": 0})
+        J_mu = J_gen[:, :2]
+        J_lambda = np.log1p(np.exp(J_gen[:, 2:]))
+        goal = np.expand_dims((gen_g[(-1,)] + J_lambda[(-1,)] * J_mu[(-1,)]) /
+                              (1 + J_lambda[(-1,)]), 0)
+        var = mm.sigma.eval()**2 / (1 + J_lambda[(-1,)])
+        goal += tf.random_normal(goal.shape, seed=1234).eval() * np.sqrt(var)
+        next_g_2 = np.vstack((gen_g[1:], goal))
 
-        # post_g0 = tf.constant(np.random.rand(16, 2), tf.float32)
-        # npt.assert_allclose(mm.evaluateGANLoss(post_g0, mode='D').eval(),
-        #                     mm.GAN_g0.get_discr_cost(
-        #                         post_g0, mm.GAN_g0.get_generated_data(
-        #                             tf.shape(post_g0)[0].eval(), training=True))
-        #                     .eval(),
-        #                     atol=1e-5, rtol=1e-4)
-        # npt.assert_allclose(mm.evaluateCGANLoss(post_J, states, mode='D').eval(),
-        #                     mm.CGAN_J.get_discr_cost(
-        #                         post_J, mm.CGAN_J.get_generated_data(
-        #                             states, training=True))
-        #                     .eval(),
-        #                     atol=1e-5, rtol=1e-4)
+        J_lambda_gen = tf.nn.softplus(J_gen[:, 2:])
+        goal_gen = ((gen_g[(-1,)] + J_lambda_gen[(-1,)] * J_mu[(-1,)]) /
+                    (1 + J_lambda_gen[(-1,)]))
+        var_gen = mm.sigma**2 / (1 + J_lambda_gen[(-1,)])
+        goal_gen += (tf.random_normal(goal_gen.shape, seed=1234) *
+                     tf.sqrt(var_gen))
+        next_g_gen = tf.concat([gen_g[1:], goal_gen], axis=0)
+
+        npt.assert_allclose(next_g_gen.eval(), next_g_2, atol=1e-5, rtol=1e-4)
+
+        Y = np.random.rand(17, 3)
+        U_true_np = np.arctanh((Y[1:, np.arange(2)] - Y[:-1, np.arange(2)]) /
+                               (2 * np.ones((1, 2))))
+        Jpred, g_pred, Upred, Ypred = mm.get_preds(Y[:-1], training=True,
+                                                   post_g=post_g)
+        resU_np = U_true_np - Upred.eval()
+        LogDensity_np = -np.sum(resU_np**2 / (2 * mm.eps.eval()**2))
+        LogDensity_np -= (0.5 * np.log(2 * np.pi) +
+                          np.sum(np.log(mm.eps.eval())))
+        res_g_np = post_g[1:] - g_pred.eval()
+        LogDensity_np -= np.sum(res_g_np**2 / (2 * mm.sigma.eval()**2))
+        LogDensity_np -= (0.5 * np.log(2 * np.pi) +
+                          np.sum(np.log(mm.sigma.eval())))
+
+        npt.assert_allclose(mm.evaluateLogDensity(post_g, Y).eval(),
+                            LogDensity_np, atol=1e-5, rtol=1e-4)
 
 
 def test_PLDS():

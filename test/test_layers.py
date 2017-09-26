@@ -26,7 +26,7 @@ def test_DLGMLayer():
                   kernel_initializer=tf.orthogonal_initializer())(unc_d_nn))
     unc_d_net = models.Model(inputs=unc_d_nn, outputs=unc_d_nn_d)
 
-    Data = np.reshape(np.arange(-5, 45, dtype=np.float32), [10, 5])
+    Data = np.random.randn(10, 5).astype(np.float32)
 
     rec_nets = ({'mu_net': mu_net, 'u_net': u_net, 'unc_d_net': unc_d_net})
 

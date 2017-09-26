@@ -61,7 +61,7 @@ class DLGMLayer(keras_layers.Layer):
                                        shape=(num_units, num_units),
                                        initializer=param_init)
         self.G = (tf.diag(tf.nn.softplus(tf.diag_part(self.unc_G))) +
-                  tf.matrix_band_part(self.unc_G, -1, 0))
+                  self.unc_G - tf.matrix_band_part(self.unc_G, 0, -1))
         self.nonlinearity = nonlinearity
 
         # regularization term

@@ -433,9 +433,9 @@ class GBDS(GenerativeModel):
             filt = tf.reshape(self.L[i], [-1, 1, 1, 1])
             # zero pad beginning
             signal = tf.reshape(tf.concat([tf.zeros(2), signal], axis=0),
-                                [1, 1, -1, 1])
+                                [1, -1, 1, 1])
             res = tf.nn.conv2d(signal, filt, strides=[1, 1, 1, 1],
-                               padding="VALID", data_format="NCHW")
+                               padding="VALID")
             res = tf.reshape(res, [-1, 1])
             Udiff.append(res)
         if len(Udiff) > 1:
@@ -519,7 +519,7 @@ class GBDS(GenerativeModel):
         '''
         # Calculate real control signal
         U_true = tf.atanh((Y[1:, self.yCols] - Y[:-1, self.yCols]) /
-                          self.vel.set_shape([1, self.yDim]))
+                          tf.reshape(self.vel, [1, self.yDim]))
         # Get predictions for next timestep (at each timestep except for last)
         # disregard last timestep bc we don't know the next value, thus, we
         # can't calculate the error
