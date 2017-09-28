@@ -21,8 +21,7 @@ class RecognitionModel(object):
     appropriate sampling expression.
     """
 
-    def __init__(self, Input, xDim, yDim, srng=None, nrng=None):
-        self.srng = srng
+    def __init__(self, Input, xDim, yDim, nrng=None):
         self.nrng = nrng
 
         self.xDim = xDim
@@ -77,8 +76,7 @@ class SmoothingLDSTimeSeries(RecognitionModel):
 
     """
 
-    def __init__(self, RecognitionParams, Input, xDim, yDim, srng=None,
-                 nrng=None):
+    def __init__(self, RecognitionParams, Input, xDim, yDim, nrng=None):
         """
         :parameters:
             - Input : 'y' tensorflow placeholder (n_input)
@@ -91,8 +89,7 @@ class SmoothingLDSTimeSeries(RecognitionModel):
             - xDim, yDim, zDim : (integers) dimension of
                 latent space (x) and observation (y)
         """
-        super(SmoothingLDSTimeSeries, self).__init__(Input, xDim, yDim, srng,
-                                                     nrng)
+        super(SmoothingLDSTimeSeries, self).__init__(Input, xDim, yDim, nrng)
 
         self.Tt = tf.shape(Input)[0]
 
@@ -240,8 +237,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
     SmoothingLDSTimeSeries that uses past observations in addition to current
     to evaluate the latent.
     """
-    def __init__(self, RecognitionParams, Input, xDim, yDim, ntrials,
-                 srng=None, nrng=None):
+    def __init__(self, RecognitionParams, Input, xDim, yDim, ntrials, nrng=None):
         """
         :parameters:
             - Input : 'y' tensorflow placeholder (n_input)
@@ -268,7 +264,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
         self.Input1 = Input
         super(SmoothingPastLDSTimeSeries, self).__init__(RecognitionParams,
                                                          Input, xDim, yDim,
-                                                         srng, nrng)
+                                                         nrng)
 
 
 class SmoothingTimeSeries(RecognitionModel):
@@ -280,8 +276,7 @@ class SmoothingTimeSeries(RecognitionModel):
 
     '''
 
-    def __init__(self, RecognitionParams, Input, xDim, yDim, srng=None,
-                 nrng=None):
+    def __init__(self, RecognitionParams, Input, xDim, yDim, nrng=None):
         '''
         :parameters:
             - Input : 'y' theano.tensor.var.TensorVariable (n_input)
@@ -294,8 +289,7 @@ class SmoothingTimeSeries(RecognitionModel):
             - xDim, yDim, zDim : (integers) dimension of
                 latent space (x) and observation (y)
         '''
-        super(SmoothingTimeSeries, self).__init__(Input, xDim, yDim, srng,
-                                                  nrng)
+        super(SmoothingTimeSeries, self).__init__(Input, xDim, yDim, nrng)
 
 #        print RecognitionParams
 
@@ -401,8 +395,7 @@ class MeanFieldGaussian(RecognitionModel):
 
     '''
 
-    def __init__(self, RecognitionParams, Input, xDim, yDim, srng=None,
-                 nrng=None):
+    def __init__(self, RecognitionParams, Input, xDim, yDim, nrng=None):
         '''
         :parameters:
             - Input : 'y' theano.tensor.var.TensorVariable (n_input)
@@ -410,7 +403,7 @@ class MeanFieldGaussian(RecognitionModel):
             - xDim, yDim, zDim : (integers) dimension of
                 latent space (x), observation (y)
         '''
-        super(MeanFieldGaussian, self).__init__(Input, xDim, yDim, srng, nrng)
+        super(MeanFieldGaussian, self).__init__(Input, xDim, yDim, nrng)
         self.Tt = tf.shape(Input)[0]
         self.mu_train = RecognitionParams['NN_Mu']['is_train']
         self.NN_Mu = RecognitionParams['NN_Mu']['network']

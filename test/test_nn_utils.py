@@ -16,7 +16,7 @@ data = tf.placeholder(dtype=tf.float32, shape=(batch_size, input_dim))
 def test_nn_utils_bias():
     NN, PKbias_layers = get_network(
         batch_size, input_dim, output_dim, hidden_dim, num_layers,
-        PKLparams=params, srng=None, batchnorm=True, is_shooter=True,
+        PKLparams=params, batchnorm=True, is_shooter=True,
         row_sparse=False, add_pklayers=True, filt_size=filt_size)
     assert isinstance(NN, models.Model)
     assert len(PKbias_layers) == num_layers
@@ -44,7 +44,7 @@ def test_nn_utils_bias():
 def test_nn_utils_rowbias():
     NN, PKbias_layers = get_network(
         batch_size, input_dim, output_dim, hidden_dim, num_layers,
-        PKLparams=params, srng=None, batchnorm=True, is_shooter=True,
+        PKLparams=params, batchnorm=True, is_shooter=True,
         row_sparse=True, add_pklayers=True, filt_size=filt_size)
     assert isinstance(NN, models.Model)
     assert len(PKbias_layers) == num_layers

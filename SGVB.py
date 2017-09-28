@@ -53,7 +53,6 @@ class SGVB():
                  ):
 
         # instantiate rng's
-        self.srng = None
         self.nrng = np.random.RandomState(124)
 
         # ---------------------------------------------------------
@@ -71,9 +70,9 @@ class SGVB():
 
         # instantiate our prior & recognition models
         self.mrec = REC_MODEL(rec_params, self.Y, self.xDim, self.yDim,
-                              self.srng, self.nrng)
+                              self.nrng)
         self.mprior = GEN_MODEL(gen_params, self.xDim, self.yDim,
-                                srng=self.srng, nrng=self.nrng)
+                                nrng=self.nrng)
 
         self.isTrainingRecognitionModel = True
         self.isTrainingGenerativeModel = True

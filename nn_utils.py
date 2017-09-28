@@ -30,7 +30,7 @@ from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
 
 
 def get_network(batch_size, input_dim, output_dim, hidden_dim, num_layers,
-                PKLparams=None, srng=None, batchnorm=False, is_shooter=False,
+                PKLparams=None, batchnorm=False, is_shooter=False,
                 row_sparse=False, add_pklayers=False, filt_size=None,
                 hidden_nonlin="relu", output_nonlin="linear",
                 init_std=1.0):
@@ -60,10 +60,10 @@ def get_network(batch_size, input_dim, output_dim, hidden_dim, num_layers,
     for i in range(num_layers):
         if is_shooter and add_pklayers:
             if row_sparse:
-                PK_bias = PKRowBiasLayer(NN, srng, PKLparams,
+                PK_bias = PKRowBiasLayer(NN, PKLparams,
                                          name="PKRowBias%s" % (i+1))
             else:
-                PK_bias = PKBiasLayer(NN, srng, PKLparams,
+                PK_bias = PKBiasLayer(NN, PKLparams,
                                       name="PKBias%s" % (i+1))
             PKbias_layers.append(PK_bias)
             NN.add(PK_bias)

@@ -41,7 +41,6 @@ class SGVB_GBDS():  # (Trainable):
     def __init__(self, gen_params_ball, gen_params_goalie, yCols_ball,
                  yCols_goalie, rec_params, ntrials):
         # instantiate rng's
-        self.srng = tf.set_random_seed(234)
         self.nrng = np.random.RandomState(124)
 
         # actual model parameters
@@ -58,21 +57,21 @@ class SGVB_GBDS():  # (Trainable):
 
         self.yCols_goalie = yCols_goalie
         self.yCols_ball = yCols_ball
-        self.yDim_goalie = tf.shape(self.yCols_goalie)[0]
-        self.yDim_ball = tf.shape(self.yCols_ball)[0]
+        self.yDim_goalie = len(self.yCols_goalie)
+        self.yDim_ball = len(self.yCols_ball)
         self.yDim = tf.shape(self.Y)[1]
         self.xDim = self.yDim
 
         # instantiate our prior and recognition models
         self.mrec = SmoothingPastLDSTimeSeries(rec_params, self.Y, self.xDim,
-                                               self.yDim, ntrials, self.srng,
+                                               self.yDim, ntrials,
                                                self.nrng)
         self.mprior_goalie = GBDS(gen_params_goalie,
                                   self.yDim_goalie, self.yDim,
-                                  srng=self.srng, nrng=self.nrng)
+                                  nrng=self.nrng)
         self.mprior_ball = GBDS(gen_params_ball,
                                 self.yDim_ball, self.yDim,
-                                srng=self.srng, nrng=self.nrng)
+                                nrng=self.nrng)
 
         self.isTrainingGenerativeModel = True
         self.isTrainingRecognitionModel = True
@@ -158,10 +157,10 @@ class SGVB_GBDS():  # (Trainable):
         Compute a one-sample approximation the ELBO (lower bound on marginal
         likelihood), normalized by batch size (length of Y in first dimension).
         '''
-        JCols_goalie = tf.range(self.yDim_goalie * 2)
-        JCols_ball = tf.range(self.yDim_goalie * 2,
-                              self.yDim_goalie * 2 + self.yDim_ball * 2)
-        q = self.mrec.getSample()
+        JCols_goalie = range(self.yDim_goalie * 2)
+        JCols_ball = range(self.yDim_goalie * 2,
+                           self.yDim_goalie * 2 + self.yDim_ball * 2)
+        q = tf.squeeze(self.mrec.getSample(), 2)
         cost = 0
         if self.isTrainingGenerativeModel or self.isTrainingRecognitionModel:
             cost += self.mprior_goalie.evaluateLogDensity(

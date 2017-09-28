@@ -262,7 +262,7 @@ def get_accel(data):
 
 
 def get_network(input_dim, output_dim, hidden_dim, num_layers,
-                PKLparams, srng, batchnorm=False, is_shooter=False,
+                PKLparams, batchnorm=False, is_shooter=False,
                 row_sparse=False, add_pklayers=False, filt_size=None):
     """
     Returns a NN with the specified parameters.
@@ -292,10 +292,10 @@ def get_network(input_dim, output_dim, hidden_dim, num_layers,
     for i in range(num_layers):
         if is_shooter and add_pklayers:
             if row_sparse:
-                PK_bias = PKRowBiasLayer(NN, srng, PKLparams,
+                PK_bias = PKRowBiasLayer(NN, PKLparams,
                                          name="PKRowBias%s" % (i+1))
             else:
-                PK_bias = PKBiasLayer(NN, srng, PKLparams,
+                PK_bias = PKBiasLayer(NN, PKLparams,
                                       name="PKBias%s" % (i+1))
             PKbias_layers.append(PK_bias)
             NN.add(PK_bias)
@@ -317,24 +317,23 @@ def get_network(input_dim, output_dim, hidden_dim, num_layers,
 
 def get_rec_params_GBDS(seed, obs_dim, lag, num_layers, hidden_dim, penalty_Q,
                         PKLparams):
-    srng = tf.set_random_seed(seed)
 
     mu_net, PKbias_layers_mu = get_network(obs_dim * (lag + 1),
                                            obs_dim, hidden_dim,
                                            num_layers, PKLparams,
-                                           srng, batchnorm=False)
+                                           batchnorm=False)
 
     lambda_net, PKbias_layers_lambda = get_network(obs_dim * (lag + 1),
                                                    obs_dim**2,
                                                    hidden_dim,
                                                    num_layers, PKLparams,
-                                                   srng, batchnorm=False)
+                                                   batchnorm=False)
 
     lambdaX_net, PKbias_layers_lambdaX = get_network(obs_dim * (lag + 1),
                                                      obs_dim**2,
                                                      hidden_dim,
                                                      num_layers, PKLparams,
-                                                     srng, batchnorm=False)
+                                                     batchnorm=False)
 
     rec_params = dict(A=.9 * np.eye(obs_dim),
                       QinvChol=np.eye(obs_dim),
@@ -356,7 +355,6 @@ def get_gen_params_GBDS(seed, obs_dim_agent, obs_dim, add_accel,
                         yCols_agent, num_layers_rec, hidden_dim, PKLparams,
                         vel, penalty_eps, penalty_sigma,
                         boundaries_g, penalty_g):
-    srng = tf.set_random_seed(seed)
     if add_accel:
         get_states = get_accel
     else:
@@ -366,14 +364,12 @@ def get_gen_params_GBDS(seed, obs_dim_agent, obs_dim, add_accel,
                                  obs_dim_agent * 2,
                                  hidden_dim,
                                  num_layers_rec,
-                                 PKLparams,
-                                 srng)
+                                 PKLparams)
     NN_postJ_sigma, _ = get_network(obs_dim_agent * 2,
                                     (obs_dim_agent * 2)**2,
                                     hidden_dim,
                                     num_layers_rec,
-                                    PKLparams,
-                                    srng)
+                                    PKLparams)
 
     gen_params = dict(vel=vel[yCols_agent],
                       yCols=yCols_agent,  # which columns belong to the agent
@@ -383,8 +379,7 @@ def get_gen_params_GBDS(seed, obs_dim_agent, obs_dim, add_accel,
                       pen_g=penalty_g,
                       NN_postJ_mu=NN_postJ_mu,
                       NN_postJ_sigma=NN_postJ_sigma,
-                      get_states=get_states,
-                      )
+                      get_states=get_states)
 
     return gen_params
 
@@ -525,9 +520,9 @@ class DatasetTrialIndexIterator(object):
         self.randomize = randomize
 
     def __iter__(self):
-        n_batches = self.y.shape[0]
+        n_batches = len(self.y)
         if self.randomize:
-            indices = range(n_batches)
+            indices = list(range(n_batches))
             np.random.shuffle(indices)
             for i in indices:
                 yield self.y[i]

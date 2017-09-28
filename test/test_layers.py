@@ -34,7 +34,7 @@ def test_DLGMLayer():
     inputlayer = layers.InputLayer(batch_input_shape=(10, 5))
     NN.add(inputlayer)
 
-    lm = DLGMLayer(NN, 4, srng=None, rec_nets=rec_nets, k=-1)
+    lm = DLGMLayer(NN, 4, rec_nets=rec_nets, k=-1)
     lm.calculate_xi(tf.constant(Data.astype(np.float32)))
     lm.get_ELBO(tf.constant(10.0))
 
@@ -134,7 +134,7 @@ def test_pkbiaslayer():
     nbatches = 4
     Input = np.random.randn(1, num_inputs)
 
-    l = PKBiasLayer(NN, None, params)
+    l = PKBiasLayer(NN, params)
     assert isinstance(l, layers.Layer)
     assert l.draw_on_every_output
 
@@ -175,7 +175,7 @@ def test_pkrowbiaslayer():
     nbatches = 4
     Input = np.random.randn(1, num_inputs)
 
-    l = PKRowBiasLayer(NN, None, params)
+    l = PKRowBiasLayer(NN, params)
     assert isinstance(l, layers.Layer)
 
     with tf.Session() as sess:

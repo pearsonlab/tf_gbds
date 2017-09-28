@@ -12,11 +12,10 @@ def test_CGAN():
     ndims_hidden = 5
     ndims_data = 5
     batch_size = 10
-    srng = None
     training = None
 
     cg = C.CGAN(nlayers_G, nlayers_D, ndims_condition, ndims_noise,
-                ndims_hidden, ndims_data, batch_size, srng)
+                ndims_hidden, ndims_data, batch_size)
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         conditions = np.reshape(np.arange(0, 30), [10, 3])
@@ -133,10 +132,9 @@ def test_WGAN():
     ndims_hidden = 5
     ndims_data = 5
     batch_size = 10
-    srng = None
 
     wg = C.WGAN(nlayers_G, nlayers_D, ndims_noise, ndims_hidden, ndims_data,
-                batch_size, srng)
+                batch_size)
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         real_data = np.reshape(np.arange(0, 50), [10, 5])

@@ -106,11 +106,11 @@ if __name__ == '__main__':
     np.random.seed(args.seed)  # set seed for consistent train/val split
 
     if args.session_type == 'recording':
-        print "Loading movement data from recording sessions..."
+        print("Loading movement data from recording sessions...")
         groups = get_session_names(args.session_index,
                                    ('type',), ('recording',))
     elif args.session_type == 'injection':
-        print "Loading movement data from injection sessions..."
+        print("Loading movement data from injection sessions...")
         groups = get_session_names(args.session_index,
                                    ('type', 'type'),
                                    ('saline', 'muscimol'),
@@ -120,7 +120,7 @@ if __name__ == '__main__':
     y_data, y_data_modes, y_val_data, y_val_data_modes = load_pk_data(
         args.data_loc, groups)
 
-    print "Preparing GAN data..."
+    print("Preparing GAN data...")
     sys.stdout.flush()
     # add injection location and type as conditions to cGAN
     if args.session_type == 'injection':

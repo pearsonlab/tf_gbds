@@ -13,7 +13,7 @@ class CGAN(object):
     arXiv preprint arXiv:1704.00028 (2017).
     """
     def __init__(self, nlayers_G, nlayers_D, ndims_condition, ndims_noise,
-                 ndims_hidden, ndims_data, batch_size, srng,
+                 ndims_hidden, ndims_data, batch_size,
                  lmbda=10.0,
                  nonlinearity=tf.contrib.keras.activations.relu,
                  init_std_G=1.0, init_std_D=0.005, condition_noise=None,
@@ -37,7 +37,7 @@ class CGAN(object):
         # size of minibatches (number of rows)
         self.batch_size = batch_size
         # symbolic random number generator
-        self.srng = srng
+        # self.srng = None
         # number of dimensions of conditional input
         self.ndims_condition = ndims_condition
         # number of dimensions of noise input
@@ -131,7 +131,7 @@ class WGAN(object):
     arXiv preprint arXiv:1704.00028 (2017).
     """
     def __init__(self, nlayers_G, nlayers_D, ndims_noise,
-                 ndims_hidden, ndims_data, batch_size, srng,
+                 ndims_hidden, ndims_data, batch_size,
                  lmbda=10.0,
                  nonlinearity=tf.contrib.keras.activations.relu,
                  init_std_G=1.0, init_std_D=0.005, instance_noise=None):
@@ -152,7 +152,7 @@ class WGAN(object):
         # size of minibatches (number of rows)
         self.batch_size = batch_size
         # symbolic random number generator
-        self.srng = srng
+        # self.srng = None
         # number of dimensions of noise input
         self.ndims_noise = ndims_noise
         # number of hidden units

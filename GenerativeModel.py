@@ -13,19 +13,18 @@ class GenerativeModel(object):
     """
     Interface class for generative time-series models
     """
-    def __init__(self, GenerativeParams, xDim, yDim, srng=None, nrng=None):
+    def __init__(self, GenerativeParams, xDim, yDim, nrng=None):
 
         # input variable referencing top-down or external input
 
         self.xDim = xDim
         self.yDim = yDim
 
-        self.srng = srng
         self.nrng = nrng
 
         # internal RV for generating sample
-        self.Xsamp = tf.placeholder(tf.float32, shape=(None, xDim),
-                                    name='Xsamp')
+        self.Xsamp = tf.placeholder(tf.float32, shape=[None, xDim],
+                                    name="Xsamp")
 
     def evaluateLogDensity(self):
         """
@@ -82,9 +81,9 @@ class LDS(GenerativeModel):
                                    - network: a lasagne network with input
                                    dimensionality n and output dimensionality m
     """
-    def __init__(self, GenerativeParams, xDim, yDim, srng=None, nrng=None):
+    def __init__(self, GenerativeParams, xDim, yDim, nrng=None):
 
-        super(LDS, self).__init__(GenerativeParams, xDim, yDim, srng, nrng)
+        super(LDS, self).__init__(GenerativeParams, xDim, yDim, nrng)
 
         # parameters
         if 'A' in GenerativeParams:
@@ -265,9 +264,8 @@ class GBDS(GenerativeModel):
             object)
     - nrng: Numpy random number generator
     """
-    def __init__(self, GenerativeParams, yDim, yDim_in, srng=None, nrng=None):
-        super(GBDS, self).__init__(GenerativeParams, yDim, yDim, srng,
-                                   nrng)
+    def __init__(self, GenerativeParams, yDim, yDim_in, nrng=None):
+        super(GBDS, self).__init__(GenerativeParams, yDim, yDim, nrng)
         self.yDim_in = yDim_in  # dimension of observation input
         self.JDim = self.yDim * 2  # dimension of CGAN output
         # function that calculates states from positions
@@ -360,7 +358,6 @@ class GBDS(GenerativeModel):
         This function exists so that a control model can be trained, and
         then, several cGANs can be trained using that control model.
         """
-        kwargs['srng'] = self.srng
         self.CGAN_J = CGAN(*args, **kwargs)
 
     def init_GAN(self, *args, **kwargs):
@@ -373,7 +370,6 @@ class GBDS(GenerativeModel):
         This function exists so that a control model can be trained, and
         then, several GANs can be trained using that control model.
         """
-        kwargs['srng'] = self.srng
         self.GAN_g0 = WGAN(*args, **kwargs)
 
     def get_preds(self, Y, training=False, post_g=None, gen_g=None,
@@ -575,11 +571,11 @@ class PLDS(LDS):
     Gaussian linear dynamics sampling code from the LDS; implements a Poisson
     density evaluation for discrete (count) data.
     """
-    def __init__(self, GenerativeParams, xDim, yDim, srng=None, nrng=None):
+    def __init__(self, GenerativeParams, xDim, yDim, nrng=None):
         # The LDS class expects "RChol" for Gaussian observations - we just
         # pass a dummy
         GenerativeParams['RChol'] = np.ones(1)
-        super(PLDS, self).__init__(GenerativeParams, xDim, yDim, srng, nrng)
+        super(PLDS, self).__init__(GenerativeParams, xDim, yDim, nrng)
 
         # Currently we emulate a PLDS by having an exponential output
         # nonlinearity. Next step will be to generalize this to more flexible
