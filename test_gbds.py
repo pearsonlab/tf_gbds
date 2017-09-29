@@ -1,58 +1,58 @@
 import argparse
-from tf_gbds.utils import *
-from tf_gbds.prep_GAN import prep_GAN_data, prep_injection_conditions
+from utils import *
+# from prep_GAN import prep_GAN_data, prep_injection_conditions
 import sys
-import os
-from os.path import expanduser
-from tf_gbds.PenaltyKick import SGVB_GBDS
+# import os
+# from os.path import expanduser
+from PenaltyKick import SGVB_GBDS
 import tensorflow as tf
 import numpy as np
 import _pickle as pkl
 
 
 def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-10 * np.zeros((1, 2)))),
-	         Kp=1, Ki=0, Kd=0, vel=np.array([1e-3, 1e-2, 1e-2], np.float32)):
-	data = []
+             Kp=1, Ki=0, Kd=0, vel=np.array([1e-3, 1e-2, 1e-2], np.float32)):
+    data = []
 
-	for s in range(n_trial):
-		p_b = np.zeros((n_obs, 2), np.float32)
-		p_g = np.zeros((n_obs, 1), np.float32)
-		g = np.zeros(p_b.shape, np.float32)
-		g[0] = [0.5, 0.5]
-		prev_error_b = 0
-		prev_error_g = 0
-		int_error_b = 0
-		int_error_g = 0
+    for s in range(n_trial):
+        p_b = np.zeros((n_obs, 2), np.float32)
+        p_g = np.zeros((n_obs, 1), np.float32)
+        g = np.zeros(p_b.shape, np.float32)
+        g[0] = [0.5, 0.5]
+        prev_error_b = 0
+        prev_error_g = 0
+        int_error_b = 0
+        int_error_g = 0
 
-		for t in range(n_obs - 1):
-			if p_b[t, 0] > 0.3:
-				next_g_mu = np.array([0.5, -0.5], np.float32)
-				next_g_lambda = np.array([36, 36], np.float32)
-			else:
-				next_g_mu = np.array([0.25, 0.25], np.float32)
-				next_g_lambda = np.array([16, 16], np.float32)
+        for t in range(n_obs - 1):
+            if p_b[t, 0] > 0.3:
+                next_g_mu = np.array([0.5, -0.5], np.float32)
+                next_g_lambda = np.array([36, 36], np.float32)
+            else:
+                next_g_mu = np.array([0.25, 0.25], np.float32)
+                next_g_lambda = np.array([16, 16], np.float32)
 
-			g[t + 1] = (g[t] + next_g_lambda * next_g_mu) / (1 + next_g_lambda)
-			var = sigma ** 2 / (1 + next_g_lambda)
-			g[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
+            g[t + 1] = (g[t] + next_g_lambda * next_g_mu) / (1 + next_g_lambda)
+            var = sigma ** 2 / (1 + next_g_lambda)
+            g[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
 
-			error_b = g[t + 1] - p_b[t]
-			int_error_b += error_b
-			der_error_b = error_b - prev_error_b
-			u_b = Kp * error_b + Ki * int_error_b + Kd * der_error_b
-			prev_error_b = error_b
-			p_b[t + 1] = p_b[t] + vel[1:] * np.tanh(u_b)
+            error_b = g[t + 1] - p_b[t]
+            int_error_b += error_b
+            der_error_b = error_b - prev_error_b
+            u_b = Kp * error_b + Ki * int_error_b + Kd * der_error_b
+            prev_error_b = error_b
+            p_b[t + 1] = p_b[t] + vel[1:] * np.tanh(u_b)
 
-			error_g = p_b[t + 1, 1] - p_g[t]
-			int_error_g += error_g
-			der_error_g = error_g - prev_error_g
-			u_g = Kp * error_g + Ki * int_error_g + Kd * der_error_g
-			prev_error_g = error_g
-			p_g[t + 1] = p_g[t] + vel[0] * np.tanh(u_g)
+            error_g = p_b[t + 1, 1] - p_g[t]
+            int_error_g += error_g
+            der_error_g = error_g - prev_error_g
+            u_g = Kp * error_g + Ki * int_error_g + Kd * der_error_g
+            prev_error_g = error_g
+            p_g[t + 1] = p_g[t] + vel[0] * np.tanh(u_g)
 
-		data.append(np.hstack([p_g, p_b]))
+        data.append(np.hstack([p_g, p_b]))
 
-	return data
+    return data
 
 
 def run_model(**kwargs):
@@ -100,10 +100,10 @@ def run_model(**kwargs):
     train_data = []
     val_data = []
     for trial in data:
-    	if np.random.rand() <= 0.85:
-    		train_data.append(trial)
-    	else:
-    		val_data.append(trial)
+        if np.random.rand() <= 0.85:
+            train_data.append(trial)
+        else:
+            val_data.append(trial)
 
     yCols_goalie = [0]
     yCols_ball = [1, 2]
@@ -165,34 +165,34 @@ def run_model(**kwargs):
     val_costs = []
     ctrl_cost = []
 
+    print("Compiling graph for VB model...")
+    sys.stdout.flush()
+    # ctrl_train_fn, ctrl_test_fn = (
+    #     compile_functions_vb_training(model, learning_rate,
+    #                                   add_pklayers=add_pklayers,
+    #                                   mode=COMPILE_MODE))
+    # if add_pklayers:
+    #     model.mode = tf.placeholder(tf.float32, name='batch_mode')
+    # if joint_spikes and model.isTrainingSpikeModel:
+    #     model.spikes = tf.placeholder(tf.float32, name='batch_spikes')
+    #     model.signals = tf.placeholder(tf.float32, name='batch_signals')
+
+    model.set_training_mode('CTRL')
+    cap_noise = False
+    var_list = model.getParams()
+    for param in var_list:
+        if param.name == 'W' or param.name == 'b' or param.name == 'G':
+            # only on NN parameters
+            param = tf.clip_by_norm(param, 5, axes=[0])
+        if cap_noise and param.name == 'QinvChol' or param.name == 'Q0invChol':
+            param = tf.clip_by_norm(param, 30, axes=[0])
+
+    opt = tf.train.AdamOptimizer(learning_rate)
+    train_op = opt.minimize(-model.cost(), var_list=var_list)
+
     # Iterate over the training data for the specified number of epochs
-    with tf.Session(config=tf.ConfigProto(device_count = {'GPU': 0})) as sess:
+    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 0})) as sess:
         sess.run(tf.global_variables_initializer())
-        
-        print("Compiling graph for VB model...")
-        sys.stdout.flush()
-        # ctrl_train_fn, ctrl_test_fn = (
-        #     compile_functions_vb_training(model, learning_rate,
-        #                                   add_pklayers=add_pklayers,
-        #                                   mode=COMPILE_MODE))
-        # if add_pklayers:
-        #     model.mode = tf.placeholder(tf.float32, name='batch_mode')
-        # if joint_spikes and model.isTrainingSpikeModel:
-        #     model.spikes = tf.placeholder(tf.float32, name='batch_spikes')
-        #     model.signals = tf.placeholder(tf.float32, name='batch_signals')
-
-        model.set_training_mode('CTRL')
-        cap_noise = False
-        var_list = model.getParams()
-        for param in var_list:
-            if param.name == 'W' or param.name == 'b' or param.name == 'G':
-        	# only on NN parameters
-                param = tf.clip_by_norm(param, 5, axes=[0])
-            if cap_noise and param.name == 'QinvChol' or param.name == 'Q0invChol':
-                param = tf.clip_by_norm(param, 30, axes=[0])
-
-        opt = tf.train.AdamOptimizer(learning_rate)
-        train_op = opt.minimize(-model.cost(), var_list=var_list)
 
         print("---> Training control model")
         sys.stdout.flush()
@@ -231,7 +231,7 @@ def run_model(**kwargs):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--outname', type=str, default='~/code',
-    	                help='Name for model directory')
+                        help='Name for model directory')
     parser.add_argument('--seed', type=int, default=1234,
                         help='Random seed')
     # parser.add_argument('--max_sessions', type=int, default=10,

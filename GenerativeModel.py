@@ -412,14 +412,14 @@ class GBDS(GenerativeModel):
                             "(either posterior or generated)")
         # PID Controller for next control point
         if post_g is not None:  # calculate error from posterior goals
-            error = post_g[1:] - Y[:, self.yCols]
+            error = post_g[1:] - tf.gather(Y, self.yCols, axis=1)
         else:  # calculate error from generated goals
-            error = next_g - Y[:, self.yCols]
+            error = next_g - tf.gather(Y, self.yCols, axis=1)
 
         # Assume control starts at zero
         Uprev = tf.concat([tf.zeros([1, self.yDim]),
-                           tf.atanh((Y[1:, self.yCols] -
-                                     Y[:-1, self.yCols]) /
+                           tf.atanh((tf.gather(Y, self.yCols, axis=1)[1:] -
+                                     tf.gather(Y, self.yCols, axis=1)[:-1]) /
                                     tf.reshape(self.vel, [1, self.yDim]))],
                           axis=0)
         Udiff = []
@@ -442,7 +442,7 @@ class GBDS(GenerativeModel):
             Udiff += self.eps * tf.random_normal(Udiff.shape)
         Upred = Uprev + Udiff
         # get predicted Y
-        Ypred = (Y[:, self.yCols] +
+        Ypred = (tf.gather(Y, self.yCols, axis=1) +
                  tf.reshape(self.vel, [1, self.yDim]) * tf.tanh(Upred))
 
         return J, next_g, Upred, Ypred
@@ -466,7 +466,7 @@ class GBDS(GenerativeModel):
                               elems=[batch_unc_sigma],
                               initializer=tf.zeros([self.JDim, self.JDim]))
         postJ = postJ_mu + tf.squeeze(tf.matmul(
-            postJ_sigma, tf.random_normal([tf.shape(g_stack)[0].eval(),
+            postJ_sigma, tf.random_normal([tf.shape(g_stack)[0],
                                            self.JDim, 1], seed=1234)), 2)
         return postJ
 
@@ -514,7 +514,8 @@ class GBDS(GenerativeModel):
         Y: Time series of positions
         '''
         # Calculate real control signal
-        U_true = tf.atanh((Y[1:, self.yCols] - Y[:-1, self.yCols]) /
+        U_true = tf.atanh((tf.gather(Y, self.yCols, axis=1)[1:] -
+                           tf.gather(Y, self.yCols, axis=1)[:-1]) /
                           tf.reshape(self.vel, [1, self.yDim]))
         # Get predictions for next timestep (at each timestep except for last)
         # disregard last timestep bc we don't know the next value, thus, we

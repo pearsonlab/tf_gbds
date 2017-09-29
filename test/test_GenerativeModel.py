@@ -108,7 +108,7 @@ def test_GBDS():
         eps = np.log1p(np.exp(-11 * np.ones((1, 2))))
         npt.assert_allclose(mm.eps.eval(), eps, atol=1e-5, rtol=1e-4)
 
-        Y = np.random.rand(16, 3)
+        Y = np.random.rand(16, 3).astype(np.float32)
         post_g = np.random.rand(17, 2)
         _, next_g_tr, Upred_tr, Ypred_tr = mm.get_preds(Y, training=True,
                                                         post_g=post_g)
@@ -152,7 +152,7 @@ def test_GBDS():
 
         npt.assert_allclose(next_g_gen.eval(), next_g_2, atol=1e-5, rtol=1e-4)
 
-        Y = np.random.rand(17, 3)
+        Y = np.random.rand(17, 3).astype(np.float32)
         U_true_np = np.arctanh((Y[1:, np.arange(2)] - Y[:-1, np.arange(2)]) /
                                (2 * np.ones((1, 2))))
         Jpred, g_pred, Upred, Ypred = mm.get_preds(Y[:-1], training=True,
