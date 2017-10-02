@@ -515,7 +515,7 @@ def get_gen_params_GBDS(seed, obs_dim_agent, obs_dim, add_accel,
 
 class DatasetTrialIndexIterator(object):
     """ Basic trial iterator """
-    def __init__(self, y, randomize=False, batch_size=1):
+    def __init__(self, y, randomize=False, batch_size=100):
         self.y = y
         self.randomize = randomize
 
@@ -536,7 +536,7 @@ class MultiDatasetTrialIndexIterator(object):
     Trial iterator over multiple datasets of shape
     (ntrials, trial_len, trial_dimensions)
     """
-    def __init__(self, data, randomize=False, batch_size=1):
+    def __init__(self, data, randomize=False, batch_size=100):
         self.data = data
         self.randomize = randomize
 
@@ -550,6 +550,18 @@ class MultiDatasetTrialIndexIterator(object):
         else:
             for i in range(n_batches):
                 yield tuple(dset[i] for dset in self.data)
+                
+
+class MultiDataSetTrialIndexTF(object):
+    def __init__(self, data, batch_size=100):
+        self.data = data
+        self.batch_size = batch_size
+    def __iter__(self):
+        new_data = [tf.constant(d) for d in self.data]
+        data_iter_vb_new = tf.train.batch(new_data, self.batch_size,
+                                          dynamic_pad=True)
+        data_iter_vb = [vb.eval() for vb in data_iter_vb_new]
+        return iter(data_iter_vb)
 
 
 class DatasetMiniBatchIterator(object):

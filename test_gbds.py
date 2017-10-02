@@ -159,8 +159,7 @@ def run_model(**kwargs):
     print("Input lag (VILDS recognition): %i" % rec_lag)
     sys.stdout.flush()
 
-    # set up an iterator over our training data
-    data_iter_vb = DatasetTrialIndexIterator(train_data, randomize=True)
+    data_iter_vb = MultiDataSetTrialIndexTF(train_data, batch_size=100)
 
     val_costs = []
     ctrl_cost = []

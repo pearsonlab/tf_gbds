@@ -114,8 +114,7 @@ def run_model(**kwargs):
     sys.stdout.flush()
 
     # set up an iterator over our training data
-    data_iter_vb = MultiDatasetTrialIndexIterator((y_data, y_data_modes),
-                                                  randomize=True)
+    data_iter_vb = MultiDataSetTrialIndexTF((y_data, y_data_modes))
 
     val_costs = []
     ctrl_cost = []
