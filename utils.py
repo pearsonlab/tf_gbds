@@ -515,7 +515,7 @@ def get_gen_params_GBDS(seed, obs_dim_agent, obs_dim, add_accel,
 
 class DatasetTrialIndexIterator(object):
     """ Basic trial iterator """
-    def __init__(self, y, randomize=False, batch_size=100):
+    def __init__(self, y, randomize=False, batch_size=1):
         self.y = y
         self.randomize = randomize
 
@@ -536,7 +536,7 @@ class MultiDatasetTrialIndexIterator(object):
     Trial iterator over multiple datasets of shape
     (ntrials, trial_len, trial_dimensions)
     """
-    def __init__(self, data, randomize=False, batch_size=100):
+    def __init__(self, data, randomize=False, batch_size=1):
         self.data = data
         self.randomize = randomize
 
