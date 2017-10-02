@@ -164,9 +164,9 @@ class SGVB_GBDS():  # (Trainable):
         cost = 0
         if self.isTrainingGenerativeModel or self.isTrainingRecognitionModel:
             cost += self.mprior_goalie.evaluateLogDensity(
-                q[:, self.yCols_goalie], self.Y)
+                tf.gather(q, self.yCols_goalie, axis=1), self.Y)
             cost += self.mprior_ball.evaluateLogDensity(
-                q[:, self.yCols_ball], self.Y)
+                tf.gather(q, self.yCols_ball, axis=1), self.Y)
         if self.isTrainingRecognitionModel:
             cost += self.mrec.evalEntropy()
         if self.isTrainingCGANGenerator:
@@ -192,6 +192,6 @@ class SGVB_GBDS():  # (Trainable):
             cost += self.mprior_goalie.evaluateGANLoss(
                 self.g0[:, self.yCols_goalie], mode='D')
         if self.isTrainingGenerativeModel or self.isTrainingRecognitionModel:
-            return cost / self.Y.shape[0]
+            return cost / tf.cast(tf.shape(self.Y)[0], tf.float32)
         else:  # training GAN
             return cost

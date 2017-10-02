@@ -204,8 +204,9 @@ class SmoothingLDSTimeSeries(RecognitionModel):
 
     def evalEntropy(self):
         # we want it to be smooth, this is a prior on being smooth... #
-        entropy = (self.ln_determinant/2 + self.xDim *
-                   tf.cast(self.Tt, tf.float32)/2.0 * (1 + np.log(2 * np.pi)))
+        entropy = (self.ln_determinant/2 +
+                   tf.cast(self.xDim * self.Tt, tf.float32)/2.0 *
+                   (1 + np.log(2 * np.pi)))
 
         if self.p is not None:  # penalize noise
             entropy += self.p * tf.reduce_sum(tf.log(tf.diag_part(self.Qinv)))

@@ -14,7 +14,7 @@ import tensorflow as tf
 import sys
 import _pickle as pkl
 import numpy as np
-from utils import get_session_names, load_pk_data
+from tf_gbds.utils import get_session_names, load_pk_data
 from os.path import join, expanduser
 
 # sys.path.append(expanduser('~/code/gbds/code/'))
