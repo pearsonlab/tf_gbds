@@ -1,10 +1,10 @@
 import argparse
-from utils import *
+from tf_gbds.utils import *
 # from prep_GAN import prep_GAN_data, prep_injection_conditions
 import sys
 # import os
 # from os.path import expanduser
-from PenaltyKick import SGVB_GBDS
+from tf_gbds.PenaltyKick import SGVB_GBDS
 import tensorflow as tf
 import numpy as np
 import _pickle as pkl
