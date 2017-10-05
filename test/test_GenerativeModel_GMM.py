@@ -55,10 +55,6 @@ def test_GBDS():
 
         w_brdcst = all_w.eval().reshape((-1, mm.GMM_k, 1))
         gmm_res_g = post_g[1:].reshape((-1, 1, mm.yDim)) - g_pred.eval()
-        print(w_brdcst.shape)
-        print(all_lmbda.eval().shape)
-        print(mm.sigma.eval().shape)
-        print(gmm_res_g.shape)
         gmm_term = (np.log(w_brdcst + 1e-8) - ((1 + all_lmbda.eval()) / (2 *
                     mm.sigma.eval().reshape((1, 1, -1))**2)) * gmm_res_g**2)
         gmm_term += (0.5 * np.log(1 + all_lmbda.eval()) - 0.5 *

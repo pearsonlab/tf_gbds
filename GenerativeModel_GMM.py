@@ -281,7 +281,6 @@ class GBDS(GenerativeModel):
             layers.Lambda(lambda x: x[:, yDim * self.GMM_k:2 * yDim *
                           self.GMM_k])(self.GMM_net.output)))
         self.GMM_lambda = models.Model(self.GMM_net.input, output)
-        print(2 * yDim * self.GMM_k)
         output = (layers.Activation('softmax')(
             layers.Lambda(lambda x: x[:, 2 * yDim *
                           self.GMM_k:])(self.GMM_net.output)))
@@ -364,7 +363,6 @@ class GBDS(GenerativeModel):
         """
         Sample from GMM based on highest weight component
         """
-        self.GMM_mu(states)
         mu = tf.reshape(self.GMM_mu(states), [-1, self.GMM_k, self.yDim])
         lmbda = tf.reshape(self.GMM_lambda(states),
                            [-1, self.GMM_k, self.yDim])
