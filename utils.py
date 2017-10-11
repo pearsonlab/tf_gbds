@@ -571,6 +571,18 @@ class MultiDatasetTrialIndexIterator(object):
         else:
             for i in range(n_batches):
                 yield tuple(dset[i] for dset in self.data)
+                
+
+class MultiDataSetTrialIndexTF(object):
+    def __init__(self, data, batch_size=100):
+        self.data = data
+        self.batch_size = batch_size
+    def __iter__(self):
+        new_data = [tf.constant(d) for d in self.data]
+        data_iter_vb_new = tf.train.batch(new_data, self.batch_size,
+                                          dynamic_pad=True)
+        data_iter_vb = [vb.eval() for vb in data_iter_vb_new]
+        return iter(data_iter_vb)
 
 
 class DatasetMiniBatchIterator(object):
