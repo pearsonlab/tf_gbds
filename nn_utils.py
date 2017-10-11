@@ -24,7 +24,7 @@ rewrite in tensorflow
 """
 import tensorflow as tf
 from tensorflow.contrib.keras import layers as keras_layers
-from tensorflow.contrib.keras import models
+from tensorflow.contrib.keras import constraints, models
 # from keras import backend as K
 from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
 
@@ -41,55 +41,65 @@ def get_network(batch_size, input_dim, output_dim, hidden_dim, num_layers,
     PKbias_layers = []
     NN = models.Sequential()
     # K.set_learning_phase(0)
-    NN.add(keras_layers.InputLayer(batch_input_shape=(batch_size, input_dim),
-                                   name="Input"))
-    if filt_size is not None:  # first layer convolution
-        # expand dims for convolution
-        NN.add(keras_layers.Lambda(lambda x: tf.expand_dims(x, 0),
-                                   name="ExpandDims"))
-        # custom pad so that no timepoint gets input from future
-        NN.add(keras_layers.ZeroPadding1D(padding=(filt_size - 1, 0),
-                                          name="ZeroPadding"))
-        # Perform convolution
-        NN.add(keras_layers.Conv1D(filters=hidden_dim, kernel_size=filt_size,
-                                   padding='valid', activation=hidden_nonlin,
-                                   name="Conv"))
-        # squeeze dims for dense layers
-        NN.add(keras_layers.Lambda(lambda x: tf.squeeze(x, [0]),
-                                   name="Squeeze"))
-    for i in range(num_layers):
-        if is_shooter and add_pklayers:
-            if row_sparse:
-                PK_bias = PKRowBiasLayer(NN, PKLparams,
-                                         name="PKRowBias%s" % (i+1))
-            else:
-                PK_bias = PKBiasLayer(NN, PKLparams,
-                                      name="PKBias%s" % (i+1))
-            PKbias_layers.append(PK_bias)
-            NN.add(PK_bias)
-        if i == num_layers - 1:
-            layer_dim = output_dim
-            layer_nonlin = output_nonlin
-        else:
-            layer_dim = hidden_dim
-            layer_nonlin = hidden_nonlin
+    with tf.name_scope('input'):
+        NN.add(keras_layers.InputLayer(batch_input_shape=(batch_size, input_dim),
+                                       name="Input"))
+    with tf.name_scope('filter'):
+        if filt_size is not None:  # first layer convolution
+            # expand dims for convolution
+            NN.add(keras_layers.Lambda(lambda x: tf.expand_dims(x, 0),
+                                       name="ExpandDims"))
+            # custom pad so that no timepoint gets input from future
+            NN.add(keras_layers.ZeroPadding1D(padding=(filt_size - 1, 0),
+                                              name="ZeroPadding"))
+            # Perform convolution
+            NN.add(keras_layers.Conv1D(filters=hidden_dim, kernel_size=filt_size,
+                                       padding='valid', activation=hidden_nonlin,
+                                       kernel_constraint=constraints.MaxNorm(5),
+                                       bias_constraint=constraints.MaxNorm(5),
+                                       name="Conv"))
+            # squeeze dims for dense layers
+            NN.add(keras_layers.Lambda(lambda x: tf.squeeze(x, [0]),
+                                       name="Squeeze"))
+    with tf.name_scope('layers'):
+        for i in range(num_layers):
+            if is_shooter and add_pklayers:
+                if row_sparse:
+                    PK_bias = PKRowBiasLayer(NN, PKLparams,
+                                             name="PKRowBias%s" % (i+1))
+                else:
+                    PK_bias = PKBiasLayer(NN, PKLparams,
+                                          name="PKBias%s" % (i+1))
+                PKbias_layers.append(PK_bias)
+                NN.add(PK_bias)
 
-        if batchnorm and i < num_layers - 1 and i != 0:
-            NN.add(keras_layers.Dense(
-                layer_dim, name="Dense%s" % (i+1),
-                kernel_initializer=tf.random_normal_initializer(
-                    stddev=init_std)))
-            NN.add(keras_layers.BatchNormalization(name="BatchNorm%s" % i))
-            # may set initializer for hyperparams
-            NN.add(keras_layers.Activation(activation=layer_nonlin,
-                                           name="Activation%s" % (i+1)))
-        else:
-            NN.add(keras_layers.Dense(
-                layer_dim, name="Dense%s" % (i+1),
-                kernel_initializer=tf.random_normal_initializer(
-                    stddev=init_std)))
-            NN.add(keras_layers.Activation(activation=layer_nonlin,
-                                           name="Activation%s" % (i+1)))
+            if i == num_layers - 1:
+                layer_dim = output_dim
+                layer_nonlin = output_nonlin
+            else:
+                layer_dim = hidden_dim
+                layer_nonlin = hidden_nonlin
+
+            if batchnorm and i < num_layers - 1 and i != 0:
+                NN.add(keras_layers.Dense(
+                    layer_dim, name="Dense%s" % (i+1),
+                    kernel_initializer=tf.random_normal_initializer(
+                        stddev=init_std),
+                    kernel_constraint=constraints.MaxNorm(5),
+                    bias_constraint=constraints.MaxNorm(5)))
+                NN.add(keras_layers.BatchNormalization(name="BatchNorm%s" % i))
+                # may set initializer for hyperparams
+                NN.add(keras_layers.Activation(activation=layer_nonlin,
+                                               name="Activation%s" % (i+1)))
+            else:
+                NN.add(keras_layers.Dense(
+                    layer_dim, name="Dense%s" % (i+1),
+                    kernel_initializer=tf.random_normal_initializer(
+                        stddev=init_std),
+                    kernel_constraint=constraints.MaxNorm(5),
+                    bias_constraint=constraints.MaxNorm(5)))
+                NN.add(keras_layers.Activation(activation=layer_nonlin,
+                                               name="Activation%s" % (i+1)))
     if add_pklayers:
         return NN, PKbias_layers
     else:

@@ -133,7 +133,7 @@ def test_GBDS():
         gen_g = np.random.rand(16, 2)
         J_gen = mm.CGAN_J.get_generated_data(
             mm.get_states(Y), training=False).eval(
-            feed_dict={"BatchNorm1/keras_learning_phase:0": 0})
+            feed_dict={'layers_6/BatchNorm1/keras_learning_phase:0': 0})
         J_mu = J_gen[:, :2]
         J_lambda = np.log1p(np.exp(J_gen[:, 2:]))
         goal = np.expand_dims((gen_g[(-1,)] + J_lambda[(-1,)] * J_mu[(-1,)]) /

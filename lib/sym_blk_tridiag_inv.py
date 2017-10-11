@@ -35,69 +35,78 @@ def compute_sym_blk_tridiag(AA, BB, iia=None, iib=None):
     BB = -BB
 
     # Set up some parameters
-    if iia is None:
-        nT = tf.shape(AA)[0]
-    else:
-        nT = tf.shape(iia)[0]
+    with tf.variable_scope('set_up_params'):
+      with tf.variable_scope('shape'):
+        if iia is None:
+            nT = tf.shape(AA)[0]
+        else:
+            nT = tf.shape(iia)[0]
 
-    d = tf.shape(AA)[1]
+        d = tf.shape(AA)[1]
 
-    # if we don't have special indexing requirements, just use the obvious
-    # indices
-    if iia is None:
-        iia = tf.range(nT)
-    if iib is None:
-        iib = tf.range(nT-1)
+      # if we don't have special indexing requirements, just use the obvious
+      # indices
+      with tf.variable_scope('indices'):
+        if iia is None:
+            iia = tf.range(nT)
+        if iib is None:
+            iib = tf.range(nT-1)
 
-    III = tf.eye(d, dtype=tf.float32)
+      III = tf.eye(d, dtype=tf.float32, name='III')
 
-    initS = tf.zeros([d, d], dtype=tf.float32)
+    with tf.variable_scope('compute_S'):
+      initS = tf.zeros([d, d], dtype=tf.float32, name='initS')
 
-    def compute_S(acc, inputs):
-        Sp1 = acc
-        idx = inputs[0]
-        B_ip1 = BB[iib[tf.minimum(idx+1, nT-2)]]
-        S_nTm1 = tf.matmul(BB[iib[-1]], tf.matrix_inverse(AA[iia[-1]]))
-        S_i = tf.matmul(BB[iib[idx]],
-                        tf.matrix_inverse(AA[iia[tf.minimum(idx+1, nT-2)]]
-                                          - tf.matmul(Sp1,
-                                                      tf.transpose(B_ip1))))
-        Sm = tf.where(tf.equal(idx, nT-2), S_nTm1, S_i)
-        return Sm
+      def compute_S(acc, inputs):
+          Sp1 = acc
+          idx = inputs[0]
+          B_ip1 = BB[iib[tf.minimum(idx+1, nT-2)]]
+          S_nTm1 = tf.matmul(BB[iib[-1]], tf.matrix_inverse(AA[iia[-1]]),
+                             name='S_nTm1')
+          S_i = tf.matmul(
+            BB[iib[idx]],
+            tf.matrix_inverse(AA[iia[tf.minimum(idx+1, nT-2)]] -
+                              tf.matmul(Sp1, tf.transpose(B_ip1))),
+            name='S_i')
+          Sm = tf.where(tf.equal(idx, nT-2), S_nTm1, S_i)
+          return Sm
 
-    S = tf.scan(compute_S, [tf.range(nT-2, -1, -1)], initializer=initS)
+      S = tf.scan(compute_S, [tf.range(nT-2, -1, -1)], initializer=initS,
+                  name='S')
 
-    initD = tf.zeros([d, d], dtype=tf.float32)
+    with tf.variable_scope('compute_D'):
+      initD = tf.zeros([d, d], dtype=tf.float32, name='initD')
 
-    def compute_D(acc, inputs):
-        Dm1 = acc
-        idx = inputs[0]
-        D_nT = tf.matmul(tf.matrix_inverse(AA[iia[-1]]),
-                         III + tf.matmul(tf.transpose(BB[iib[idx-1]]),
-                         tf.matmul(Dm1, S[0])))
-        D1 = tf.matrix_inverse(AA[iia[0]]
-                               - tf.matmul(BB[iib[0]], tf.transpose(S[-1])))
-        B_ip11 = BB[iib[tf.minimum(idx, nT-2)]]
-        S_t = tf.transpose(S[tf.maximum(-idx-1, -nT+1)])
-        B_t = tf.transpose(BB[iib[tf.minimum(idx-1, nT-2)]])
-        D = tf.where(tf.equal(idx, nT-1), D_nT,
-                     tf.where(tf.equal(idx, 0), D1,
-                              tf.matmul(tf.matrix_inverse(AA[iia[idx]]
-                                        - tf.matmul(B_ip11, S_t)),
-                              III + tf.matmul(B_t, tf.matmul(Dm1, S[-idx])))
-                              )
-                     )
-        return D
+      def compute_D(acc, inputs):
+          Dm1 = acc
+          idx = inputs[0]
+          D_nT = tf.matmul(tf.matrix_inverse(AA[iia[-1]]),
+                           III + tf.matmul(tf.transpose(BB[iib[idx-1]]),
+                            tf.matmul(Dm1, S[0])), name='D_nT')
+          D1 = tf.matrix_inverse(AA[iia[0]] -
+            tf.matmul(BB[iib[0]], tf.transpose(S[-1])), name='D1')
+          B_ip11 = BB[iib[tf.minimum(idx, nT-2)]]
+          S_t = tf.transpose(S[tf.maximum(-idx-1, -nT+1)], name='S_t')
+          B_t = tf.transpose(BB[iib[tf.minimum(idx-1, nT-2)]], name='B_t')
+          D = tf.where(tf.equal(idx, nT-1), D_nT,
+                       tf.where(tf.equal(idx, 0), D1,
+                                tf.matmul(tf.matrix_inverse(AA[iia[idx]] -
+                                  tf.matmul(B_ip11, S_t)),
+                                III + tf.matmul(B_t,
+                                  tf.matmul(Dm1, S[-idx])))))
+          return D
 
-    D = tf.scan(compute_D, [tf.range(0, nT)], initializer=initD)
+      D = tf.scan(compute_D, [tf.range(0, nT)], initializer=initD, name='D')
 
-    def compute_OD(acc, inputs):
-        idx = inputs[0]
-        OD = tf.matmul(tf.transpose(S[-idx-1]), D[idx])
-        return OD
+    with tf.variable_scope('compute_OD'):
+      def compute_OD(acc, inputs):
+          idx = inputs[0]
+          OD = tf.matmul(tf.transpose(S[-idx-1]), D[idx])
+          return OD
 
-    OD = tf.scan(compute_OD, [tf.range(0, nT-1)],
-                 initializer=tf.matmul(tf.transpose(S[-1]), D[0]))
+      OD = tf.scan(compute_OD, [tf.range(0, nT-1)],
+                   initializer=tf.matmul(tf.transpose(S[-1]), D[0]),
+                   name='OD')
 
     return [D, OD, S]  # , updates_D+updates_OD+updates_S]
 
@@ -122,48 +131,47 @@ def compute_sym_blk_tridiag_inv_b(S, D, b):
 
     (c) Evan Archer, 2015
     """
-    print(b)
-    nT = tf.shape(b)[0]
-    d = tf.shape(b)[1]
-    print(d)
-    initp = tf.zeros(tf.shape(b)[1:3], dtype=tf.float32)
+    
+    with tf.variable_scope('set_up_params'):
+      print(b)
+      nT = tf.shape(b)[0]
+      d = tf.shape(b)[1]
+      print(d)
+      initp = tf.zeros(tf.shape(b)[1:3], dtype=tf.float32, name='initp')
 
-    def compute_p(acc, inputs):
-        pp = acc
+    with tf.variable_scope('compute_p'):
+      def compute_p(acc, inputs):
+          pp = acc
+          idx = inputs[0]
+          pm = tf.where(tf.equal(idx, nT-1), b[-1],
+                        b[idx] + tf.matmul(S[tf.maximum(-idx-1, -nT+1)], pp))
+          return pm
 
-        idx = inputs[0]
+      p = tf.scan(compute_p, [tf.range(nT-1, -1, -1)], initializer=initp,
+                  name='p')
 
-        pm = tf.where(tf.equal(idx, nT-1),
-                      b[-1],
-                      b[idx] + tf.matmul(S[tf.maximum(-idx-1, -nT+1)], pp)
-                      )
-        return pm
+    with tf.variable_scope('compute_q'):
+      def compute_q(acc, inputs):
+          qm = acc
+          idx = inputs[0]
+          qp = tf.where(tf.equal(idx, 0),
+                        tf.matmul(tf.matmul(tf.transpose(S[-1]), D[0]), b[0]),
+                        tf.matmul(tf.transpose(S[-idx-1]),
+                                  qm + tf.matmul(D[idx], b[idx])))
+          return qp
 
-    p = tf.scan(compute_p, [tf.range(nT-1, -1, -1)], initializer=initp)
+      q = tf.scan(compute_q, [tf.range(nT-1)], initializer=p[0], name='q')
 
-    def compute_q(acc, inputs):
-        qm = acc
-        idx = inputs[0]
-        qp = tf.where(tf.equal(idx, 0),
-                      tf.matmul(tf.matmul(tf.transpose(S[-1]), D[0]), b[0]),
-                      tf.matmul(tf.transpose(S[-idx-1]), qm
-                      + tf.matmul(D[idx], b[idx]))
-                      )
-        return qp
+    with tf.variable_scope('compute_y'):
+      def compute_y(acc, inputs):
+          idx = inputs[0]
+          yi = tf.where(tf.equal(idx, 0), tf.matmul(D[0], p[-1]),
+                        tf.where(tf.equal(idx, nT-1),
+                          tf.matmul(D[-1], p[0]) + q[-1],
+                          tf.matmul(D[idx], p[-idx-1]) + q[idx-1]))
+          return yi
 
-    q = tf.scan(compute_q, [tf.range(nT-1)], initializer=p[0])
-
-    def compute_y(acc, inputs):
-        idx = inputs[0]
-        yi = tf.where(tf.equal(idx, 0),
-                      tf.matmul(D[0], p[-1]),
-                      tf.where(tf.equal(idx, nT-1),
-                      tf.matmul(D[-1], p[0]) + q[-1],
-                      tf.matmul(D[idx], p[-idx-1]) + q[idx-1]
-                               )
-                      )
-        return yi
-
-    y = tf.scan(compute_y, [tf.range(nT)], initializer=tf.matmul(D[0], p[-1]))
-    # return [y, updates_q+updates+y]
-    return y
+      y = tf.scan(compute_y, [tf.range(nT)],
+                  initializer=tf.matmul(D[0], p[-1]), name='y')
+      # return [y, updates_q+updates+y]
+      return y

@@ -48,7 +48,7 @@ def test_SGVB():
         sess.run(tf.global_variables_initializer())
         x = np.reshape(np.arange(0, 20), [10, 2])
         y = np.reshape(np.arange(0, 50), [10, 5])
-        q = sg.mrec.getSample().eval(feed_dict={sg.X: x, sg.Y: y})
+        q = sg.mrec.samples.eval(feed_dict={sg.X: x, sg.Y: y})
         q_squeeze = tf.squeeze(tf.constant(q, dtype=tf.float32), -1)
         theentropy = sg.mrec.evalEntropy().eval(feed_dict={sg.X: x, sg.Y: y})
         thelik = sg.mprior.evaluateLogDensity(q_squeeze,
