@@ -6,7 +6,7 @@ from scipy.stats import norm
 import numpy as np
 import pandas as pd
 from tensorflow.contrib.keras import layers as keras_layers
-from tensorflow.contrib.keras import models
+from tensorflow.contrib.keras import constraints, models
 # import theano
 # import theano.tensor as T
 # import lasagne
@@ -235,31 +235,41 @@ def get_max_velocities(y_data, y_val_data):
                               max(ball_y_vels)]), decimals=3) + 0.001
 
 
-def get_vel(data):
+def get_vel(data, max_vel=None):
     """
     Input a time series of positions and include velocities for each
     coordinate in each row
     """
-    dims = data.shape[1]
-    positions = data.copy()
+    if isinstance(data, tf.Tensor):
+        dims = tf.shape(data)[1]
+        positions = data
+    else:
+        dims = data.shape[1]
+        positions = data.copy()
     velocities = data[1:] - data[:-1]
-    velocities = tf.concat([np.zeros((1, dims)), velocities], 0)
-    states = tf.concat([positions, velocities], 1)
+    if max_vel is not None:
+        velocities /= max_vel
+    velocities = tf.concat([tf.zeros((1, dims), np.float32), velocities], 0,
+                           name='velocities')
+    states = tf.concat([positions, velocities], 1, name='position_vel')
     return states
 
 
-def get_accel(data):
+def get_accel(data, max_vel=None):
     """
     Input a time series of positions and include velocities and acceleration
     for each coordinate in each row
     """
-    dims = data.shape[1]
-    states = get_vel(data)
+    if isinstance(data, tf.Tensor):
+        dims = tf.shape(data)[1]
+    else:
+        dims = data.shape[1]
+    states = get_vel(data, max_vel=None)
     accel = data[2:] - 2 * data[1:-1] + data[:-2]
-    accel = tf.concat([np.zeros((2, dims)), accel], 0)
-    states = tf.concat([states, accel], 1)
+    accel = tf.concat([tf.zeros((2, dims), np.float32), accel], 0,
+                      name='acceleration')
+    states = tf.concat([states, accel], 1, name='position_vel_accel')
     return states
-
 
 def get_network(input_dim, output_dim, hidden_dim, num_layers,
                 PKLparams, batchnorm=False, is_shooter=False,
@@ -270,70 +280,83 @@ def get_network(input_dim, output_dim, hidden_dim, num_layers,
     """
     PKbias_layers = []
     NN = models.Sequential()
-    NN.add(keras_layers.InputLayer(batch_input_shape=(None, input_dim),
-                                   name="Input"))
+    with tf.name_scope('input'):
+        NN.add(keras_layers.InputLayer(batch_input_shape=(None, input_dim),
+                                       name='Input'))
 
-    if batchnorm:
-        NN.add(keras_layers.BatchNormalization(name="BatchNorm"))
-    if filt_size is not None:  # first layer convolution
-        # rearrange dims for convolution
-        NN.add(keras_layers.Lambda(lambda x: tf.expand_dims(x, 0),
-                                   name="ExpandDims"))
-        # custom pad so that no timepoint gets input from future
-        NN.add(keras_layers.ZeroPadding1D(padding=(filt_size - 1, 0),
-                                          name="ZeroPadding"))
-        # Perform convolution (no pad, no filter flip (for interpretability))
-        NN.add(keras_layers.Conv1D(filters=hidden_dim, kernel_size=filt_size,
-                                   padding='valid', activation=tf.nn.relu,
-                                   name="Conv"))
-        # rearrange dims for dense layers
-        NN.add(keras_layers.Lambda(lambda x: tf.squeeze(x, [0]),
-                                   name="Squeeze"))
-    for i in range(num_layers):
-        if is_shooter and add_pklayers:
-            if row_sparse:
-                PK_bias = PKRowBiasLayer(NN, PKLparams,
-                                         name="PKRowBias%s" % (i+1))
+    with tf.name_scope('batchnorm'):
+        if batchnorm:
+            NN.add(keras_layers.BatchNormalization(name='BatchNorm'))
+    with tf.name_scope('filter'):
+        if filt_size is not None:  # first layer convolution
+            # rearrange dims for convolution
+            NN.add(keras_layers.Lambda(lambda x: tf.expand_dims(x, 0),
+                                       name='ExpandDims'))
+            # custom pad so that no timepoint gets input from future
+            NN.add(keras_layers.ZeroPadding1D(padding=(filt_size - 1, 0),
+                                              name='ZeroPadding'))
+            # Perform convolution (no pad, no filter flip (for interpretability))
+            NN.add(keras_layers.Conv1D(filters=hidden_dim, kernel_size=filt_size,
+                                       padding='valid', activation=tf.nn.relu,
+                                       name='Conv1D'))
+            # rearrange dims for dense layers
+            NN.add(keras_layers.Lambda(lambda x: tf.squeeze(x, [0]),
+                                       name='Squeeze'))
+    with tf.name_scope('layers'):
+        for i in range(num_layers):
+            with tf.name_scope('PK_Bias'):
+                if is_shooter and add_pklayers:
+                    if row_sparse:
+                        PK_bias = PKRowBiasLayer(NN, PKLparams,
+                                                 name='PKRowBias_%s' % (i+1))
+                    else:
+                        PK_bias = PKBiasLayer(NN, PKLparams,
+                                              name='PKBias_%s' % (i+1))
+                    PKbias_layers.append(PK_bias)
+                    NN.add(PK_bias)
+
+            if i == num_layers - 1:
+                NN.add(keras_layers.Dense(
+                    output_dim, name='Dense_%s' % (i+1),
+                    kernel_initializer=tf.random_normal_initializer(
+                        stddev=0.1),
+                    kernel_constraint=constraints.MaxNorm(5),
+                    bias_constraint=constraints.MaxNorm(5)))
+                NN.add(keras_layers.Activation(activation='linear',
+                                               name='Activation_%s' % (i+1)))
             else:
-                PK_bias = PKBiasLayer(NN, PKLparams,
-                                      name="PKBias%s" % (i+1))
-            PKbias_layers.append(PK_bias)
-            NN.add(PK_bias)
-        if i == num_layers - 1:
-            NN.add(keras_layers.Dense(
-                output_dim, name="Dense%s" % (i+1),
-                kernel_initializer=tf.random_normal_initializer(
-                    stddev=0.1)))
-            NN.add(keras_layers.Activation(activation="linear",
-                                           name="Activation%s" % (i+1)))
-        else:
-            NN.add(keras_layers.Dense(
-                hidden_dim, name="Dense%s" % (i+1),
-                kernel_initializer=tf.orthogonal_initializer()))
-            NN.add(keras_layers.Activation(activation="relu",
-                                           name="Activation%s" % (i+1)))
+                NN.add(keras_layers.Dense(
+                    hidden_dim, name='Dense_%s' % (i+1),
+                    kernel_initializer=tf.orthogonal_initializer(),
+                    kernel_constraint=constraints.MaxNorm(5),
+                    bias_constraint=constraints.MaxNorm(5)))
+                NN.add(keras_layers.Activation(activation='relu',
+                                               name='Activation_%s' % (i+1)))
     return NN, PKbias_layers
 
 
 def get_rec_params_GBDS(seed, obs_dim, lag, num_layers, hidden_dim, penalty_Q,
-                        PKLparams):
+                        PKLparams, name):
 
-    mu_net, PKbias_layers_mu = get_network(obs_dim * (lag + 1),
-                                           obs_dim, hidden_dim,
-                                           num_layers, PKLparams,
-                                           batchnorm=False)
+    with tf.name_scope('rec_mu_%s' % name):
+        mu_net, PKbias_layers_mu = get_network(obs_dim * (lag + 1),
+                                               obs_dim, hidden_dim,
+                                               num_layers, PKLparams,
+                                               batchnorm=False)
 
-    lambda_net, PKbias_layers_lambda = get_network(obs_dim * (lag + 1),
-                                                   obs_dim**2,
-                                                   hidden_dim,
-                                                   num_layers, PKLparams,
-                                                   batchnorm=False)
+    with tf.name_scope('rec_lambda_%s' % name):
+        lambda_net, PKbias_layers_lambda = get_network(obs_dim * (lag + 1),
+                                                       obs_dim**2,
+                                                       hidden_dim,
+                                                       num_layers, PKLparams,
+                                                       batchnorm=False)
 
-    lambdaX_net, PKbias_layers_lambdaX = get_network(obs_dim * (lag + 1),
-                                                     obs_dim**2,
-                                                     hidden_dim,
-                                                     num_layers, PKLparams,
-                                                     batchnorm=False)
+    with tf.name_scope('rec_lambdaX_%s' % name):
+        lambdaX_net, PKbias_layers_lambdaX = get_network(obs_dim * (lag + 1),
+                                                         obs_dim**2,
+                                                         hidden_dim,
+                                                         num_layers, PKLparams,
+                                                         batchnorm=False)
 
     rec_params = dict(A=.9 * np.eye(obs_dim),
                       QinvChol=np.eye(obs_dim),
@@ -345,8 +368,9 @@ def get_rec_params_GBDS(seed, obs_dim, lag, num_layers, hidden_dim, penalty_Q,
                       NN_LambdaX=dict(network=lambdaX_net,
                                       PKbias_layers=PKbias_layers_lambdaX),
                       lag=lag)
-    if penalty_Q is not None:
-        rec_params['p'] = penalty_Q
+    with tf.name_scope('penalty_Q'):
+        if penalty_Q is not None:
+            rec_params['p'] = penalty_Q
 
     return rec_params
 
@@ -354,22 +378,27 @@ def get_rec_params_GBDS(seed, obs_dim, lag, num_layers, hidden_dim, penalty_Q,
 def get_gen_params_GBDS(seed, obs_dim_agent, obs_dim, add_accel,
                         yCols_agent, num_layers_rec, hidden_dim, PKLparams,
                         vel, penalty_eps, penalty_sigma,
-                        boundaries_g, penalty_g):
-    if add_accel:
-        get_states = get_accel
-    else:
-        get_states = get_vel
+                        boundaries_g, penalty_g, name):
+    
+    with tf.name_scope('get_states_%s' % name):
+        if add_accel:
+            get_states = get_accel
+        else:
+            get_states = get_vel
 
-    NN_postJ_mu, _ = get_network(obs_dim_agent * 2,
-                                 obs_dim_agent * 2,
-                                 hidden_dim,
-                                 num_layers_rec,
-                                 PKLparams)
-    NN_postJ_sigma, _ = get_network(obs_dim_agent * 2,
-                                    (obs_dim_agent * 2)**2,
-                                    hidden_dim,
-                                    num_layers_rec,
-                                    PKLparams)
+    with tf.name_scope('gen_mu_%s' % name):
+        NN_postJ_mu, _ = get_network(obs_dim_agent * 2,
+                                     obs_dim_agent * 2,
+                                     hidden_dim,
+                                     num_layers_rec,
+                                     PKLparams)
+
+    with tf.name_scope('gen_sigma_%s' % name):
+        NN_postJ_sigma, _ = get_network(obs_dim_agent * 2,
+                                        (obs_dim_agent * 2)**2,
+                                        hidden_dim,
+                                        num_layers_rec,
+                                        PKLparams)
 
     gen_params = dict(vel=vel[yCols_agent],
                       yCols=yCols_agent,  # which columns belong to the agent
@@ -383,6 +412,39 @@ def get_gen_params_GBDS(seed, obs_dim_agent, obs_dim, add_accel,
 
     return gen_params
 
+
+def get_gen_params_GBDS_GMM(seed, obs_dim_agent, obs_dim, add_accel,
+                        yCols_agent, nlayers_gen, hidden_dim_gen,
+                        gmm_k, PKLparams,
+                        vel, penalty_eps, penalty_sigma,
+                        boundaries_g, penalty_g, name):
+                        
+    with tf.name_scope('get_states_%s' % name):
+        if add_accel:
+            get_states = get_accel
+            state_dim = obs_dim * 3
+        else:
+            get_states = get_vel
+            state_dim = obs_dim * 2
+
+    with tf.name_scope('gen_gmm_%s' % name):
+        NN_GMM, _ = get_network(state_dim, (obs_dim_agent * gmm_k * 2 + gmm_k),
+                            hidden_dim_gen, nlayers_gen, None)
+
+
+    gen_params = dict(all_vel=vel,
+                      vel=vel[yCols_agent],
+                      yCols=yCols_agent,  # which columns belong to the agent
+                      pen_eps=penalty_eps,
+                      pen_sigma=penalty_sigma,
+                      bounds_g=boundaries_g,
+                      pen_g=penalty_g,
+                      get_states=get_states,
+                      GMM_net=NN_GMM,
+                      GMM_k=gmm_k
+                      )
+
+    return gen_params
 
 # def compile_functions_vb_training(model, learning_rate, add_pklayers=False,
 #                                   joint_spikes=False, cap_noise=False,
