@@ -90,22 +90,7 @@ def run_model(**kwargs):
 
     if not os.path.exists(outname):
         os.makedirs(outname)
-    # if session_type == 'recording':
-    #     print 'Loading movement data from recording sessions...'
-    #     groups = get_session_names(session_index,
-    #                                ('type',), ('recording',))
-    # elif session_type == 'injection':
-    #     print 'Loading movement data from injection sessions...'
-    #     groups = get_session_names(session_index,
-    #                                ('type', 'type'),
-    #                                ('saline', 'muscimol'),
-    #                                comb=np.any)
-    # sys.stdout.flush()
-    # groups = groups[-max_sessions:]
-    # y_data, y_data_modes, y_val_data, y_val_data_modes = load_pk_data(data_loc,
-    #                                                                   groups)
-    # data = gen_data(n_trial=100, n_obs=200, Kp=2, Ki=0.1, Kd=0.5)
-    data = gen_data(n_trial=500, n_obs=101, Kp=0.8, Ki=0.4, Kd=0.2)
+    data = gen_data(n_trial=1000, n_obs=100, Kp=0.8, Ki=0.4, Kd=0.2)
     train_data = []
     val_data = []
     for trial in data:
@@ -134,6 +119,7 @@ def run_model(**kwargs):
 
     with tf.name_scope('model_setup'):
         with tf.name_scope('rec_params'):
+
             rec_params_u = get_rec_params_GBDS(seed, obs_dim, rec_lag, nlayers_rec,
                                              hidden_dim_rec, penalty_Q,
                                              PKLparams, 'u')
@@ -154,8 +140,6 @@ def run_model(**kwargs):
                                                    PKLparams, vel, penalty_eps,
                                                    penalty_sigma, boundaries_g, penalty_g, 'ball')
 
-        # model = SGVB_GBDS(gen_params_b, gen_params_g, yCols_ball, yCols_goalie,
-        #                   rec_params, ntrials)
         
         Y = tf.placeholder(tf.float32, shape=(None, None), name='Y')
         yDim_goalie = len(yCols_goalie)
@@ -163,27 +147,21 @@ def run_model(**kwargs):
         yDim = tf.shape(Y)[1]
         xDim = yDim
 
-        # with tf.name_scope('train_gen_goalie_g'):
-        #     g_goalie = G.GBDS_g(gen_params_goalie, yDim_goalie, yDim, Y, value = tf.zeros([tf.shape(Y)[0],yDim_goalie]))
-        # with tf.name_scope('train_gen_goalie_u'):  
-        #     u_goalie = G.GBDS_u(gen_params_goalie, g_goalie, Y, yDim_goalie, value = tf.zeros([tf.shape(Y)[0],yDim_goalie]))
-        
-        # with tf.name_scope('train_gen_ball_g'):          
-        #     g_ball = G.GBDS_g(gen_params_ball, yDim_ball, yDim, Y, value = tf.zeros([tf.shape(Y)[0],yDim_ball]))
-        # with tf.name_scope('train_gen_ball_u'):       
-        #     u_ball = G.GBDS_u(gen_params_ball, g_ball, Y, yDim_ball, value = tf.zeros([tf.shape(Y)[0],yDim_ball]))
-
+    with tf.name_scope('train'):
         with tf.name_scope('train_gen_g'):
-            g = G.GBDS_g_all(gen_params_goalie, gen_params_ball, yDim, Y, value = tf.zeros([tf.shape(Y)[0],yDim]))
+            g = G.GBDS_g_all(gen_params_goalie, gen_params_ball, yDim, Y, value = tf.ones([tf.shape(Y)[0],yDim]))
         with tf.name_scope('train_gen_u'):  
-            u = G.GBDS_u_all(gen_params_goalie, gen_params_ball, g, Y, yDim, value = tf.zeros([tf.shape(Y)[0],yDim]))
+            u = G.GBDS_u_all(gen_params_goalie, gen_params_ball, g, Y, yDim, value = tf.ones([tf.shape(Y)[0],yDim]))
 
         with tf.name_scope('train_rec_g'):
-            qg = R.SmoothingLDSTimeSeries(rec_params_g, Y, xDim, yDim, value = tf.zeros([tf.shape(Y)[0],yDim]))
+            qg = R.SmoothingLDSTimeSeries(rec_params_g, Y, xDim, yDim)
+            # qg = R.SmoothingPastLDSTimeSeries(rec_params_g, Y, xDim, yDim, ntrials)
         with tf.name_scope('train_rec_u'):
-            qu = R.SmoothingLDSTimeSeries(rec_params_u, Y, xDim, yDim, value = tf.zeros([tf.shape(Y)[0],yDim]))
-            
-        Y_pred = (Y + tf.reshape(vel, [1, yDim]) * tf.tanh(u))
+            qu = R.SmoothingLDSTimeSeries(rec_params_u, Y, xDim, yDim)
+            # qu = R.SmoothingPastLDSTimeSeries(rec_params_u, Y, xDim, yDim, ntrials)
+        
+        # Y_pred_t = Y_(t-1)+max_vel*tanh(u_t) ,where Y_pred_0 = Y_0 
+        Y_pred = tf.concat([tf.expand_dims(Y[0],0),(Y[:-1] + tf.reshape(vel, [1, yDim]) * tf.tanh(u[1:]))],0)
 
 
     print('--------------Generative Params----------------')
@@ -202,33 +180,18 @@ def run_model(**kwargs):
     # sys.stdout.flush()
 
     # set up an iterator over our training data
+    batch_size = 1
     data_iter_vb = DatasetTrialIndexIterator(train_data, randomize=True)
-    n_iter_per_epoch = ntrials
-    # data_iter_vb = DatasetMiniBatchIterator(train_data, batch_size=50, randomize=True)
+    n_iter_per_epoch = ntrials//batch_size 
 
-    #val_costs = []
-    #ctrl_cost = []
+    # val_costs = []
 
     print('Setting up VB model...')
-    # sys.stdout.flush()
-    # ctrl_train_fn, ctrl_test_fn = (
-    #     compile_functions_vb_training(model, learning_rate,
-    #                                   add_pklayers=add_pklayers,
-    #                                   mode=COMPILE_MODE))
-    # if add_pklayers:
-    #     model.mode = tf.placeholder(tf.float32, name='batch_mode')
-    # if joint_spikes and model.isTrainingSpikeModel:
-    #     model.spikes = tf.placeholder(tf.float32, name='batch_spikes')
-    #     model.signals = tf.placeholder(tf.float32, name='batch_signals')
 
-    # cap_noise = False
 
     summary_op = tf.summary.merge_all()
 
-    # run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-    # run_metadata = tf.RunMetadata()
 
-    saver = tf.train.Saver()
 
     # Iterate over the training data for the specified number of epochs
     with tf.Session(config=tf.ConfigProto(device_count={'GPU': 0})) as sess:
@@ -245,15 +208,30 @@ def run_model(**kwargs):
         for ie in range(n_epochs):
             print('--> entering epoch %i' % (ie + 1))
 
-            avg_loss = 0.0
+            start_train = time.time()
+
+            avg_loss = 0.0            
 
             for data in data_iter_vb:
                 info_dict = inference.update(feed_dict = {Y:data})
                 avg_loss += info_dict['loss']
                 # inference.print_progress(info_dict)
-            avg_loss = avg_loss / n_iter_per_epoch
+            avg_loss = avg_loss /batch_size / n_iter_per_epoch
             
-            print("-log p(x) <= {:0.3f}".format(avg_loss))
+            print("loss <= {:0.3f}".format(avg_loss))
+
+            # curr_val_cost = 0
+            # for i in range(len(val_data)):
+            #     curr_val_cost += sess.run(inference.build_loss_and_gradients(
+            #         var_list=g.getParams() + u.getParams() + qg.getParams() + qu.getParams())[0],
+            #         feed_dict={Y: val_data[i]})
+            # val_costs.append(np.array(curr_val_cost / len(val_data)))
+            # print('Validation set cost: %f' % val_costs[-1])
+            # np.save(outname + '/val_costs', val_costs)
+
+
+
+            print('Epoch %i takes %0.3f s' % ((ie + 1), (time.time() - start_train)))
             
         train_writer.close()
 

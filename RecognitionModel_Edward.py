@@ -12,65 +12,6 @@ from edward.models import RandomVariable
 from tensorflow.contrib.distributions import Distribution
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
 
-
-class RecognitionModel(object):
-    """
-    Recognition Model Interace Class
-
-    Recognition model approximates the posterior given some observations
-
-    Different forms of recognition models will have this interface
-
-    The constructor must take the Input Theano variable and create the
-    appropriate sampling expression.
-    """
-
-    def __init__(self, Input, xDim, yDim, nrng=None):
-        self.nrng = nrng
-
-        self.xDim = xDim
-        self.yDim = yDim
-        self.Input = Input
-
-    def evalEntropy(self):
-        """
-        Evaluates entropy of posterior approximation
-
-        H(q(x))
-
-        This is NOT normalized by the number of samples
-        """
-        raise Exception("Please implement me. This is an abstract method.")
-
-    def getParams(self):
-        """
-        Returns a list of objects that are parameters of the
-        recognition model. These will be updated during learning
-        """
-        return self.params
-
-    def getSample(self):
-        """
-        Returns a Theano object that are samples from the recognition model
-        given the input
-        """
-        raise Exception("Please implement me. This is an abstract method.")
-
-    def setTrainingMode(self):
-        """
-        changes the internal state so that `getSample` will possibly return
-        noisy samples for better generalization
-        """
-        raise Exception("Please implement me. This is an abstract method.")
-
-    def setTestMode(self):
-        """
-        changes the internal state so that `getSample` will supress noise
-        (e.g., dropout) for prediction
-        """
-        raise Exception("Please implement me. This is an abstract method.")
-
-
 class SmoothingLDSTimeSeries(RandomVariable, Distribution):
     """
     A "smoothing" recognition model. The constructor accepts neural networks
@@ -81,7 +22,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
     """
 
     def __init__(self, RecognitionParams, Input, xDim, yDim, nrng=None, 
-      name="SmoothingLDSTimeSeries_g", value = tf.zeros([17,2]) , dtype=tf.float32, 
+      name="SmoothingLDSTimeSeries_g", value = None , dtype=tf.float32, 
       reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, 
       allow_nan_stats=True):
         """
@@ -137,7 +78,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
         self._kwargs['xDim'] = xDim
         self._kwargs['yDim'] = yDim
         self._kwargs['nrng'] = nrng
-
+    
     def _initialize_posterior_distribution(self, RecognitionParams):
 
         # Now actually compute the precisions (from their square roots)
@@ -247,18 +188,18 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
     
     def _sample_n(self, n, seed=None):
         with tf.name_scope('posterior_samples'):
-            normSamps = tf.random_normal([n, self.xDim])
-            return self.postX + blk.blk_chol_inv(self.the_chol[0],
-                                                 self.the_chol[1],
-                                                 tf.expand_dims(normSamps, -1),
-                                                 lower=False, transpose=True)
+            result = tf.expand_dims(self.getSample(), 0)
+            for i in range(1, n):
+                result = tf.concat([result, tf.expand_dims(self.getSample(), 0)],0)
+                
+        return tf.squeeze(result,-1)
 
-    # def getSample(self):
-    #     normSamps = tf.random_normal([self.Tt, self.xDim])
-    #     return self.postX + blk.blk_chol_inv(self.the_chol[0],
-    #                                          self.the_chol[1],
-    #                                          tf.expand_dims(normSamps, -1),
-    #                                          lower=False, transpose=True)
+    def getSample(self):
+        normSamps = tf.random_normal([self.Tt, self.xDim])
+        return self.postX + blk.blk_chol_inv(self.the_chol[0],
+                                             self.the_chol[1],
+                                             tf.expand_dims(normSamps, -1),
+                                             lower=False, transpose=True)
     def _log_prob(self, value):
         return self.evalEntropy()
     
@@ -292,3 +233,43 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                                dtype=np.float32)
         return out
 
+class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
+    """
+    SmoothingLDSTimeSeries that uses past observations in addition to current
+    to evaluate the latent.
+    """
+    def __init__(self, RecognitionParams, Input, xDim, yDim, ntrials, nrng=None, 
+      name="SmoothingPastLDSTimeSeries_g", value = None , dtype=tf.float32, 
+      reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, 
+      allow_nan_stats=True):
+        """
+        :parameters:
+            - Input : 'y' tensorflow placeholder (n_input)
+                Observation matrix based on which we produce q(x)
+            - RecognitionParams : (dictionary)
+                Dictionary of timeseries-specific parameters. Contents:
+                     * A -
+                     * NN paramers...
+                     * others... TODO
+            - xDim, yDim, zDim : (integers) dimension of
+                latent space (x) and observation (y)
+        """
+        with tf.name_scope('n_trials'):
+            self.ntrials = np.cast[np.float32](ntrials)
+        with tf.name_scope('lag'):
+            if 'lag' in RecognitionParams:
+                self.lag = RecognitionParams['lag']
+            else:
+                self.lag = 5
+
+        # manipulate input to include past observations (up to lag)
+        # in each row
+        with tf.name_scope('pad_lag'):
+            for i in range(1, self.lag + 1):
+                lagged = tf.concat([tf.reshape(Input[0, :yDim], [1, yDim]),
+                                   Input[:-1, -yDim:]], 0, name='lagged')
+                Input = tf.concat([Input, lagged], 1)
+        super(SmoothingPastLDSTimeSeries, self).__init__(RecognitionParams,
+                                                         Input, xDim, yDim,
+                                                         nrng,name,value,dtype,reparameterization_type,validate_args, allow_nan_stats)
+        self._kwargs['ntrials'] = self.ntrials
