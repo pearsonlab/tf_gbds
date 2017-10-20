@@ -206,7 +206,7 @@ def run_model(**kwargs):
     n_iter_per_epoch = ntrials
     # data_iter_vb = DatasetMiniBatchIterator(train_data, batch_size=50, randomize=True)
 
-    #val_costs = []
+    val_costs = []
     #ctrl_cost = []
 
     print('Setting up VB model...')
@@ -254,7 +254,16 @@ def run_model(**kwargs):
             avg_loss = avg_loss / n_iter_per_epoch
             
             print("-log p(x) <= {:0.3f}".format(avg_loss))
-            
+
+            curr_val_cost = 0
+            for i in range(len(val_data)):
+                curr_val_cost += sess.run(inference.build_loss_and_gradients(
+                    var_list=g.getParams() + u.getParams() + qg.getParams() + qu.getParams())[0],
+                    feed_dict={Y: val_data[i]})
+            val_costs.append(np.array(curr_val_cost / len(val_data)))
+            print('Validation set cost: %f' % val_costs[-1])
+            np.save(outname + '/val_costs', val_costs)
+
         train_writer.close()
 
 
