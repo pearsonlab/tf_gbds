@@ -184,7 +184,11 @@ def run_model(**kwargs):
     data_iter_vb = DatasetTrialIndexIterator(train_data, randomize=True)
     n_iter_per_epoch = ntrials//batch_size 
 
+
     # val_costs = []
+
+    #ctrl_cost = []
+
 
     print('Setting up VB model...')
 
@@ -218,6 +222,7 @@ def run_model(**kwargs):
                 # inference.print_progress(info_dict)
             avg_loss = avg_loss /batch_size / n_iter_per_epoch
             
+
             print("loss <= {:0.3f}".format(avg_loss))
 
             # curr_val_cost = 0
@@ -233,6 +238,7 @@ def run_model(**kwargs):
 
             print('Epoch %i takes %0.3f s' % ((ie + 1), (time.time() - start_train)))
             
+
         train_writer.close()
 
 
