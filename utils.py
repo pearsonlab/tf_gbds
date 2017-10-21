@@ -263,7 +263,7 @@ def get_accel(data):
     return states
 
 
-def get_network(input_dim, output_dim, hidden_dim, num_layers,
+def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
                 PKLparams, batchnorm=False, is_shooter=False,
                 row_sparse=False, add_pklayers=False, filt_size=None):
     """
@@ -272,79 +272,84 @@ def get_network(input_dim, output_dim, hidden_dim, num_layers,
     """
     PKbias_layers = []
     NN = models.Sequential()
-    with tf.name_scope('input'):
+    with tf.name_scope('%s_input' % name):
         NN.add(keras_layers.InputLayer(batch_input_shape=(None, input_dim),
-                                       name='Input'))
+                                       name='%s_Input' % name))
 
-    with tf.name_scope('batchnorm'):
+    with tf.name_scope('%s_batchnorm' % name):
         if batchnorm:
-            NN.add(keras_layers.BatchNormalization(name='BatchNorm'))
-    with tf.name_scope('filter'):
+            NN.add(keras_layers.BatchNormalization(name='%s_BatchNorm' % name))
+    with tf.name_scope('%s_filter' % name):
         if filt_size is not None:  # first layer convolution
             # rearrange dims for convolution
             NN.add(keras_layers.Lambda(lambda x: tf.expand_dims(x, 0),
-                                       name='ExpandDims'))
+                                       name='%s_ExpandDims' % name))
             # custom pad so that no timepoint gets input from future
             NN.add(keras_layers.ZeroPadding1D(padding=(filt_size - 1, 0),
-                                              name='ZeroPadding'))
+                                              name='%s_ZeroPadding' % name))
             # Perform convolution (no pad, no filter flip (for interpretability))
             NN.add(keras_layers.Conv1D(filters=hidden_dim, kernel_size=filt_size,
                                        padding='valid', activation=tf.nn.relu,
-                                       name='Conv1D'))
+                                       kernel_constraint=constraints.MaxNorm(5),
+                                       bias_constraint=constraints.MaxNorm(5),
+                                       name='%s_Conv1D' % name))
             # rearrange dims for dense layers
             NN.add(keras_layers.Lambda(lambda x: tf.squeeze(x, [0]),
-                                       name='Squeeze'))
-    with tf.name_scope('layers'):
+                                       name='%s_Squeeze' % name))
+    with tf.name_scope('%s_layers' % name):
         for i in range(num_layers):
-            with tf.name_scope('PK_Bias'):
+            with tf.name_scope('%s_PK_Bias' % name):
                 if is_shooter and add_pklayers:
                     if row_sparse:
                         PK_bias = PKRowBiasLayer(NN, PKLparams,
-                                                 name='PKRowBias_%s' % (i+1))
+                                                 name='%s_PKRowBias_%s' % (name, i+1))
                     else:
                         PK_bias = PKBiasLayer(NN, PKLparams,
-                                              name='PKBias_%s' % (i+1))
+                                              name='%s_PKBias_%s' % (name, i+1))
                     PKbias_layers.append(PK_bias)
                     NN.add(PK_bias)
 
             if i == num_layers - 1:
                 NN.add(keras_layers.Dense(
-                    output_dim, name='Dense_%s' % (i+1),
+                    output_dim, name='%s_Dense_%s' % (name, i+1),
                     kernel_initializer=tf.random_normal_initializer(
                         stddev=0.1),
                     kernel_constraint=constraints.MaxNorm(5),
                     bias_constraint=constraints.MaxNorm(5)))
                 NN.add(keras_layers.Activation(activation='linear',
-                                               name='Activation_%s' % (i+1)))
+                                               name='%s_Activation_%s' % (name, i+1)))
             else:
                 NN.add(keras_layers.Dense(
-                    hidden_dim, name='Dense_%s' % (i+1),
+                    hidden_dim, name='%s_Dense_%s' % (name, i+1),
                     kernel_initializer=tf.orthogonal_initializer(),
                     kernel_constraint=constraints.MaxNorm(5),
                     bias_constraint=constraints.MaxNorm(5)))
                 NN.add(keras_layers.Activation(activation='relu',
-                                               name='Activation_%s' % (i+1)))
+                                               name='%s_Activation_%s' % (name, i+1)))
     return NN, PKbias_layers
 
 
-def get_rec_params_GBDS(seed, obs_dim, lag, num_layers, hidden_dim, penalty_Q,
+def get_rec_params_GBDS(name, obs_dim, lag, num_layers, hidden_dim, penalty_Q,
                         PKLparams):
 
     with tf.name_scope('rec_mu'):
-        mu_net, PKbias_layers_mu = get_network(obs_dim * (lag + 1),
+        mu_net, PKbias_layers_mu = get_network('rec_mu_%s' % name,
+                                               obs_dim * (lag + 1),
                                                obs_dim, hidden_dim,
                                                num_layers, PKLparams,
                                                batchnorm=False)
 
     with tf.name_scope('rec_lambda'):
-        lambda_net, PKbias_layers_lambda = get_network(obs_dim * (lag + 1),
+        lambda_net, PKbias_layers_lambda = get_network('rec_lambda_%s' % name,
+                                                       obs_dim * (lag + 1),
                                                        obs_dim**2,
                                                        hidden_dim,
                                                        num_layers, PKLparams,
                                                        batchnorm=False)
 
     with tf.name_scope('rec_lambdaX'):
-        lambdaX_net, PKbias_layers_lambdaX = get_network(obs_dim * (lag + 1),
+        lambdaX_net, PKbias_layers_lambdaX = get_network('rec_lambdaX_%s' % name,
+                                                         obs_dim * (lag + 1),
                                                          obs_dim**2,
                                                          hidden_dim,
                                                          num_layers, PKLparams,
@@ -367,11 +372,11 @@ def get_rec_params_GBDS(seed, obs_dim, lag, num_layers, hidden_dim, penalty_Q,
     return rec_params
 
 
-def get_gen_params_GBDS(seed, obs_dim_agent, obs_dim, add_accel,
-                        yCols_agent, num_layers_rec, hidden_dim, PKLparams,
-                        vel, penalty_eps, penalty_sigma,
-                        boundaries_g, penalty_g, name):
-    
+def get_gen_params_GBDS(name, obs_dim_agent, obs_dim, add_accel, yCols_agent,
+                        num_layers_rec, hidden_dim, PKLparams, vel,
+                        penalty_eps, penalty_sigma, boundaries_g,
+                        penalty_g):
+
     with tf.name_scope('get_states_%s' % name):
         if add_accel:
             get_states = get_accel
@@ -379,14 +384,16 @@ def get_gen_params_GBDS(seed, obs_dim_agent, obs_dim, add_accel,
             get_states = get_vel
 
     with tf.name_scope('gen_mu_%s' % name):
-        NN_postJ_mu, _ = get_network(obs_dim_agent * 2,
+        NN_postJ_mu, _ = get_network('gen_mu_%s' % name,
+                                     obs_dim_agent * 2,
                                      obs_dim_agent * 2,
                                      hidden_dim,
                                      num_layers_rec,
                                      PKLparams)
 
     with tf.name_scope('gen_sigma_%s' % name):
-        NN_postJ_sigma, _ = get_network(obs_dim_agent * 2,
+        NN_postJ_sigma, _ = get_network('gen_sigma_%s' % name,
+                                        obs_dim_agent * 2,
                                         (obs_dim_agent * 2)**2,
                                         hidden_dim,
                                         num_layers_rec,
@@ -571,7 +578,7 @@ class MultiDatasetTrialIndexIterator(object):
         else:
             for i in range(n_batches):
                 yield tuple(dset[i] for dset in self.data)
-                
+
 
 class MultiDataSetTrialIndexTF(object):
     def __init__(self, data, batch_size=100):

@@ -9,53 +9,55 @@ import tensorflow as tf
 from tensorflow.python.client import timeline
 import numpy as np
 import time
+from tensorflow.python.client import timeline
 # import pickle as pkl
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
 
-def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-10 * np.zeros((1, 2)))),
-             Kp=1, Ki=0, Kd=0, vel=np.array([1e-3, 1e-2, 1e-2], np.float32)):
-    data = []
+def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
+             eps=1e-5, Kp=1, Ki=0, Kd=0,
+             vel=1e-2 * np.ones((3))):
+    p = []
 
     for s in range(n_trial):
         p_b = np.zeros((n_obs, 2), np.float32)
         p_g = np.zeros((n_obs, 1), np.float32)
         g = np.zeros(p_b.shape, np.float32)
-        g[0] = [0.5, 0.5]
         prev_error_b = 0
         prev_error_g = 0
         int_error_b = 0
         int_error_g = 0
 
-        for t in range(n_obs - 1):
-            if p_b[t, 0] > 0.3:
-                next_g_mu = np.array([0.5, -0.5], np.float32)
-                next_g_lambda = np.array([36, 36], np.float32)
-            else:
-                next_g_mu = np.array([0.25, 0.25], np.float32)
-                next_g_lambda = np.array([16, 16], np.float32)
+        init = np.pi * (np.random.rand() * 2 - 1)
+        g_mu_y = 0.75 * np.sin(1. * (np.linspace(0, 2 * np.pi, n_obs) - init))
+        g_mu = np.hstack([np.ones((n_obs, 1)), g_mu_y.reshape(n_obs, 1)])
+        g_lambda = np.array([16, 16], np.float32)
+        g[0] = [1, 0.75 * (np.random.rand() * 2 - 1)]
 
-            g[t + 1] = (g[t] + next_g_lambda * next_g_mu) / (1 + next_g_lambda)
-            var = sigma ** 2 / (1 + next_g_lambda)
+        for t in range(n_obs - 1):
+            g[t + 1] = (g[t] + g_lambda * g_mu[t + 1]) / (1 + g_lambda)
+            var = sigma ** 2 / (1 + g_lambda)
             g[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
 
             error_b = g[t + 1] - p_b[t]
             int_error_b += error_b
             der_error_b = error_b - prev_error_b
-            u_b = Kp * error_b + Ki * int_error_b + Kd * der_error_b
+            u_b = (Kp * error_b + Ki * int_error_b + Kd * der_error_b +
+                   eps * np.random.randn(2,))
             prev_error_b = error_b
-            p_b[t + 1] = p_b[t] + vel[1:] * np.tanh(u_b)
+            p_b[t + 1] = p_b[t] + vel[1:] * np.clip(u_b, -1, 1)
 
             error_g = p_b[t + 1, 1] - p_g[t]
             int_error_g += error_g
             der_error_g = error_g - prev_error_g
-            u_g = Kp * error_g + Ki * int_error_g + Kd * der_error_g
+            u_g = (Kp * error_g + Ki * int_error_g + Kd * der_error_g +
+                   eps * np.random.randn())
             prev_error_g = error_g
-            p_g[t + 1] = p_g[t] + vel[0] * np.tanh(u_g)
+            p_g[t + 1] = p_g[t] + vel[0] * np.clip(u_g, -1, 1)
 
-        data.append(np.hstack([p_g, p_b]))
+        p.append(np.hstack([p_g, p_b]))
 
-    return data
+    return p
 
 
 def run_model(**kwargs):
@@ -80,6 +82,7 @@ def run_model(**kwargs):
     learning_rate = tf.cast(kwargs['learning_rate'], tf.float32)
     n_epochs = kwargs['n_epochs']
 
+    data = gen_data(n_trial=2000, n_obs=100, Kp=0.8, Ki=0.4, Kd=0.2)
     np.random.seed(seed)  # set seed for consistent train/val split
 
     if not os.path.exists(outname):
@@ -98,7 +101,6 @@ def run_model(**kwargs):
     # groups = groups[-max_sessions:]
     # y_data, y_data_modes, y_val_data, y_val_data_modes = load_pk_data(data_loc,
     #                                                                   groups)
-    data = gen_data(n_trial=100, n_obs=200, Kp=2, Ki=0.1, Kd=0.5)
 
     train_data = []
     val_data = []
@@ -128,29 +130,67 @@ def run_model(**kwargs):
 
     with tf.name_scope('model_setup'):
         with tf.name_scope('rec_params'):
-            rec_params = get_rec_params_GBDS(seed, obs_dim, rec_lag, nlayers_rec,
-                                             hidden_dim_rec, penalty_Q,
-                                             PKLparams)
+            with tf.name_scope('goal'):
+                rec_params_goal = get_rec_params_GBDS('goal', obs_dim, rec_lag,
+                                                      nlayers_rec, hidden_dim_rec,
+                                                      penalty_Q, PKLparams)
+            with tf.name_scope('control_signal'):
+                rec_params_ctrl = get_rec_params_GBDS('ctrl', obs_dim, rec_lag,
+                                                      nlayers_rec, hidden_dim_rec,
+                                                      penalty_Q, PKLparams)
 
         with tf.name_scope('gen_params'):
-            with tf.name_scope('gen_goalie_params'):
-                gen_params_g = get_gen_params_GBDS(seed, obs_dim_g, obs_dim, add_accel,
+            with tf.name_scope('goalie'):
+                gen_params_g = get_gen_params_GBDS('goalie', obs_dim_g, obs_dim, add_accel,
                                                    yCols_goalie, nlayers_rec,
                                                    hidden_dim_rec, PKLparams, vel,
                                                    penalty_eps, penalty_sigma,
-                                                   boundaries_g, penalty_g, 'goalie')
-
-            with tf.name_scope('gen_ball_params'):
-                gen_params_b = get_gen_params_GBDS(seed, obs_dim_b, obs_dim, add_accel,
+                                                   boundaries_g, penalty_g)
+            with tf.name_scope('ball'):
+                gen_params_b = get_gen_params_GBDS('ball', obs_dim_b, obs_dim, add_accel,
                                                    yCols_ball, nlayers_rec, hidden_dim_rec,
                                                    PKLparams, vel, penalty_eps,
-                                                   penalty_sigma, boundaries_g, penalty_g, 'ball')
+                                                   penalty_sigma, boundaries_g, penalty_g)
 
         model = SGVB_GBDS(gen_params_b, gen_params_g, yCols_ball, yCols_goalie,
-                          rec_params, ntrials)
+                          rec_params_goal, rec_params_ctrl, ntrials)
 
         with tf.name_scope('cost'):
-            cost = -model.cost()
+            JCols_goalie = range(model.yDim_goalie * 2)
+            JCols_ball = range(model.yDim_goalie * 2,
+                               model.yDim_goalie * 2 + model.yDim_ball * 2)
+            with tf.name_scope('goal_samples'):
+                q_g = tf.squeeze(model.mrec_goal.samples, 2, name='q_g')
+            with tf.name_scope('control_signal_samples'):
+                q_U = tf.squeeze(model.mrec_ctrl.samples, 2, name='q_U')
+            with tf.name_scope('gen_goalie_logdensity'):
+                gen_goalie_logdensity = model.mprior_goalie.evaluateLogDensity(
+                    tf.gather(q_g, model.yCols_goalie, axis=1),
+                    tf.gather(q_U, model.yCols_goalie, axis=1),
+                    model.Y)
+            with tf.name_scope('gen_ball_logdensity'):
+                gen_ball_logdensity = model.mprior_ball.evaluateLogDensity(
+                    tf.gather(q_g, model.yCols_ball, axis=1),
+                    tf.gather(q_U, model.yCols_ball, axis=1),
+                    model.Y)
+            with tf.name_scope('rec_goal_entropy'):
+                rec_goal_entropy = model.mrec_goal.evalEntropy()
+            with tf.name_scope('rec_ctrl_entropy'):
+                rec_ctrl_entropy = model.mrec_ctrl.evalEntropy()
+
+            cost = -((gen_goalie_logdensity + gen_ball_logdensity +
+                      rec_goal_entropy + rec_ctrl_entropy) /
+                     tf.cast(tf.shape(model.Y)[0], tf.float32))
+
+        _, _, U_pred_g, _ = model.mprior_goalie.get_preds(
+            model.Y[:-1], training=True,
+            post_g=tf.gather(q_g, yCols_goalie, axis=1),
+            post_U=tf.gather(q_U, yCols_goalie, axis=1))
+        _, _, U_pred_b, _ = model.mprior_ball.get_preds(
+            model.Y[:-1], training=True,
+            post_g=tf.gather(q_g, yCols_ball, axis=1),
+            post_U=tf.gather(q_U, yCols_ball, axis=1))
+        U_pred = tf.concat([U_pred_g, U_pred_b], axis=1)
 
 
     print('Check params:')
@@ -177,17 +217,12 @@ def run_model(**kwargs):
 
     # set up an iterator over our training data
     data_iter_vb = DatasetTrialIndexIterator(train_data, randomize=True)
-    # data_iter_vb = DatasetMiniBatchIterator(train_data, batch_size=50, randomize=True)
 
     val_costs = []
     ctrl_cost = []
 
     print('Setting up VB model...')
     # sys.stdout.flush()
-    # ctrl_train_fn, ctrl_test_fn = (
-    #     compile_functions_vb_training(model, learning_rate,
-    #                                   add_pklayers=add_pklayers,
-    #                                   mode=COMPILE_MODE))
     # if add_pklayers:
     #     model.mode = tf.placeholder(tf.float32, name='batch_mode')
     # if joint_spikes and model.isTrainingSpikeModel:
@@ -202,7 +237,10 @@ def run_model(**kwargs):
         train_op = opt.minimize(cost, var_list=model.getParams())
 
     tf.summary.scalar('train_cost', cost)
-
+    tf.summary.scalar('rec_goal_entropy', rec_goal_entropy)
+    tf.summary.scalar('rec_ctrl_entropy', rec_ctrl_entropy)
+    tf.summary.scalar('gen_goalie_logdensity', gen_goalie_logdensity)
+    tf.summary.scalar('gen_ball_logdensity', gen_ball_logdensity)
     tf.summary.scalar('Kp_x_ball', model.mprior_ball.Kp[0, 0])
     tf.summary.scalar('Kp_y_ball', model.mprior_ball.Kp[1, 0])
     tf.summary.scalar('Ki_x_ball', model.mprior_ball.Ki[0, 0])
@@ -212,14 +250,10 @@ def run_model(**kwargs):
 
     summary_op = tf.summary.merge_all()
 
-    # run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-    # run_metadata = tf.RunMetadata()
-
     saver = tf.train.Saver()
 
     # Iterate over the training data for the specified number of epochs
-    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 0})) as sess:
-    # with tf.Session() as sess:
+    with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         train_writer = tf.summary.FileWriter(outname, sess.graph)
 
@@ -248,17 +282,28 @@ def run_model(**kwargs):
                 #     #                     cmd='code',
                 #     #                     options=opts)
                 # else:
+
                 _, train_cost, train_summary = sess.run([train_op, cost, summary_op],
                                                         feed_dict={model.Y: data})
                 ctrl_cost.append(train_cost)
                 train_writer.add_summary(train_summary)
 
-                # for param in model.getParams():
-                #     if param.name == 'W' or param.name == 'b' or param.name == 'G':
-                #         # only on NN parameters
-                #         param = tf.clip_by_norm(param, 5, axes=[0])
-                #     if cap_noise and param.name == 'QinvChol' or param.name == 'Q0invChol':
-                #         param = tf.clip_by_norm(param, 30, axes=[0])
+                # run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+                # run_metadata = tf.RunMetadata()
+                # sess.run(train_op, feed_dict={model.Y: data},
+                #          options=run_options,
+                #          run_metadata=run_metadata)
+
+                # tf.profiler.profile(tf.get_default_graph(),
+                #                     run_meta=run_metadata,
+                #                     cmd='scope',
+                #                     options=tf.profiler.ProfileOptionBuilder.time_and_memory())
+
+                # fetched_timeline = timeline.Timeline(run_metadata.step_stats)
+                # chrome_trace = fetched_timeline.generate_chrome_trace_format()
+                # with open(outname + '/timeline_%s.json' % step, 'w') as f:
+                #     f.write(chrome_trace)
+
             # print('Epoch %i takes %0.3f s' % ((ie + 1), (time.time() - start_train)))
 
             # start_val = time.time()
@@ -267,17 +312,65 @@ def run_model(**kwargs):
                 val_cost = sess.run(cost, feed_dict={model.Y: val_data[i]})
                 curr_val_costs.append(val_cost)
             val_costs.append(np.array(curr_val_costs).mean())
-            # print('Validation step takes %0.3f s' % (time.time() - start_val))
+            # # print('Validation step takes %0.3f s' % (time.time() - start_val))
             print('Validation set cost: %f' % val_costs[-1])
             # # sys.stdout.flush()
             # with open(outname + '/model.pkl', 'wb') as f:
             #     pkl.dump(model, f)
             # if ie == 0:
             #     saver.save(sess, outname + '/gbds_test', write_meta_graph=True)
-            if ie == (n_epochs - 1):
-                saver.save(sess, outname + '/gbds_test', write_meta_graph=True)
             np.save(outname + '/train_costs', ctrl_cost)
             np.save(outname + '/val_costs', val_costs)
+
+            if (ie + 1) % 100 == 0:
+                print('----> Predicting control signal')
+                ctrl_pred = []
+                for i in range(len(val_data)):
+                    u_pred = U_pred.eval(feed_dict={model.Y: val_data[i]})
+                    ctrl_pred.append(u_pred)
+                np.save(outname + '/ctrl_pred_step_%s' % (ie + 1), ctrl_pred)
+
+                # print('----> Predicting trajectory')
+                # Kp_b = model.mprior_ball.Kp.eval()
+                # Ki_b = model.mprior_ball.Ki.eval()
+                # Kd_b = model.mprior_ball.Kd.eval()
+                # eps_b = model.mprior_ball.eps.eval()
+                # sigma_b = model.mprior_ball.sigma.eval()
+                # n_obs = train_data[0].shape[0]
+                # pred_summary = []
+
+                # for i in range(100):
+                #     pred = np.zeros((n_obs, 2), np.float32)
+                #     g_ball = np.zeros((n_obs, 2), np.float32)
+                #     g_ball[0] = [0.75, 0.75]
+
+                #     prev_error_b = 0
+                #     int_error_b = 0
+
+                #     for t in range(n_obs - 1):
+                #         if np.random.uniform() >= 0.5:
+                #             next_g_mu = np.array([0.75, -0.75], np.float32)
+                #             next_g_lambda = np.array([1, 1], np.float32)
+                #         else:
+                #             next_g_mu = np.array([0.75, 0.75], np.float32)
+                #             next_g_lambda = np.array([1, 1], np.float32)
+
+                #         g_ball[t + 1] = (g_ball[t] + next_g_lambda * next_g_mu) / (1 + next_g_lambda)
+                #         var = sigma_b ** 2 / (1 + next_g_lambda)
+                #         g_ball[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
+
+                #         error_b = g_ball[t + 1] - pred[t]
+                #         int_error_b += error_b
+                #         der_error_b = error_b - prev_error_b
+                #         u_b = Kp_b.reshape(2,) * error_b + Ki_b.reshape(2,) * int_error_b + Kd_b.reshape(2,) * der_error_b
+                #         prev_error_b = error_b
+                #         pred[t + 1] = pred[t] + vel[1:] * np.tanh(u_b + (eps_b * np.random.randn(2)).reshape(2,))
+                #     pred_summary.append(pred)
+
+                # np.save(outname + '/pred_trajectory_step_%s' % (ie + 1), pred_summary)
+
+            if ie == (n_epochs - 1):
+                saver.save(sess, outname + '/gbds_test', write_meta_graph=True)
 
         train_writer.close()
 
@@ -317,47 +410,6 @@ def run_model(**kwargs):
         # np.save(outname + '/states', all_states)
         # np.save(outname + '/post_g0', all_post_g0)
 
-        Kp_b = model.mprior_ball.Kp.eval()
-        Ki_b = model.mprior_ball.Ki.eval()
-        Kd_b = model.mprior_ball.Kd.eval()
-        # pid_b = [Kp_b, Ki_b, Kd_b]
-        # np.save(outname + '/pid_ball', pid_b)
-        # eps_b = model.mprior_ball.eps.eval()
-
-    print('----> Predicting trajectory')
-    # sys.stdout.flush()
-    n_obs = train_data[0].shape[0]
-    pred = np.zeros((n_obs, 2), np.float32)
-    g_ball = np.zeros((n_obs, 2), np.float32)
-    g_ball[0] = [0.5, 0.5]
-    sigma = np.log1p(np.exp(-10 * np.zeros((1, 2))))
-
-    prev_error_b = 0
-    int_error_b = 0
-
-    for t in range(n_obs - 1):
-        if pred[t, 0] > 0.3:
-            next_g_mu = np.array([0.5, -0.5], np.float32)
-            next_g_lambda = np.array([36, 36], np.float32)
-        else:
-            next_g_mu = np.array([0.25, 0.25], np.float32)
-            next_g_lambda = np.array([16, 16], np.float32)
-
-        g_ball[t + 1] = (g_ball[t] + next_g_lambda * next_g_mu) / (1 + next_g_lambda)
-        var = sigma ** 2 / (1 + next_g_lambda)
-        g_ball[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
-
-        error_b = g_ball[t + 1] - pred[t]
-        int_error_b += error_b
-        der_error_b = error_b - prev_error_b
-        u_b = Kp_b.reshape(2,) * error_b + Ki_b.reshape(2,) * int_error_b + Kd_b.reshape(2,) * der_error_b
-        prev_error_b = error_b
-        # pred[t + 1] = pred[t] + vel[1:] * np.tanh(u_b + eps_b.reshape(2,) * np.random.randn(2,))
-        pred[t + 1] = pred[t] + vel[1:] * np.tanh(u_b)
-
-    np.save(outname + '/pred_trajectory', pred)
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--outname', type=str, default='model_saved',
@@ -392,10 +444,11 @@ if __name__ == '__main__':
                         help='Penalty for goal states escaping boundary_g.')
     parser.add_argument('--boundary_g', type=float, default=1.0,
                         help='Goal state boundary that corresponds to penalty')
-    parser.add_argument('--learning_rate', type=float, default=1e-3,
+    parser.add_argument('--learning_rate', type=float, default=1e-4,
                         help='Learning rate for adam optimizer')
-    parser.add_argument('--n_epochs', type=int, default=100,
+    parser.add_argument('--n_epochs', type=int, default=3000,
                         help='Number of iterations through the full training set')
     args = parser.parse_args()
 
+    os.environ['CUDA_​VISIBLE_​DEVICES'] = ''
     run_model(**vars(args))

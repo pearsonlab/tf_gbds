@@ -39,9 +39,9 @@ class SGVB_GBDS():  # (Trainable):
            - Titsias and Lazaro-Gredilla (ICML, 2014)
     '''
     def __init__(self, gen_params_ball, gen_params_goalie, yCols_ball,
-                 yCols_goalie, rec_params, ntrials):
+                 yCols_goalie, rec_params_goal, rec_params_ctrl, ntrials):
         # instantiate rng's
-        self.nrng = np.random.RandomState(124)
+        self.nrng = np.random.RandomState(1234)
 
         # actual model parameters
         # symbolic variables for VB training
@@ -65,20 +65,23 @@ class SGVB_GBDS():  # (Trainable):
             self.xDim = self.yDim
 
         # instantiate our prior and recognition models
-        with tf.name_scope('init_model'):
-            with tf.name_scope('mrec'):
-                self.mrec = SmoothingPastLDSTimeSeries(rec_params, self.Y, self.xDim,
-                                                       self.yDim, ntrials,
-                                                       self.nrng)
-            with tf.name_scope('mprior'):
-                with tf.name_scope('mprior_goalie'):
-                    self.mprior_goalie = GBDS(gen_params_goalie,
-                                              self.yDim_goalie, self.yDim,
-                                              nrng=self.nrng)
-                with tf.name_scope('mprior_ball'):
-                    self.mprior_ball = GBDS(gen_params_ball,
-                                            self.yDim_ball, self.yDim,
-                                            nrng=self.nrng)
+        with tf.name_scope('mrec_goal'):
+            self.mrec_goal = SmoothingPastLDSTimeSeries(rec_params_goal, self.Y,
+                                                        self.xDim, self.yDim,
+                                                        ntrials, self.nrng)
+        with tf.name_scope('mrec_ctrl'):
+            self.mrec_ctrl = SmoothingPastLDSTimeSeries(rec_params_ctrl, self.Y,
+                                                        self.xDim, self.yDim,
+                                                        ntrials, self.nrng)
+
+        with tf.name_scope('mprior_goalie'):
+            self.mprior_goalie = GBDS(gen_params_goalie,
+                                      self.yDim_goalie, self.yDim,
+                                      nrng=self.nrng)
+        with tf.name_scope('mprior_ball'):
+            self.mprior_ball = GBDS(gen_params_ball,
+                                    self.yDim_ball, self.yDim,
+                                    nrng=self.nrng)
 
         with tf.name_scope('default_training_mode'):
             self.isTrainingGenerativeModel = True
@@ -95,7 +98,8 @@ class SGVB_GBDS():  # (Trainable):
         '''
         params = []
         if self.isTrainingRecognitionModel:
-            params += self.mrec.getParams()
+            params += self.mrec_goal.getParams()
+            params += self.mrec_ctrl.getParams()
         if self.isTrainingGenerativeModel:
             params += self.mprior_goalie.getParams()
             params += self.mprior_ball.getParams()
@@ -160,7 +164,7 @@ class SGVB_GBDS():  # (Trainable):
             self.isTrainingGANGenerator = False
             self.isTrainingGANDiscriminator = True
 
-    def cost(self):
+    def elbo(self):
         '''
         Compute a one-sample approximation the ELBO (lower bound on marginal
         likelihood), normalized by batch size (length of Y in first dimension).
@@ -168,42 +172,51 @@ class SGVB_GBDS():  # (Trainable):
         JCols_goalie = range(self.yDim_goalie * 2)
         JCols_ball = range(self.yDim_goalie * 2,
                            self.yDim_goalie * 2 + self.yDim_ball * 2)
-        cost = 0
+        elbo = 0
         with tf.name_scope('goal_samples'):
-            q = tf.squeeze(self.mrec.samples, 2, name='q')
-        with tf.name_scope('gen_cost'):
+            q_g = tf.squeeze(self.mrec_goal.samples, 2, name='q_g')
+        with tf.name_scope('control_signal_samples'):
+            q_U = tf.squeeze(self.mrec_ctrl.samples, 2, name='q_U')
+        with tf.name_scope('gen_logdensity'):
             if self.isTrainingGenerativeModel or self.isTrainingRecognitionModel:
-                with tf.name_scope('gen_goalie_cost'):
-                    cost += self.mprior_goalie.evaluateLogDensity(
-                        tf.gather(q, self.yCols_goalie, axis=1), self.Y)
-                with tf.name_scope('gen_ball_cost'):
-                    cost += self.mprior_ball.evaluateLogDensity(
-                        tf.gather(q, self.yCols_ball, axis=1), self.Y)
-        with tf.name_scope('rec_cost'):
+                with tf.name_scope('gen_goalie_logdensity'):
+                    elbo += self.mprior_goalie.evaluateLogDensity(
+                        tf.gather(q_g, self.yCols_goalie, axis=1),
+                        tf.gather(q_U, self.yCols_goalie, axis=1),
+                        self.Y)
+                with tf.name_scope('gen_ball_logdensity'):
+                    elbo += self.mprior_ball.evaluateLogDensity(
+                        tf.gather(q_g, self.yCols_ball, axis=1),
+                        tf.gather(q_U, self.yCols_ball, axis=1),
+                        self.Y)
+        with tf.name_scope('rec_entropy'):
             if self.isTrainingRecognitionModel:
-                cost += self.mrec.evalEntropy()
+                with tf.name_scope('rec_goal_entropy'):
+                    elbo += self.mrec_goal.evalEntropy()
+                with tf.name_scope('rec_ctrl_entropy'):
+                    elbo += self.mrec_ctrl.evalEntropy()
         with tf.name_scope('GAN_loss'):
             if self.isTrainingCGANGenerator:
-                cost += self.mprior_ball.evaluateCGANLoss(self.J[:, JCols_ball],
+                elbo += self.mprior_ball.evaluateCGANLoss(self.J[:, JCols_ball],
                                                           self.s, mode='G')
-                cost += self.mprior_goalie.evaluateCGANLoss(
+                elbo += self.mprior_goalie.evaluateCGANLoss(
                     self.J[:, JCols_goalie], self.s, mode='G')
             if self.isTrainingCGANDiscriminator:
-                cost += self.mprior_ball.evaluateCGANLoss(self.J[:, JCols_ball],
+                elbo += self.mprior_ball.evaluateCGANLoss(self.J[:, JCols_ball],
                                                           self.s, mode='D')
-                cost += self.mprior_goalie.evaluateCGANLoss(
+                elbo += self.mprior_goalie.evaluateCGANLoss(
                     self.J[:, JCols_goalie], self.s, mode='D')
             if self.isTrainingGANGenerator:
-                cost += self.mprior_ball.evaluateGANLoss(
+                elbo += self.mprior_ball.evaluateGANLoss(
                     tf.gather(self.g0, self.yCols_ball, axis=1), mode='G')
-                cost += self.mprior_goalie.evaluateGANLoss(
+                elbo += self.mprior_goalie.evaluateGANLoss(
                     tf.gather(self.g0, self.yCols_goalie, axis=1), mode='G')
             if self.isTrainingGANDiscriminator:
-                cost += self.mprior_ball.evaluateGANLoss(
+                elbo += self.mprior_ball.evaluateGANLoss(
                     tf.gather(self.g0, self.yCols_ball, axis=1), mode='D')
-                cost += self.mprior_goalie.evaluateGANLoss(
+                elbo += self.mprior_goalie.evaluateGANLoss(
                     tf.gather(self.g0, self.yCols_goalie, axis=1), mode='D')
         if self.isTrainingGenerativeModel or self.isTrainingRecognitionModel:
-            return cost / tf.cast(tf.shape(self.Y)[0], tf.float32)
+            return elbo / tf.cast(tf.shape(self.Y)[0], tf.float32)
         else:  # training GAN
-            return cost
+            return elbo

@@ -4,6 +4,7 @@ Based on Evan Archer's code here:
 https://github.com/earcher/vilds/blob/master/code/GenerativeModel.py
 """
 import tensorflow as tf
+from tensorflow.contrib.distributions import Normal
 from tensorflow.contrib.keras import layers, models
 import numpy as np
 from tf_gbds.CGAN import CGAN, WGAN
@@ -346,13 +347,13 @@ class GBDS(GenerativeModel):
 
         with tf.name_scope('goal_state_noise'):
             # noise coefficient on goal states
-            self.unc_sigma = tf.Variable(initial_value=-7 * np.ones((1,
+            self.unc_sigma = tf.Variable(initial_value=-5 * np.ones((1,
                                                                      self.yDim)),
                                          name='unc_sigma', dtype=tf.float32)
             self.sigma = tf.nn.softplus(self.unc_sigma, name='sigma')
         with tf.name_scope('control_signal_noise'):
             # noise coefficient on control signals
-            self.unc_eps = tf.Variable(initial_value=-11 * np.ones((1,
+            self.unc_eps = tf.Variable(initial_value=-11.513 * np.ones((1,
                                                                     self.yDim)),
                                        name='unc_eps', dtype=tf.float32)
             self.eps = tf.nn.softplus(self.unc_eps, name='eps')
@@ -382,7 +383,7 @@ class GBDS(GenerativeModel):
         """
         self.GAN_g0 = WGAN(*args, **kwargs)
 
-    def get_preds(self, Y, training=False, post_g=None, gen_g=None,
+    def get_preds(self, Y, training=False, post_g=None, gen_g=None, post_U=None,
                   extra_conds=None):
         """
         Return the predicted next J, g, U, and Y for each point in Y.
@@ -399,13 +400,14 @@ class GBDS(GenerativeModel):
             J, next_g = self.draw_next_goal(Y, training, post_g, gen_g,
                                             extra_conds)
         with tf.name_scope('control_signal'):
-            Upred = self.get_control_signal(Y, post_g, next_g)
+            U_pred = self.get_control_signal(Y, post_g, next_g, post_U)
         with tf.name_scope('predicted_position'):
             # get predicted Y
-            Ypred = (tf.gather(Y, self.yCols, axis=1) +
-                     tf.reshape(self.vel, [1, self.yDim]) * tf.tanh(Upred))
+            Y_pred = (tf.gather(Y, self.yCols, axis=1) +
+                      tf.reshape(self.vel, [1, self.yDim]) *
+                      tf.clip_by_value(U_pred, -1, 1, name='clipped_signal'))
 
-        return J, next_g, Upred, Ypred
+        return J, next_g, U_pred, Y_pred
 
     def draw_postJ(self, g):
         """
@@ -434,7 +436,7 @@ class GBDS(GenerativeModel):
         with tf.name_scope('postJ'):
             postJ = postJ_mu + tf.squeeze(tf.matmul(
                 postJ_sigma, tf.random_normal([tf.shape(g_stack)[0],
-                                               self.JDim, 1], seed=1234)), 2)
+                                               self.JDim, 1])), 2)
         return postJ
 
     def draw_next_goal(self, Y, training=False, post_g=None, gen_g=None,
@@ -475,14 +477,14 @@ class GBDS(GenerativeModel):
                         (1 + J_lambda[(-1,)]))
                 with tf.name_scope('add_noise'):
                     var = self.sigma**2 / (1 + J_lambda[(-1,)])
-                    goal += tf.random_normal(goal.shape, seed=1234) * tf.sqrt(var)
+                    goal += tf.random_normal(goal.shape) * tf.sqrt(var)
                 next_g = tf.concat([gen_g[1:], goal], 0)
         else:
             raise Exception("Goal states must be provided " +
                             "(either posterior or generated)")
         return J, next_g
 
-    def get_control_signal(self, Y, post_g, next_g):
+    def get_control_signal(self, Y, post_g, next_g, post_U):
         """
         PID Controller for next control point
         """
@@ -491,13 +493,13 @@ class GBDS(GenerativeModel):
                 error = post_g[1:] - tf.gather(Y, self.yCols, axis=1)
             else:  # calculate error from generated goals
                 error = next_g - tf.gather(Y, self.yCols, axis=1)
-        with tf.name_scope('prev_control_signal'):
+        # with tf.name_scope('prev_control_signal'):
             # Assume control starts at zero
-            Uprev = tf.concat(
-                [tf.zeros([1, self.yDim]),
-                 tf.atanh((tf.gather(Y, self.yCols, axis=1)[1:] -
-                    tf.gather(Y, self.yCols, axis=1)[:-1]) /
-                 tf.reshape(self.vel, [1, self.yDim]))], 0, name='Uprev')
+            # Uprev = tf.concat(
+            #     [tf.zeros([1, self.yDim]),
+            #      (tf.gather(Y, self.yCols, axis=1)[1:] -
+            #         tf.gather(Y, self.yCols, axis=1)[:-1]) /
+            #      tf.reshape(self.vel, [1, self.yDim])], 0, name='Uprev')
         with tf.name_scope('control_signal_change'):
             Udiff = []
             with tf.name_scope('filter'):
@@ -508,7 +510,7 @@ class GBDS(GenerativeModel):
                     # zero pad beginning
                     signal = tf.reshape(tf.concat([tf.zeros(2), signal], 0),
                                         [1, -1, 1, 1], name='signal')
-                    res = tf.nn.convolution(signal, filt, padding="VALID")
+                    res = tf.nn.convolution(signal, filt, padding='VALID')
                     res = tf.reshape(res, [-1, 1], name='residual')
                     Udiff.append(res)
                 if len(Udiff) > 1:
@@ -518,8 +520,8 @@ class GBDS(GenerativeModel):
             with tf.name_scope('add_noise'):
                 if post_g is None:  # Add control signal noise to generated data
                     Udiff += self.eps * tf.random_normal(Udiff.shape)
-        Upred = Uprev + Udiff
-        return Upred
+        U_pred = post_U[:-1] + Udiff
+        return U_pred
 
     def evaluateGANLoss(self, post_g0, mode='D'):
         """
@@ -556,33 +558,58 @@ class GBDS(GenerativeModel):
             raise Exception("Invalid mode. Provide 'G' for generator loss " +
                             "or 'D' for discriminator loss.")
 
-    def evaluateLogDensity(self, g, Y):
+    def evaluateLogDensity(self, g, U, Y):
         '''
         Return a theano function that evaluates the log-density of the
         GenerativeModel.
 
         g: Goal state time series (sample from the recognition model)
+        U: Control signal time series (sample from the recognition model)
         Y: Time series of positions
         '''
         # Calculate real control signal
         with tf.name_scope('real_control_signal'):
-            U_true = tf.atanh((tf.gather(Y, self.yCols, axis=1)[1:] -
-                               tf.gather(Y, self.yCols, axis=1)[:-1]) /
-                              tf.reshape(self.vel, [1, self.yDim]),
-                              name='U_true')
+            U_obs = ((tf.gather(Y, self.yCols, axis=1)[1:] -
+                      tf.gather(Y, self.yCols, axis=1)[:-1]) /
+                     tf.reshape(self.vel, [1, self.yDim]))
         # Get predictions for next timestep (at each timestep except for last)
         # disregard last timestep bc we don't know the next value, thus, we
         # can't calculate the error
         with tf.name_scope('next_step_pred'):
-            Jpred, g_pred, Upred, Ypred = self.get_preds(Y[:-1],
-                                                         training=True,
-                                                         post_g=g)
+            _, g_pred, U_pred, _ = self.get_preds(Y[:-1], training=True,
+                                                  post_g=g, post_U=U)
         # calculate loss on control signal
+        LogDensity = 0
         with tf.name_scope('control_signal_loss'):
-            resU = U_true - Upred
-            LogDensity = -tf.reduce_sum(resU**2 / (2 * self.eps**2))
-            LogDensity -= (0.5 * tf.log(2 * np.pi) +
-                           tf.reduce_sum(tf.log(self.eps)))
+            # resU = U_true - Upred
+            # LogDensity = -tf.reduce_sum(resU**2 / (2 * self.eps**2))
+            # LogDensity -= (0.5 * tf.log(2 * np.pi) +
+            #                tf.reduce_sum(tf.log(self.eps)))
+            tol = 1e-6
+            for i in range(self.yDim):
+                left_clip_ind = tf.where(tf.less_equal(U_obs[:, i], -1.+tol),
+                                         name='left_clip_indices')
+                right_clip_ind = tf.where(tf.greater_equal(U_obs[:, i], 1.-tol),
+                                          name='right_clip_indices')
+                non_clip_ind = tf.where(tf.logical_and(
+                    tf.greater(U_obs[:, i], -1.+tol), tf.less(U_obs[:, i], 1.-tol)),
+                    name='non_clip_indices')
+                left_clip_node = Normal(
+                    tf.gather_nd(U_pred[:, i], left_clip_ind),
+                    self.eps[0, i], name='left_clip_node')
+                right_clip_node = Normal(
+                    tf.gather_nd(-U_pred[:, i], right_clip_ind),
+                    self.eps[0, i], name='right_clip_node')
+                non_clip_node = Normal(
+                    tf.gather_nd(U_pred[:, i], non_clip_ind),
+                    self.eps[0, i], name='non_clip_node')
+                LogDensity += tf.reduce_sum(
+                    left_clip_node.log_cdf(-1., name='left_clip_logcdf'))
+                LogDensity += tf.reduce_sum(
+                    right_clip_node.log_cdf(-1., name='right_clip_logcdf'))
+                LogDensity += tf.reduce_sum(non_clip_node.log_prob(
+                    tf.gather_nd(U_obs[:, i], non_clip_ind),
+                    name='non_clip_logpdf'))
 
         # calculate loss on goal state
         with tf.name_scope('goal_state_loss'):
@@ -622,7 +649,7 @@ class GBDS(GenerativeModel):
         '''
         rets = self.NN_postJ_mu.variables
         rets += self.NN_postJ_sigma.variables
-        rets += self.PID_params + [self.unc_eps]  # + [self.unc_sigma]
+        rets += self.PID_params  # + [self.unc_eps] + [self.unc_sigma]
         return rets
 
 
