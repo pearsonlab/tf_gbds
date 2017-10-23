@@ -270,9 +270,9 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
     Returns a NN with the specified parameters.
     Also returns a list of PKBias layers
     """
-    PKbias_layers = []
-    NN = models.Sequential()
     with tf.name_scope('%s_input' % name):
+        PKbias_layers = []
+        NN = models.Sequential()
         NN.add(keras_layers.InputLayer(batch_input_shape=(None, input_dim),
                                        name='%s_Input' % name))
 
@@ -332,14 +332,14 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
 def get_rec_params_GBDS(name, obs_dim, lag, num_layers, hidden_dim, penalty_Q,
                         PKLparams):
 
-    with tf.name_scope('rec_mu'):
+    with tf.name_scope('rec_mu_%s' % name):
         mu_net, PKbias_layers_mu = get_network('rec_mu_%s' % name,
                                                obs_dim * (lag + 1),
                                                obs_dim, hidden_dim,
                                                num_layers, PKLparams,
                                                batchnorm=False)
 
-    with tf.name_scope('rec_lambda'):
+    with tf.name_scope('rec_lambda_%s' % name):
         lambda_net, PKbias_layers_lambda = get_network('rec_lambda_%s' % name,
                                                        obs_dim * (lag + 1),
                                                        obs_dim**2,
@@ -347,7 +347,7 @@ def get_rec_params_GBDS(name, obs_dim, lag, num_layers, hidden_dim, penalty_Q,
                                                        num_layers, PKLparams,
                                                        batchnorm=False)
 
-    with tf.name_scope('rec_lambdaX'):
+    with tf.name_scope('rec_lambdaX_%s' % name):
         lambdaX_net, PKbias_layers_lambdaX = get_network('rec_lambdaX_%s' % name,
                                                          obs_dim * (lag + 1),
                                                          obs_dim**2,

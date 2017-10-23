@@ -558,7 +558,7 @@ class GBDS(GenerativeModel):
             raise Exception("Invalid mode. Provide 'G' for generator loss " +
                             "or 'D' for discriminator loss.")
 
-    def evaluateLogDensity(self, g, U, Y):
+    def evaluateLogDensity(self, g, U, Y, tol, eta):
         '''
         Return a theano function that evaluates the log-density of the
         GenerativeModel.
@@ -581,28 +581,25 @@ class GBDS(GenerativeModel):
         # calculate loss on control signal
         LogDensity = 0
         with tf.name_scope('control_signal_loss'):
-            # resU = U_true - Upred
-            # LogDensity = -tf.reduce_sum(resU**2 / (2 * self.eps**2))
-            # LogDensity -= (0.5 * tf.log(2 * np.pi) +
-            #                tf.reduce_sum(tf.log(self.eps)))
-            tol = 1e-6
             for i in range(self.yDim):
-                left_clip_ind = tf.where(tf.less_equal(U_obs[:, i], -1.+tol),
-                                         name='left_clip_indices')
-                right_clip_ind = tf.where(tf.greater_equal(U_obs[:, i], 1.-tol),
-                                          name='right_clip_indices')
-                non_clip_ind = tf.where(tf.logical_and(
-                    tf.greater(U_obs[:, i], -1.+tol), tf.less(U_obs[:, i], 1.-tol)),
-                    name='non_clip_indices')
+                left_clip_ind = tf.where(
+                    tf.less_equal(U_obs[:, i], -1.+tol),
+                    name='left_clip_indices')
+                right_clip_ind = tf.where(
+                    tf.greater_equal(U_obs[:, i], 1.-tol),
+                    name='right_clip_indices')
+                non_clip_ind = tf.where(
+                    tf.logical_and(tf.greater(U_obs[:, i], -1.+tol),
+                    tf.less(U_obs[:, i], 1.-tol)), name='non_clip_indices')
                 left_clip_node = Normal(
-                    tf.gather_nd(U_pred[:, i], left_clip_ind),
-                    self.eps[0, i], name='left_clip_node')
+                    tf.gather_nd(U[:, i], left_clip_ind), eta,
+                    name='left_clip_node')
                 right_clip_node = Normal(
-                    tf.gather_nd(-U_pred[:, i], right_clip_ind),
-                    self.eps[0, i], name='right_clip_node')
+                    -tf.gather_nd(U[:, i], right_clip_ind), eta,
+                    name='right_clip_node')
                 non_clip_node = Normal(
-                    tf.gather_nd(U_pred[:, i], non_clip_ind),
-                    self.eps[0, i], name='non_clip_node')
+                    tf.gather_nd(U[:, i], non_clip_ind), eta,
+                    name='non_clip_node')
                 LogDensity += tf.reduce_sum(
                     left_clip_node.log_cdf(-1., name='left_clip_logcdf'))
                 LogDensity += tf.reduce_sum(
@@ -611,10 +608,15 @@ class GBDS(GenerativeModel):
                     tf.gather_nd(U_obs[:, i], non_clip_ind),
                     name='non_clip_logpdf'))
 
+            U_res = U[1:] - U_pred
+            LogDensity -= tf.reduce_sum(U_res**2 / (2 * self.eps**2))
+            LogDensity -= (0.5 * tf.log(2 * np.pi) +
+                           tf.reduce_sum(tf.log(self.eps)))
+
         # calculate loss on goal state
         with tf.name_scope('goal_state_loss'):
-            res_g = g[1:] - g_pred
-            LogDensity -= tf.reduce_sum(res_g**2 / (2 * self.sigma**2))
+            g_res = g[1:] - g_pred
+            LogDensity -= tf.reduce_sum(g_res**2 / (2 * self.sigma**2))
             LogDensity -= (0.5 * tf.log(2 * np.pi) +
                            tf.reduce_sum(tf.log(self.sigma)))
 

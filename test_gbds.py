@@ -18,6 +18,7 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
              eps=1e-5, Kp=1, Ki=0, Kd=0,
              vel=1e-2 * np.ones((3))):
     p = []
+    g_b = []
 
     for s in range(n_trial):
         p_b = np.zeros((n_obs, 2), np.float32)
@@ -56,8 +57,9 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
             p_g[t + 1] = p_g[t] + vel[0] * np.clip(u_g, -1, 1)
 
         p.append(np.hstack([p_g, p_b]))
+        g_b.append(g)
 
-    return p
+    return p, g_b
 
 
 def run_model(**kwargs):
@@ -81,8 +83,10 @@ def run_model(**kwargs):
     penalty_g = (kwargs['penalty_g'], None)
     learning_rate = tf.cast(kwargs['learning_rate'], tf.float32)
     n_epochs = kwargs['n_epochs']
+    tol = 1e-6
+    eta = 1e-3
 
-    data = gen_data(n_trial=2000, n_obs=100, Kp=0.8, Ki=0.4, Kd=0.2)
+    data, goals = gen_data(n_trial=2000, n_obs=100, Kp=0.8, Ki=0.4, Kd=0.2)
     np.random.seed(seed)  # set seed for consistent train/val split
 
     if not os.path.exists(outname):
@@ -104,13 +108,16 @@ def run_model(**kwargs):
 
     train_data = []
     val_data = []
-    for trial in data:
+    val_goals = []
+    for (trial_data, trial_goals) in zip(data, goals):
         if np.random.rand() <= 0.85:
-            train_data.append(trial)
+            train_data.append(trial_data)
         else:
-            val_data.append(trial)
+            val_data.append(trial_data)
+            val_goals.append(trial_goals)
     np.save(outname + '/train_data', train_data)
     np.save(outname + '/val_data', val_data)
+    np.save(outname + '/val_goals', val_goals)
 
     yCols_goalie = [0]
     yCols_ball = [1, 2]
@@ -129,28 +136,29 @@ def run_model(**kwargs):
     ntrials = len(train_data)
 
     with tf.name_scope('model_setup'):
-        with tf.name_scope('rec_params'):
-            with tf.name_scope('goal'):
-                rec_params_goal = get_rec_params_GBDS('goal', obs_dim, rec_lag,
-                                                      nlayers_rec, hidden_dim_rec,
-                                                      penalty_Q, PKLparams)
-            with tf.name_scope('control_signal'):
-                rec_params_ctrl = get_rec_params_GBDS('ctrl', obs_dim, rec_lag,
-                                                      nlayers_rec, hidden_dim_rec,
-                                                      penalty_Q, PKLparams)
+        with tf.name_scope('rec_goal_params'):
+            rec_params_goal = get_rec_params_GBDS('goal', obs_dim, rec_lag,
+                                                  nlayers_rec, hidden_dim_rec,
+                                                  penalty_Q, PKLparams)
+        with tf.name_scope('rec_control_signal_params'):
+            rec_params_ctrl = get_rec_params_GBDS('ctrl', obs_dim, rec_lag,
+                                                  nlayers_rec, hidden_dim_rec,
+                                                  penalty_Q, PKLparams)
 
-        with tf.name_scope('gen_params'):
-            with tf.name_scope('goalie'):
-                gen_params_g = get_gen_params_GBDS('goalie', obs_dim_g, obs_dim, add_accel,
-                                                   yCols_goalie, nlayers_rec,
-                                                   hidden_dim_rec, PKLparams, vel,
-                                                   penalty_eps, penalty_sigma,
-                                                   boundaries_g, penalty_g)
-            with tf.name_scope('ball'):
-                gen_params_b = get_gen_params_GBDS('ball', obs_dim_b, obs_dim, add_accel,
-                                                   yCols_ball, nlayers_rec, hidden_dim_rec,
-                                                   PKLparams, vel, penalty_eps,
-                                                   penalty_sigma, boundaries_g, penalty_g)
+        with tf.name_scope('gen_goalie_params'):
+            gen_params_g = get_gen_params_GBDS('goalie', obs_dim_g, obs_dim,
+                                               add_accel, yCols_goalie,
+                                               nlayers_rec, hidden_dim_rec,
+                                               PKLparams, vel, penalty_eps,
+                                               penalty_sigma, boundaries_g,
+                                               penalty_g)
+        with tf.name_scope('gen_ball_params'):
+            gen_params_b = get_gen_params_GBDS('ball', obs_dim_b, obs_dim,
+                                               add_accel, yCols_ball,
+                                               nlayers_rec, hidden_dim_rec,
+                                               PKLparams, vel, penalty_eps,
+                                               penalty_sigma, boundaries_g,
+                                               penalty_g)
 
         model = SGVB_GBDS(gen_params_b, gen_params_g, yCols_ball, yCols_goalie,
                           rec_params_goal, rec_params_ctrl, ntrials)
@@ -167,12 +175,12 @@ def run_model(**kwargs):
                 gen_goalie_logdensity = model.mprior_goalie.evaluateLogDensity(
                     tf.gather(q_g, model.yCols_goalie, axis=1),
                     tf.gather(q_U, model.yCols_goalie, axis=1),
-                    model.Y)
+                    model.Y, tol, eta)
             with tf.name_scope('gen_ball_logdensity'):
                 gen_ball_logdensity = model.mprior_ball.evaluateLogDensity(
                     tf.gather(q_g, model.yCols_ball, axis=1),
                     tf.gather(q_U, model.yCols_ball, axis=1),
-                    model.Y)
+                    model.Y, tol, eta)
             with tf.name_scope('rec_goal_entropy'):
                 rec_goal_entropy = model.mrec_goal.evalEntropy()
             with tf.name_scope('rec_ctrl_entropy'):
@@ -182,16 +190,15 @@ def run_model(**kwargs):
                       rec_goal_entropy + rec_ctrl_entropy) /
                      tf.cast(tf.shape(model.Y)[0], tf.float32))
 
-        _, _, U_pred_g, _ = model.mprior_goalie.get_preds(
-            model.Y[:-1], training=True,
-            post_g=tf.gather(q_g, yCols_goalie, axis=1),
-            post_U=tf.gather(q_U, yCols_goalie, axis=1))
-        _, _, U_pred_b, _ = model.mprior_ball.get_preds(
-            model.Y[:-1], training=True,
-            post_g=tf.gather(q_g, yCols_ball, axis=1),
-            post_U=tf.gather(q_U, yCols_ball, axis=1))
-        U_pred = tf.concat([U_pred_g, U_pred_b], axis=1)
-
+        # _, _, U_pred_g, _ = model.mprior_goalie.get_preds(
+        #     model.Y[:-1], training=True,
+        #     post_g=tf.gather(q_g, yCols_goalie, axis=1),
+        #     post_U=tf.gather(q_U, yCols_goalie, axis=1))
+        # _, _, U_pred_b, _ = model.mprior_ball.get_preds(
+        #     model.Y[:-1], training=True,
+        #     post_g=tf.gather(q_g, yCols_ball, axis=1),
+        #     post_U=tf.gather(q_U, yCols_ball, axis=1))
+        # U_pred = tf.concat([U_pred_g, U_pred_b], axis=1)
 
     print('Check params:')
     if add_pklayers:
@@ -322,13 +329,33 @@ def run_model(**kwargs):
             np.save(outname + '/train_costs', ctrl_cost)
             np.save(outname + '/val_costs', val_costs)
 
-            if (ie + 1) % 100 == 0:
-                print('----> Predicting control signal')
-                ctrl_pred = []
+            if (ie + 1) % 20 == 0:
+                print('----> Predicting control signals and goals')
+                ctrl_post_mean = []
+                ctrl_post_samp = []
+                goal_post_mean = []
+
                 for i in range(len(val_data)):
-                    u_pred = U_pred.eval(feed_dict={model.Y: val_data[i]})
-                    ctrl_pred.append(u_pred)
-                np.save(outname + '/ctrl_pred_step_%s' % (ie + 1), ctrl_pred)
+                    u_post_mean = tf.squeeze(model.mrec_ctrl.postX, 2).eval(
+                        feed_dict={model.Y: val_data[i]})
+                    ctrl_post_mean.append(u_post_mean)
+
+                    u_post_samp = []
+                    for j in range(30):
+                        u_post_samp.append(
+                            q_U.eval(feed_dict={model.Y: val_data[i]}))
+                    ctrl_post_samp.append(u_post_samp)
+
+                    g_post_mean = tf.squeeze(model.mrec_goal.postX, 2).eval(
+                        feed_dict={model.Y: val_data[i]})
+                    goal_post_mean.append(g_post_mean)
+
+                np.save(outname + '/ctrl_post_mean_step_%s' % (ie + 1),
+                        ctrl_post_mean)
+                np.save(outname + '/ctrl_post_samp_step_%s' % (ie + 1),
+                        ctrl_post_samp)
+                np.save(outname + '/goal_post_mean_step_%s' % (ie + 1),
+                        goal_post_mean)
 
                 # print('----> Predicting trajectory')
                 # Kp_b = model.mprior_ball.Kp.eval()
@@ -444,9 +471,9 @@ if __name__ == '__main__':
                         help='Penalty for goal states escaping boundary_g.')
     parser.add_argument('--boundary_g', type=float, default=1.0,
                         help='Goal state boundary that corresponds to penalty')
-    parser.add_argument('--learning_rate', type=float, default=1e-4,
+    parser.add_argument('--learning_rate', type=float, default=1e-3,
                         help='Learning rate for adam optimizer')
-    parser.add_argument('--n_epochs', type=int, default=3000,
+    parser.add_argument('--n_epochs', type=int, default=200,
                         help='Number of iterations through the full training set')
     args = parser.parse_args()
 

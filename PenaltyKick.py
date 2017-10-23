@@ -69,6 +69,7 @@ class SGVB_GBDS():  # (Trainable):
             self.mrec_goal = SmoothingPastLDSTimeSeries(rec_params_goal, self.Y,
                                                         self.xDim, self.yDim,
                                                         ntrials, self.nrng)
+
         with tf.name_scope('mrec_ctrl'):
             self.mrec_ctrl = SmoothingPastLDSTimeSeries(rec_params_ctrl, self.Y,
                                                         self.xDim, self.yDim,
@@ -78,6 +79,7 @@ class SGVB_GBDS():  # (Trainable):
             self.mprior_goalie = GBDS(gen_params_goalie,
                                       self.yDim_goalie, self.yDim,
                                       nrng=self.nrng)
+
         with tf.name_scope('mprior_ball'):
             self.mprior_ball = GBDS(gen_params_ball,
                                     self.yDim_ball, self.yDim,
