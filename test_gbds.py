@@ -61,7 +61,6 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
 
     return p, g_b
 
-
 def run_model(**kwargs):
     outname = kwargs['outname']
     seed = kwargs['seed']
@@ -84,7 +83,10 @@ def run_model(**kwargs):
     learning_rate = tf.cast(kwargs['learning_rate'], tf.float32)
     n_epochs = kwargs['n_epochs']
     tol = 1e-6
-    eta = 1e-3
+    eta = tf.Variable(initial_value=5e-2, trainable=False, name='eta',
+                      dtype=tf.float32)
+    eta_val = np.exp(np.log(5e-2) - np.arange(n_epochs) / 20)
+    eta_val[eta_val < 1e-7] = 1e-7
 
     data, goals = gen_data(n_trial=2000, n_obs=100, Kp=0.8, Ki=0.4, Kd=0.2)
     np.random.seed(seed)  # set seed for consistent train/val split
@@ -164,13 +166,15 @@ def run_model(**kwargs):
                           rec_params_goal, rec_params_ctrl, ntrials)
 
         with tf.name_scope('cost'):
-            JCols_goalie = range(model.yDim_goalie * 2)
-            JCols_ball = range(model.yDim_goalie * 2,
-                               model.yDim_goalie * 2 + model.yDim_ball * 2)
             with tf.name_scope('goal_samples'):
+                q_g_mean = tf.squeeze(model.mrec_goal.postX, 2,
+                                      name='q_g_mean')
                 q_g = tf.squeeze(model.mrec_goal.samples, 2, name='q_g')
             with tf.name_scope('control_signal_samples'):
+                q_U_mean = tf.squeeze(model.mrec_ctrl.postX, 2,
+                                      name='q_U_mean')
                 q_U = tf.squeeze(model.mrec_ctrl.samples, 2, name='q_U')
+
             with tf.name_scope('gen_goalie_logdensity'):
                 gen_goalie_logdensity = model.mprior_goalie.evaluateLogDensity(
                     tf.gather(q_g, model.yCols_goalie, axis=1),
@@ -254,6 +258,7 @@ def run_model(**kwargs):
     tf.summary.scalar('Ki_y_ball', model.mprior_ball.Ki[1, 0])
     tf.summary.scalar('Kd_x_ball', model.mprior_ball.Kd[0, 0])
     tf.summary.scalar('Kd_y_ball', model.mprior_ball.Kd[1, 0])
+    tf.summary.scalar('eta', eta)
 
     summary_op = tf.summary.merge_all()
 
@@ -290,8 +295,9 @@ def run_model(**kwargs):
                 #     #                     options=opts)
                 # else:
 
-                _, train_cost, train_summary = sess.run([train_op, cost, summary_op],
-                                                        feed_dict={model.Y: data})
+                _, train_cost, train_summary = sess.run(
+                    [train_op, cost, summary_op],
+                    feed_dict={model.Y: data, eta: eta_val[ie]})
                 ctrl_cost.append(train_cost)
                 train_writer.add_summary(train_summary)
 
@@ -316,7 +322,8 @@ def run_model(**kwargs):
             # start_val = time.time()
             curr_val_costs = []
             for i in range(len(val_data)):
-                val_cost = sess.run(cost, feed_dict={model.Y: val_data[i]})
+                val_cost = sess.run(cost, feed_dict={model.Y: val_data[i],
+                                                     eta: eta_val[ie]})
                 curr_val_costs.append(val_cost)
             val_costs.append(np.array(curr_val_costs).mean())
             # # print('Validation step takes %0.3f s' % (time.time() - start_val))
@@ -329,26 +336,24 @@ def run_model(**kwargs):
             np.save(outname + '/train_costs', ctrl_cost)
             np.save(outname + '/val_costs', val_costs)
 
-            if (ie + 1) % 20 == 0:
+            if (ie + 1) % 10 == 0:
                 print('----> Predicting control signals and goals')
                 ctrl_post_mean = []
                 ctrl_post_samp = []
                 goal_post_mean = []
 
                 for i in range(len(val_data)):
-                    u_post_mean = tf.squeeze(model.mrec_ctrl.postX, 2).eval(
-                        feed_dict={model.Y: val_data[i]})
-                    ctrl_post_mean.append(u_post_mean)
+                    ctrl_post_mean.append(
+                        q_U_mean.eval(feed_dict={model.Y: val_data[i]}))
 
                     u_post_samp = []
-                    for j in range(30):
+                    for _ in range(30):
                         u_post_samp.append(
                             q_U.eval(feed_dict={model.Y: val_data[i]}))
                     ctrl_post_samp.append(u_post_samp)
 
-                    g_post_mean = tf.squeeze(model.mrec_goal.postX, 2).eval(
-                        feed_dict={model.Y: val_data[i]})
-                    goal_post_mean.append(g_post_mean)
+                    goal_post_mean.append(
+                        q_g_mean.eval(feed_dict={model.Y: val_data[i]}))
 
                 np.save(outname + '/ctrl_post_mean_step_%s' % (ie + 1),
                         ctrl_post_mean)
@@ -473,7 +478,7 @@ if __name__ == '__main__':
                         help='Goal state boundary that corresponds to penalty')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                         help='Learning rate for adam optimizer')
-    parser.add_argument('--n_epochs', type=int, default=200,
+    parser.add_argument('--n_epochs', type=int, default=500,
                         help='Number of iterations through the full training set')
     args = parser.parse_args()
 

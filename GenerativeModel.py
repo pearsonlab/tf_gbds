@@ -323,9 +323,9 @@ class GBDS(GenerativeModel):
                 unc_Kp = tf.Variable(initial_value=np.zeros((self.yDim, 1)),
                                      name='unc_Kp', dtype=tf.float32)
                 unc_Ki = tf.Variable(initial_value=np.zeros((self.yDim, 1)),
-                                     name='unc_Ki', dtype=np.float32)
+                                     name='unc_Ki', dtype=tf.float32)
                 unc_Kd = tf.Variable(initial_value=np.zeros((self.yDim, 1)),
-                                     name='unc_Kd', dtype=np.float32)
+                                     name='unc_Kd', dtype=tf.float32)
                 # create list of PID controller parameters for easy access in
                 # getParams
                 # self.PID_params = [unc_Kp]
