@@ -569,9 +569,11 @@ class GBDS(GenerativeModel):
         '''
         # Calculate real control signal
         with tf.name_scope('real_control_signal'):
-            U_obs = ((tf.gather(Y, self.yCols, axis=1)[1:] -
-                      tf.gather(Y, self.yCols, axis=1)[:-1]) /
-                     tf.reshape(self.vel, [1, self.yDim]))
+            U_obs = tf.concat([tf.zeros([1, self.yDim]),
+                               (tf.gather(Y, self.yCols, axis=1)[1:] -
+                                tf.gather(Y, self.yCols, axis=1)[:-1]) /
+                               tf.reshape(self.vel, [1, self.yDim])], 0,
+                              name='U_obs')
         # Get predictions for next timestep (at each timestep except for last)
         # disregard last timestep bc we don't know the next value, thus, we
         # can't calculate the error

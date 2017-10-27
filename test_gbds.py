@@ -82,11 +82,12 @@ def run_model(**kwargs):
     penalty_g = (kwargs['penalty_g'], None)
     learning_rate = tf.cast(kwargs['learning_rate'], tf.float32)
     n_epochs = kwargs['n_epochs']
-    tol = 1e-6
-    eta = tf.Variable(initial_value=5e-2, trainable=False, name='eta',
-                      dtype=tf.float32)
-    eta_val = np.exp(np.log(5e-2) - np.arange(n_epochs) / 20)
-    eta_val[eta_val < 1e-7] = 1e-7
+    tol = 1e-5
+    # eta = tf.Variable(initial_value=5e-2, trainable=False, name='eta',
+    #                   dtype=tf.float32)
+    # eta_val = np.exp(np.log(5e-2) - np.arange(n_epochs) / 20)
+    # eta_val[eta_val < 1e-7] = 1e-7
+    eta = 1e-6
 
     data, goals = gen_data(n_trial=2000, n_obs=100, Kp=0.8, Ki=0.4, Kd=0.2)
     np.random.seed(seed)  # set seed for consistent train/val split
@@ -258,7 +259,7 @@ def run_model(**kwargs):
     tf.summary.scalar('Ki_y_ball', model.mprior_ball.Ki[1, 0])
     tf.summary.scalar('Kd_x_ball', model.mprior_ball.Kd[0, 0])
     tf.summary.scalar('Kd_y_ball', model.mprior_ball.Kd[1, 0])
-    tf.summary.scalar('eta', eta)
+    # tf.summary.scalar('eta', eta)
 
     summary_op = tf.summary.merge_all()
 
@@ -297,7 +298,7 @@ def run_model(**kwargs):
 
                 _, train_cost, train_summary = sess.run(
                     [train_op, cost, summary_op],
-                    feed_dict={model.Y: data, eta: eta_val[ie]})
+                    feed_dict={model.Y: data})
                 ctrl_cost.append(train_cost)
                 train_writer.add_summary(train_summary)
 
@@ -322,8 +323,7 @@ def run_model(**kwargs):
             # start_val = time.time()
             curr_val_costs = []
             for i in range(len(val_data)):
-                val_cost = sess.run(cost, feed_dict={model.Y: val_data[i],
-                                                     eta: eta_val[ie]})
+                val_cost = sess.run(cost, feed_dict={model.Y: val_data[i]})
                 curr_val_costs.append(val_cost)
             val_costs.append(np.array(curr_val_costs).mean())
             # # print('Validation step takes %0.3f s' % (time.time() - start_val))
@@ -336,7 +336,7 @@ def run_model(**kwargs):
             np.save(outname + '/train_costs', ctrl_cost)
             np.save(outname + '/val_costs', val_costs)
 
-            if (ie + 1) % 10 == 0:
+            if (ie + 1) % 20 == 0:
                 print('----> Predicting control signals and goals')
                 ctrl_post_mean = []
                 ctrl_post_samp = []

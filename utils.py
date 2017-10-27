@@ -232,7 +232,7 @@ def get_max_velocities(y_data, y_val_data):
             ball_y_vels.append(np.abs(np.diff(y_val_data[i][:, 2])).max())
 
     return np.round(np.array([max(goalie_y_vels), max(ball_x_vels),
-                              max(ball_y_vels)]), decimals=3) + 0.001
+                              max(ball_y_vels)]), decimals=3)# + 0.001
 
 
 def get_vel(data):
