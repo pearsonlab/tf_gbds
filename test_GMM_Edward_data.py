@@ -221,39 +221,21 @@ def run_model(**kwargs):
 
     ctrl_cost = []
 
-    # Kp_x = []
-    # Kp_y = []
-    # Ki_x = []
-    # Ki_y = []
-    # Kd_x = []
-    # Kd_y = []
-
 
 
     print('Setting up VB model...')
 
 
     # Iterate over the training data for the specified number of epochs
-    # with tf.Session() as sess:
-    # with tf.Session() as sess:
     
     var_list=g.getParams() + u.getParams() +qg.getParams() +qu.getParams()
 
     with tf.name_scope('train_KLqp'):   
         inference = KLqp({g:qg, u:qu}, data={Y_pred: Y})
-        #inference.kl_scaling = {}
-        #inference.n_samples = 1
-        #inference.scale = {}
-        #inference.logging = True
-        #inference._summary_key = tf.get_default_graph().unique_name("summaries")
-        #loss, grads_and_vars = inference.build_loss_and_gradients(var_list)
-        #for grad,var in grads_and_vars:
-        #    if grad is None:
-        #        print (var)
+    
         inference.initialize(var_list=g.getParams() + u.getParams() +qg.getParams() +qu.getParams(),
           optimizer=tf.train.AdamOptimizer(learning_rate), logdir = "/home/qiankuang/Documents/projects/model_saved")
-        #inference.initialize(var_list= [unc_Kp_goalie]+[unc_Kp_ball],
-        #  optimizer=tf.train.AdamOptimizer(learning_rate),logdir = "/home/qiankuang/Documents/projects/model_saved")
+    
        
     tf.summary.scalar('Kp_x_ball', u.u_ball.Kp[0, 0])
     tf.summary.scalar('Kp_x_ball', tf.reduce_mean(u.u_ball.Kp))
@@ -282,65 +264,21 @@ def run_model(**kwargs):
 
             avg_loss = 0.0
             val_loss = 0.0
-            # Kp_x_ball = 0.0
-            # Kp_y_ball = 0.0
-            # Ki_x_ball = 0.0
-            # Ki_y_ball = 0.0
-            # Kd_x_ball = 0.0
-            # Kd_y_ball = 0.0
+     
 
 
             for data in data_iter_vb:
                 info_dict = inference.update(feed_dict = {Y: data})
                 avg_loss += info_dict['loss']
-                # Kp_x_ball += sess.run(u.u_ball.Kp[0, 0])
-                # Kp_y_ball += sess.run(u.u_ball.Kp[1, 0])
-                # Ki_x_ball += sess.run(u.u_ball.Ki[0, 0])
-                # Ki_y_ball += sess.run(u.u_ball.Ki[1, 0])
-                # Kd_x_ball += sess.run(u.u_ball.Kd[0, 0])
-                # Kd_y_ball += sess.run(u.u_ball.Kd[1, 0])
-
-                
+        
             avg_loss = avg_loss /batch_size / n_iter_per_epoch
             
             ctrl_cost.append(avg_loss)
-
-            # Kp_x_ball = Kp_x_ball/batch_size / n_iter_per_epoch
-
-            # Kp_x.append(Kp_x_ball)
-
-            # Kp_y_ball = Kp_y_ball/batch_size / n_iter_per_epoch
-
-            # Kp_y.append(Kp_y_ball)
-
-            # Ki_x_ball = Ki_x_ball/batch_size / n_iter_per_epoch
-
-            # Ki_x.append(Ki_x_ball)
-
-            # Ki_y_ball = Ki_y_ball/batch_size / n_iter_per_epoch
-
-            # Ki_y.append(Ki_y_ball)
-
-            # Kd_x_ball = Kd_x_ball/batch_size / n_iter_per_epoch
-
-            # Kd_x.append(Kd_x_ball)
-
-            # Kd_y_ball = Kd_y_ball/batch_size / n_iter_per_epoch
-
-            # Kd_y.append(Kd_y_ball)
-
 
             for val_data in data_iter_vd:
                 val_loss += sess.run(inference.loss, feed_dict = {Y: val_data})
             val_loss = val_loss /batch_size / n_val_iter_per_epoch
             val_costs.append(val_loss)
-
-            # tf.summary.scalar('Kp_x_ball', u.u_ball.Kp[0, 0])
-            # tf.summary.scalar('Kp_y_ball', u.u_ball.Kp[1, 0])
-            # tf.summary.scalar('Ki_x_ball', u.u_ball.Ki[0, 0])
-            # tf.summary.scalar('Ki_y_ball', u.u_ball.Ki[1, 0])
-            # tf.summary.scalar('Kd_x_ball', u.u_ball.Kd[0, 0])
-            # tf.summary.scalar('Kd_y_ball', u.u_ball.Kd[1, 0])
 
             # summary_op = tf.summary.merge_all()
 
@@ -348,36 +286,13 @@ def run_model(**kwargs):
             # inference.print_progress(info_dict)
             # train_writer.add_summary(train_summary)
 
-
-
             np.save(outname + '/train_costs', ctrl_cost)
             np.save(outname + '/val_costs', val_costs)
-            # np.save(outname + '/Kp_x', Kp_x)
-            # np.save(outname + '/Kp_y', Kp_y)
-            # np.save(outname + '/Ki_x', Ki_x)
-            # np.save(outname + '/Ki_y', Ki_y)
-            # np.save(outname + '/Kd_x', Kd_x)
-            # np.save(outname + '/Kd_y', Kd_y)
 
-
-
-
-
-
-                       
 
             print("loss <= {:0.3f}".format(avg_loss))
 
             print("val_loss <= {:0.3f}".format(val_loss))
-
-            # curr_val_cost = 0
-            # for i in range(len(val_data)):
-            #     curr_val_cost += sess.run(inference.build_loss_and_gradients(
-            #         var_list=g.getParams() + u.getParams() + qg.getParams() + qu.getParams())[0],
-            #         feed_dict={Y: val_data[i]})
-            # val_costs.append(np.array(curr_val_cost / len(val_data)))
-            # print('Validation set cost: %f' % val_costs[-1])
-            # np.save(outname + '/val_costs', val_costs)
 
 
 

@@ -13,8 +13,7 @@ def logsumexp(x, axis=None):
             
 class GBDS_g_all(RandomVariable, Distribution):
     def __init__(self, GenerativeParams_goalie, GenerativeParams_ball, yDim, y, name="GBDS_g_all", value = None , dtype=tf.float32, reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, allow_nan_stats=True):
-        # self.GenerativeParams_goalie = GenerativeParams_goalie
-        # self.GenerativeParams_ball = GenerativeParams_ball
+
         self.yCols_ball = GenerativeParams_ball['yCols']
         self.yCols_goalie = GenerativeParams_goalie['yCols']
         self.y = y
@@ -30,11 +29,10 @@ class GBDS_g_all(RandomVariable, Distribution):
         
         self._kwargs['GenerativeParams_goalie'] = GenerativeParams_goalie
         self._kwargs['GenerativeParams_ball'] = GenerativeParams_ball
-        # self._kwargs['g_ball'] = g_ball
+
         self._kwargs['y'] = y
         self._kwargs['yDim'] = yDim
-        # self._kwargs['yDim_ball'] = yDim_ball
-        # self._kwargs['yDim_goalie'] = yDim_goalie
+
     def _log_prob(self, value):
         log_prob_ball = self.g_ball.log_prob(tf.gather(value, self.yCols_ball, axis=1))
         log_prob_goalie = self.g_goalie.log_prob(tf.gather(value, self.yCols_goalie, axis=1))
@@ -45,8 +43,7 @@ class GBDS_g_all(RandomVariable, Distribution):
 class GBDS_u_all(RandomVariable, Distribution):
 
     def __init__(self,GenerativeParams_goalie, GenerativeParams_ball, g, y, yDim, PID_params_goalie, PID_params_ball, name="GBDS_u_all", value = None , dtype=tf.float32, reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, allow_nan_stats=True):
-        # self.GenerativeParams_goalie = GenerativeParams_goalie
-        # self.GenerativeParams_ball = GenerativeParams_ball
+
         self.yCols_ball = GenerativeParams_ball['yCols']
         self.yCols_goalie = GenerativeParams_goalie['yCols']
         self.y = y
@@ -62,26 +59,17 @@ class GBDS_u_all(RandomVariable, Distribution):
         self.u_goalie = GBDS_u(GenerativeParams_goalie, g_goalie, self.y, yDim_goalie, PID_params_goalie, value = tf.gather(value, self.yCols_goalie, axis=1))
         self.u_ball = GBDS_u(GenerativeParams_ball, g_ball, self.y, yDim_ball, PID_params_ball, value = tf.gather(value, self.yCols_ball, axis=1))
 
-        # tf.summary.scalar('Kp_x_ball', self.u_ball.Kp[0, 0])
-        # tf.summary.scalar('Kp_y_ball', self.u_ball.Kp[1, 0])
-        # tf.summary.scalar('Ki_x_ball', self.u_ball.Ki[0, 0])
-        # tf.summary.scalar('Ki_y_ball', self.u_ball.Ki[1, 0])
-        # tf.summary.scalar('Kd_x_ball', self.u_ball.Kd[0, 0])
-        # tf.summary.scalar('Kd_y_ball', self.u_ball.Kd[1, 0])
-
         
         super(GBDS_u_all, self).__init__(name = name, value = value, dtype=dtype, reparameterization_type=reparameterization_type, validate_args=validate_args, allow_nan_stats=allow_nan_stats)
         
         self._kwargs['GenerativeParams_goalie'] = GenerativeParams_goalie
         self._kwargs['GenerativeParams_ball'] = GenerativeParams_ball
-        # self._kwargs['g_ball'] = g_ball
         self._kwargs['g'] = g
         self._kwargs['y'] = y
         self._kwargs['yDim'] = yDim
         self._kwargs['PID_params_goalie'] = PID_params_goalie
         self._kwargs['PID_params_ball'] = PID_params_ball
-        # self._kwargs['yDim_ball'] = yDim_ball
-        # self._kwargs['yDim_goalie'] = yDim_goalie
+
     def _log_prob(self, value):
         log_prob_ball = self.u_ball.log_prob(tf.gather(value, self.yCols_ball, axis=1))
         log_prob_goalie = self.u_goalie.log_prob(tf.gather(value, self.yCols_goalie, axis=1))
@@ -147,20 +135,15 @@ class GBDS_u(RandomVariable, Distribution):
 
                 # create list of PID controller parameters for easy access in
                 # getParams
-                # self.PID_params = [unc_Kp]
+  
                 self.PID_params = [unc_Kp, unc_Ki, unc_Kd]
 
                 # constrain PID controller parameters to be positive
                 self.Kp = tf.nn.softplus(unc_Kp)
 
-                # self.Ki = unc_Ki
-                self.Ki = tf.nn.softplus(unc_Ki, )
-                # tf.summary.scalar('Ki_x_ball', self.Ki[0, 0])
-                # tf.summary.scalar('Ki_y_ball', self.Ki[1, 0])
-                # self.Kd = unc_Kd
+                self.Ki = tf.nn.softplus(unc_Ki)
+
                 self.Kd = tf.nn.softplus(unc_Kd)
-                # tf.summary.scalar('Kd_x_ball', self.Kd[0, 0])
-                # tf.summary.scalar('Kd_y_ball', self.Kd[1, 0])
 
             with tf.name_scope('filter'):
 
@@ -415,8 +398,7 @@ class GBDS_g(RandomVariable, Distribution):
             raise Exception(
                 "Must provide sample of g from posterior during training")
         # get states from position
-        # print("Y",Y)
-        # print("states:",self.get_states(Y, max_vel=self.all_vel))
+
         with tf.name_scope('states'):        
         
             states = self.get_states(Y, max_vel=self.all_vel)
@@ -430,8 +412,7 @@ class GBDS_g(RandomVariable, Distribution):
             if post_g is not None:  # Calculate next goals from posterior
                 next_g = ((tf.reshape(post_g[:-1], [-1, 1, self.yDim]) +
                            all_mu * all_lmbda) / (1 + all_lmbda))
-                #print(next_g)
-                # print(1 + all_lmbda)
+
             # elif gen_g is not None:  # Generate next goals
             #     # Get external force from GMM
             #     goal = ((gen_g[(-1,)] + lmbda_k[(-1,)] * mu_k[(-1,)]) /

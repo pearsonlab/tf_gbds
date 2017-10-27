@@ -186,9 +186,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
     
     def _sample_n(self, n, seed=None):
         with tf.name_scope('posterior_samples'):
-            #result = tf.expand_dims(self.getSample(), 0)
-            #for i in range(1, n):
-            #    result = tf.concat([result, tf.expand_dims(self.getSample(), 0)],0)
+            
             result = tf.map_fn(self.getSample,tf.zeros(n))    
         return tf.squeeze(result,-1)
 
