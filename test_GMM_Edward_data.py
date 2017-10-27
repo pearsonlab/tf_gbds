@@ -69,6 +69,8 @@ def initialize_PID_params(type, yDim):
                                      name='unc_Kd_'+type, dtype=np.float32)
     PID_params['unc_eps'] = tf.Variable(initial_value=-11 * np.ones((1, yDim)),
                                        name='unc_eps_'+type, dtype=tf.float32)
+
+
     return PID_params
 
 def initialize_Dyn_params(type, RecognitionParams):
@@ -237,7 +239,7 @@ def run_model(**kwargs):
           optimizer=tf.train.AdamOptimizer(learning_rate), logdir = "/home/qiankuang/Documents/projects/model_saved")
     
        
-    tf.summary.scalar('Kp_x_ball', u.u_ball.Kp[0, 0])
+    tf.summary.scalar('Kp_y_ball', u.u_ball.Kp[0, 0])
     tf.summary.scalar('Kp_x_ball', tf.reduce_mean(u.u_ball.Kp))
 
     tf.summary.scalar('Kp_y_ball', u.u_ball.Kp[1, 0])
@@ -252,7 +254,7 @@ def run_model(**kwargs):
 
         tf.global_variables_initializer().run()
 
-        #train_writer = tf.summary.FileWriter(outname, sess.graph)
+        train_writer = tf.summary.FileWriter(outname, sess.graph)
 
 
         print('---> Training control model')
@@ -280,7 +282,6 @@ def run_model(**kwargs):
             val_loss = val_loss /batch_size / n_val_iter_per_epoch
             val_costs.append(val_loss)
 
-            # summary_op = tf.summary.merge_all()
 
             # train_summary = sess.run(summary_op)
             # inference.print_progress(info_dict)
@@ -299,7 +300,7 @@ def run_model(**kwargs):
             print('Epoch %i takes %0.3f s' % ((ie + 1), (time.time() - start_train)))
             
 
-        # train_writer.close()
+        train_writer.close()
 
 
 
