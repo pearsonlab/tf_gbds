@@ -153,7 +153,7 @@ class GBDS_u(RandomVariable, Distribution):
                 t2_coeff = self.Kd
 
                 # concatenate coefficients into filter
-                self.L = tf.concat([t_coeff, t1_coeff, t2_coeff], axis=1)
+                self.L = tf.concat([t2_coeff, t1_coeff, t_coeff], axis=1)
         
         with tf.name_scope('control_signal_noise'):
 
@@ -173,7 +173,7 @@ class GBDS_u(RandomVariable, Distribution):
         self._kwargs['PID_params'] = PID_params
         
         
-    def get_preds(self, Y, training=False, post_g=None):
+    def get_preds(self, Y, training=False, post_g=None, post_U=None):
         
         with tf.name_scope('error'):
             # PID Controller for next control point
@@ -181,14 +181,6 @@ class GBDS_u(RandomVariable, Distribution):
                 error = post_g[1:] - tf.gather(Y, self.yCols, axis=1)
             # else:  # calculate error from generated goals
             #     error = next_g - tf.gather(Y, self.yCols, axis=1)
-
-        with tf.name_scope('prev_control_signal'):
-            # Assume control starts at zero
-            Uprev = tf.concat([tf.zeros([1, self.yDim]),
-                               tf.atanh((tf.gather(Y, self.yCols, axis=1)[1:] -
-                                         tf.gather(Y, self.yCols, axis=1)[:-1]) /
-                                        tf.reshape(self.vel, [1, self.yDim]))],
-                              axis=0)
 
         with tf.name_scope('control_signal_change'):
             Udiff = []
@@ -199,8 +191,7 @@ class GBDS_u(RandomVariable, Distribution):
                 # zero pad beginning
                 signal = tf.reshape(tf.concat([tf.zeros(2), signal], axis=0),
                                     [1, -1, 1, 1])
-                res = tf.nn.conv2d(signal, filt, strides=[1, 1, 1, 1],
-                                   padding="VALID")
+                res = tf.nn.convolution(signal, filt, padding="VALID")
                 res = tf.reshape(res, [-1, 1])
                 Udiff.append(res)
             if len(Udiff) > 1:
@@ -213,12 +204,13 @@ class GBDS_u(RandomVariable, Distribution):
                 Udiff += self.eps * tf.random_normal(Udiff.shape)
 
         with tf.name_scope('control_signal'):        
-            Upred = Uprev + Udiff
+            Upred = post_U[:-1] + Udiff
         
         with tf.name_scope('predicted_position'):
             # get predicted Y
             Ypred = (tf.gather(Y, self.yCols, axis=1) +
-                     tf.reshape(self.vel, [1, self.yDim]) * tf.tanh(Upred))
+                     tf.reshape(self.vel, [1, self.yDim]) *
+                     tf.clip_by_value(Upred, -1, 1, name='clipped_signal'))
             
         return (Upred, Ypred)       
            
@@ -231,16 +223,51 @@ class GBDS_u(RandomVariable, Distribution):
         Y: Time series of positions
         '''
         # Calculate real control signal
-        U_true = value[1:]
+        with tf.name_scope('observed_control_signal')
+            U_obs = tf.concat([tf.zeros([1, self.yDim]), 
+                               (tf.gather(self.y, self.yCols, axis=1)[1:] -
+                                tf.gather(self.y, self.yCols, axis=1)[:-1]) /
+                               tf.reshape(self.vel, [1, self.yDim])], 0,
+                              name='U_obs')
         # Get predictions for next timestep (at each timestep except for last)
         # disregard last timestep bc we don't know the next value, thus, we
         # can't calculate the error
-        with tf.name_scope('get_Upred'):
-            Upred, Ypred = self.get_preds(self.y[:-1], training=True, post_g=self.g)
+        with tf.name_scope('next_time_step_pred'):
+            Upred, Ypred = self.get_preds(self.y[:-1], training=True,
+                                          post_g=self.g, post_U=value)
 
         with tf.name_scope('control_signal_loss'):
             # calculate loss on control signal
-            resU = U_true - Upred
+            tol = 1e-5
+            eta = 1e-6
+            for i in range(self.yDim):
+                left_clip_ind = tf.where(
+                    tf.less_equal(U_obs[:, i], -1.+tol),
+                    name='left_clip_indices')
+                right_clip_ind = tf.where(
+                    tf.greater_equal(U_obs[:, i], 1.-tol),
+                    name='right_clip_indices')
+                non_clip_ind = tf.where(
+                    tf.logical_and(tf.greater(U_obs[:, i], -1.+tol),
+                    tf.less(U_obs[:, i], 1.-tol)), name='non_clip_indices')
+                left_clip_node = Normal(
+                    tf.gather_nd(value[:, i], left_clip_ind), eta,
+                    name='left_clip_node')
+                right_clip_node = Normal(
+                    -tf.gather_nd(value[:, i], right_clip_ind), eta,
+                    name='right_clip_node')
+                non_clip_node = Normal(
+                    tf.gather_nd(value[:, i], non_clip_ind), eta,
+                    name='non_clip_node')
+                LogDensity = tf.reduce_sum(
+                    left_clip_node.log_cdf(-1., name='left_clip_logcdf'))
+                LogDensity += tf.reduce_sum(
+                    right_clip_node.log_cdf(-1., name='right_clip_logcdf'))
+                LogDensity += tf.reduce_sum(non_clip_node.log_prob(
+                    tf.gather_nd(U_obs[:, i], non_clip_ind),
+                    name='non_clip_logpdf'))
+
+            resU = value[1:] - Upred
             LogDensity = -tf.reduce_sum(resU**2 / (2 * self.eps**2))
             LogDensity -= (0.5 * tf.log(2 * np.pi) +
                            tf.reduce_sum(tf.log(self.eps)))
