@@ -21,7 +21,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
 
     """
 
-    def __init__(self, RecognitionParams, Input, xDim, yDim, nrng=None, 
+    def __init__(self, RecognitionParams, Input, xDim, yDim, Dyn_params, nrng=None, 
       name="SmoothingLDSTimeSeries_g", value = None , dtype=tf.float32, 
       reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, 
       allow_nan_stats=True):
@@ -37,7 +37,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             - xDim, yDim, zDim : (integers) dimension of
                 latent space (x) and observation (y)
         """
-        
+        self.Dyn_params = Dyn_params
         self.nrng = nrng
         with tf.name_scope('dimension'):
             self.xDim = xDim
@@ -78,6 +78,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
         self._kwargs['xDim'] = xDim
         self._kwargs['yDim'] = yDim
         self._kwargs['nrng'] = nrng
+        self._kwargs['Dyn_params'] = Dyn_params
     
     def _initialize_posterior_distribution(self, RecognitionParams):
 
@@ -94,18 +95,15 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
         # dynamics matrix & initialize the innovations precision, xDim x xDim
 
         with tf.name_scope('dynamics_matrix'):
-            self.A = tf.Variable(RecognitionParams['A'].astype(np.float32),
-                             name='A')
+            self.A = self.Dyn_params['A']
 
         with tf.name_scope('init_innovations_prec'):
             with tf.name_scope('Qinv'):
-                self.QinvChol = tf.Variable(RecognitionParams['QinvChol']
-                                            .astype(np.float32), name='QinvChol')
+                self.QinvChol = self.Dyn_params['QinvChol']
                 self.Qinv = tf.matmul(self.QinvChol, tf.transpose(self.QinvChol))
                 
             with tf.name_scope('Q0inv'):
-                self.Q0invChol = tf.Variable(RecognitionParams['Q0invChol']
-                                             .astype(np.float32), name='Q0invChol')
+                self.Q0invChol = self.Dyn_params['Q0invChol']
                 self.Q0inv = tf.matmul(self.Q0invChol, tf.transpose(self.Q0invChol))
 
         with tf.name_scope('noise_penalty'):
@@ -188,13 +186,13 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
     
     def _sample_n(self, n, seed=None):
         with tf.name_scope('posterior_samples'):
-            result = tf.expand_dims(self.getSample(), 0)
-            for i in range(1, n):
-                result = tf.concat([result, tf.expand_dims(self.getSample(), 0)],0)
-                
+            #result = tf.expand_dims(self.getSample(), 0)
+            #for i in range(1, n):
+            #    result = tf.concat([result, tf.expand_dims(self.getSample(), 0)],0)
+            result = tf.map_fn(self.getSample,tf.zeros(n))    
         return tf.squeeze(result,-1)
 
-    def getSample(self):
+    def getSample(self,_=None):
         normSamps = tf.random_normal([self.Tt, self.xDim])
         return self.postX + blk.blk_chol_inv(self.the_chol[0],
                                              self.the_chol[1],
@@ -238,7 +236,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
     SmoothingLDSTimeSeries that uses past observations in addition to current
     to evaluate the latent.
     """
-    def __init__(self, RecognitionParams, Input, xDim, yDim, ntrials, nrng=None, 
+    def __init__(self, RecognitionParams, Input, xDim, yDim, Dyn_params, ntrials, nrng=None, 
       name="SmoothingPastLDSTimeSeries_g", value = None , dtype=tf.float32, 
       reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, 
       allow_nan_stats=True):
@@ -270,6 +268,6 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
                                    Input[:-1, -yDim:]], 0, name='lagged')
                 Input = tf.concat([Input, lagged], 1)
         super(SmoothingPastLDSTimeSeries, self).__init__(RecognitionParams,
-                                                         Input, xDim, yDim,
+                                                         Input, xDim, yDim,Dyn_params,
                                                          nrng,name,value,dtype,reparameterization_type,validate_args, allow_nan_stats)
         self._kwargs['ntrials'] = self.ntrials

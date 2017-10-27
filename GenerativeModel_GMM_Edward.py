@@ -12,7 +12,7 @@ def logsumexp(x, axis=None):
             + x_max)
             
 class GBDS_g_all(RandomVariable, Distribution):
-    def __init__(self, GenerativeParams_goalie, GenerativeParams_ball, yDim, y, name="GBDS_g_all", value = tf.zeros([17,4]) , dtype=tf.float32, reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, allow_nan_stats=True):
+    def __init__(self, GenerativeParams_goalie, GenerativeParams_ball, yDim, y, name="GBDS_g_all", value = None , dtype=tf.float32, reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, allow_nan_stats=True):
         # self.GenerativeParams_goalie = GenerativeParams_goalie
         # self.GenerativeParams_ball = GenerativeParams_ball
         self.yCols_ball = GenerativeParams_ball['yCols']
@@ -44,7 +44,7 @@ class GBDS_g_all(RandomVariable, Distribution):
 
 class GBDS_u_all(RandomVariable, Distribution):
 
-    def __init__(self,GenerativeParams_goalie, GenerativeParams_ball, g, y, yDim, name="GBDS_u_all", value = tf.zeros([17,4]) , dtype=tf.float32, reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, allow_nan_stats=True):
+    def __init__(self,GenerativeParams_goalie, GenerativeParams_ball, g, y, yDim, PID_params_goalie, PID_params_ball, name="GBDS_u_all", value = None , dtype=tf.float32, reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, allow_nan_stats=True):
         # self.GenerativeParams_goalie = GenerativeParams_goalie
         # self.GenerativeParams_ball = GenerativeParams_ball
         self.yCols_ball = GenerativeParams_ball['yCols']
@@ -59,8 +59,16 @@ class GBDS_u_all(RandomVariable, Distribution):
         g_goalie = tf.gather(self.g, self.yCols_goalie, axis=1)
 
         
-        self.u_goalie = GBDS_u(GenerativeParams_goalie, g_goalie, self.y, yDim_goalie, value = tf.gather(value, self.yCols_goalie, axis=1))
-        self.u_ball = GBDS_u(GenerativeParams_ball, g_ball, self.y, yDim_ball, value = tf.gather(value, self.yCols_ball, axis=1))
+        self.u_goalie = GBDS_u(GenerativeParams_goalie, g_goalie, self.y, yDim_goalie, PID_params_goalie, value = tf.gather(value, self.yCols_goalie, axis=1))
+        self.u_ball = GBDS_u(GenerativeParams_ball, g_ball, self.y, yDim_ball, PID_params_ball, value = tf.gather(value, self.yCols_ball, axis=1))
+
+        # tf.summary.scalar('Kp_x_ball', self.u_ball.Kp[0, 0])
+        # tf.summary.scalar('Kp_y_ball', self.u_ball.Kp[1, 0])
+        # tf.summary.scalar('Ki_x_ball', self.u_ball.Ki[0, 0])
+        # tf.summary.scalar('Ki_y_ball', self.u_ball.Ki[1, 0])
+        # tf.summary.scalar('Kd_x_ball', self.u_ball.Kd[0, 0])
+        # tf.summary.scalar('Kd_y_ball', self.u_ball.Kd[1, 0])
+
         
         super(GBDS_u_all, self).__init__(name = name, value = value, dtype=dtype, reparameterization_type=reparameterization_type, validate_args=validate_args, allow_nan_stats=allow_nan_stats)
         
@@ -70,6 +78,8 @@ class GBDS_u_all(RandomVariable, Distribution):
         self._kwargs['g'] = g
         self._kwargs['y'] = y
         self._kwargs['yDim'] = yDim
+        self._kwargs['PID_params_goalie'] = PID_params_goalie
+        self._kwargs['PID_params_ball'] = PID_params_ball
         # self._kwargs['yDim_ball'] = yDim_ball
         # self._kwargs['yDim_goalie'] = yDim_goalie
     def _log_prob(self, value):
@@ -107,7 +117,7 @@ class GBDS_u(RandomVariable, Distribution):
             object)
     - nrng: Numpy random number generator
     """
-    def __init__(self,GenerativeParams, g, y, yDim, name="GBDS_u", value = tf.zeros([17,2]) , dtype=tf.float32, reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, allow_nan_stats=True):
+    def __init__(self,GenerativeParams, g, y, yDim, PID_params, name="GBDS_u", value = None , dtype=tf.float32, reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, allow_nan_stats=True):
 
         self.g = g
         self.y = y
@@ -131,12 +141,9 @@ class GBDS_u(RandomVariable, Distribution):
 
                 # coefficients for PID controller (one for each dimension)
                 # https://en.wikipedia.org/wiki/PID_controller#Discrete_implementation
-                unc_Kp = tf.Variable(initial_value=np.zeros((self.yDim, 1)),
-                                     name='unc_Kp', dtype=tf.float32)
-                unc_Ki = tf.Variable(initial_value=np.zeros((self.yDim, 1)),
-                                     name='unc_Ki', dtype=np.float32)
-                unc_Kd = tf.Variable(initial_value=np.zeros((self.yDim, 1)),
-                                     name='unc_Kd', dtype=np.float32)
+                unc_Kp = PID_params['unc_Kp']
+                unc_Ki = PID_params['unc_Ki']
+                unc_Kd = PID_params['unc_Kd']
 
                 # create list of PID controller parameters for easy access in
                 # getParams
@@ -145,10 +152,15 @@ class GBDS_u(RandomVariable, Distribution):
 
                 # constrain PID controller parameters to be positive
                 self.Kp = tf.nn.softplus(unc_Kp)
+
                 # self.Ki = unc_Ki
-                self.Ki = tf.nn.softplus(unc_Ki)
+                self.Ki = tf.nn.softplus(unc_Ki, )
+                # tf.summary.scalar('Ki_x_ball', self.Ki[0, 0])
+                # tf.summary.scalar('Ki_y_ball', self.Ki[1, 0])
                 # self.Kd = unc_Kd
                 self.Kd = tf.nn.softplus(unc_Kd)
+                # tf.summary.scalar('Kd_x_ball', self.Kd[0, 0])
+                # tf.summary.scalar('Kd_y_ball', self.Kd[1, 0])
 
             with tf.name_scope('filter'):
 
@@ -163,9 +175,7 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope('control_signal_noise'):
 
             # noise coefficient on control signals
-            self.unc_eps = tf.Variable(initial_value=-11 * np.ones((1,
-                                                                    self.yDim)),
-                                       name='unc_eps', dtype=tf.float32)
+            self.unc_eps = PID_params['unc_eps']
             self.eps = tf.nn.softplus(self.unc_eps)
         
         
@@ -177,6 +187,7 @@ class GBDS_u(RandomVariable, Distribution):
         self._kwargs['y'] = y
         self._kwargs['yDim'] = yDim
         self._kwargs['GenerativeParams'] = GenerativeParams
+        self._kwargs['PID_params'] = PID_params
         
         
     def get_preds(self, Y, training=False, post_g=None):
@@ -293,7 +304,7 @@ class GBDS_g(RandomVariable, Distribution):
             object)
     - nrng: Numpy random number generator
     """
-    def __init__(self, GenerativeParams, yDim, yDim_in, y, name="GBDS_g", value = tf.zeros([17,2]) , dtype=tf.float32, reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, allow_nan_stats=True):
+    def __init__(self, GenerativeParams, yDim, yDim_in, y, name="GBDS_g", value = None , dtype=tf.float32, reparameterization_type=FULLY_REPARAMETERIZED, validate_args=True, allow_nan_stats=True):
         
         with tf.name_scope('dimension'):
             self.yDim_in = yDim_in  # dimension of observation input

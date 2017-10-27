@@ -58,7 +58,28 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
         p.append(np.hstack([p_g, p_b]))
 
     return p
+    
+def initialize_PID_params(type, yDim):
+    PID_params = dict()
+    PID_params['unc_Kp'] = tf.Variable(initial_value=np.zeros((yDim, 1)),
+                                     name='unc_Kp_'+type, dtype=tf.float32)
+    PID_params['unc_Ki'] = tf.Variable(initial_value=np.zeros((yDim, 1)),
+                                     name='unc_Ki_'+type, dtype=np.float32)
+    PID_params['unc_Kd'] = tf.Variable(initial_value=np.zeros((yDim, 1)),
+                                     name='unc_Kd_'+type, dtype=np.float32)
+    PID_params['unc_eps'] = tf.Variable(initial_value=-11 * np.ones((1, yDim)),
+                                       name='unc_eps_'+type, dtype=tf.float32)
+    return PID_params
 
+def initialize_Dyn_params(type, RecognitionParams):
+    Dyn_params = dict()
+    Dyn_params['A'] = tf.Variable(RecognitionParams['A'].astype(np.float32),
+                             name='A_'+type)
+    Dyn_params['QinvChol'] = tf.Variable(RecognitionParams['QinvChol']
+                                            .astype(np.float32), name='QinvChol_'+type)
+    Dyn_params['Q0invChol'] = tf.Variable(RecognitionParams['Q0invChol']
+                                             .astype(np.float32), name='Q0invChol'+type)
+    return Dyn_params
 
 def run_model(**kwargs):
     outname = kwargs['outname']
@@ -116,6 +137,7 @@ def run_model(**kwargs):
 
     vel = get_max_velocities(train_data, val_data)
     ntrials = len(train_data)
+    nvaltrials = len(val_data)
 
     with tf.name_scope('model_setup'):
         with tf.name_scope('rec_params'):
@@ -146,19 +168,25 @@ def run_model(**kwargs):
         yDim_ball = len(yCols_ball)
         yDim = tf.shape(Y)[1]
         xDim = yDim
+        
+        PID_params_goalie = initialize_PID_params('goalie',yDim_goalie)
+        PID_params_ball = initialize_PID_params('ball',yDim_ball)
+        Dyn_params_u = initialize_Dyn_params('u',rec_params_u)
+        Dyn_params_g = initialize_Dyn_params('g',rec_params_g)
+        
 
     with tf.name_scope('train'):
         with tf.name_scope('train_gen_g'):
             g = G.GBDS_g_all(gen_params_goalie, gen_params_ball, yDim, Y, value = tf.ones([tf.shape(Y)[0],yDim]))
         with tf.name_scope('train_gen_u'):  
-            u = G.GBDS_u_all(gen_params_goalie, gen_params_ball, g, Y, yDim, value = tf.ones([tf.shape(Y)[0],yDim]))
+            u = G.GBDS_u_all(gen_params_goalie, gen_params_ball, g, Y, yDim, PID_params_goalie, PID_params_ball, value = tf.ones([tf.shape(Y)[0],yDim]))
 
         with tf.name_scope('train_rec_g'):
-            qg = R.SmoothingLDSTimeSeries(rec_params_g, Y, xDim, yDim)
-            # qg = R.SmoothingPastLDSTimeSeries(rec_params_g, Y, xDim, yDim, ntrials)
+            # qg = R.SmoothingLDSTimeSeries(rec_params_g, Y, xDim, yDim)
+            qg = R.SmoothingPastLDSTimeSeries(rec_params_g, Y, xDim, yDim, Dyn_params_g, ntrials)
         with tf.name_scope('train_rec_u'):
-            qu = R.SmoothingLDSTimeSeries(rec_params_u, Y, xDim, yDim)
-            # qu = R.SmoothingPastLDSTimeSeries(rec_params_u, Y, xDim, yDim, ntrials)
+            # qu = R.SmoothingLDSTimeSeries(rec_params_u, Y, xDim, yDim)
+            qu = R.SmoothingPastLDSTimeSeries(rec_params_u, Y, xDim, yDim, Dyn_params_u, ntrials)
         
         # Y_pred_t = Y_(t-1)+max_vel*tanh(u_t) ,where Y_pred_0 = Y_0 
         Y_pred = tf.concat([tf.expand_dims(Y[0],0),(Y[:-1] + tf.reshape(vel, [1, yDim]) * tf.tanh(u[1:]))],0)
@@ -182,30 +210,68 @@ def run_model(**kwargs):
     # set up an iterator over our training data
     batch_size = 1
     data_iter_vb = DatasetTrialIndexIterator(train_data, randomize=True)
-    n_iter_per_epoch = ntrials//batch_size 
+
+    data_iter_vd = DatasetTrialIndexIterator(val_data, randomize=True)
+
+    n_iter_per_epoch = ntrials//batch_size
+    n_val_iter_per_epoch = nvaltrials//batch_size 
 
 
-    # val_costs = []
+    val_costs = []
 
-    #ctrl_cost = []
+    ctrl_cost = []
+
+    # Kp_x = []
+    # Kp_y = []
+    # Ki_x = []
+    # Ki_y = []
+    # Kd_x = []
+    # Kd_y = []
+
 
 
     print('Setting up VB model...')
 
 
-    summary_op = tf.summary.merge_all()
-
-
-
     # Iterate over the training data for the specified number of epochs
-    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 0})) as sess:
     # with tf.Session() as sess:
-        train_writer = tf.summary.FileWriter(outname, sess.graph)
-        
+    # with tf.Session() as sess:
+    
+    var_list=g.getParams() + u.getParams() +qg.getParams() +qu.getParams()
+
+    with tf.name_scope('train_KLqp'):   
         inference = KLqp({g:qg, u:qu}, data={Y_pred: Y})
+        #inference.kl_scaling = {}
+        #inference.n_samples = 1
+        #inference.scale = {}
+        #inference.logging = True
+        #inference._summary_key = tf.get_default_graph().unique_name("summaries")
+        #loss, grads_and_vars = inference.build_loss_and_gradients(var_list)
+        #for grad,var in grads_and_vars:
+        #    if grad is None:
+        #        print (var)
         inference.initialize(var_list=g.getParams() + u.getParams() +qg.getParams() +qu.getParams(),
-          optimizer=tf.train.AdamOptimizer(learning_rate))
+          optimizer=tf.train.AdamOptimizer(learning_rate), logdir = "/home/qiankuang/Documents/projects/model_saved")
+        #inference.initialize(var_list= [unc_Kp_goalie]+[unc_Kp_ball],
+        #  optimizer=tf.train.AdamOptimizer(learning_rate),logdir = "/home/qiankuang/Documents/projects/model_saved")
+       
+    tf.summary.scalar('Kp_x_ball', u.u_ball.Kp[0, 0])
+    tf.summary.scalar('Kp_x_ball', tf.reduce_mean(u.u_ball.Kp))
+
+    tf.summary.scalar('Kp_y_ball', u.u_ball.Kp[1, 0])
+    tf.summary.scalar('Ki_x_ball', u.u_ball.Ki[0, 0])
+    tf.summary.scalar('Ki_y_ball', u.u_ball.Ki[1, 0])
+    tf.summary.scalar('Kd_x_ball', u.u_ball.Kd[0, 0])
+    tf.summary.scalar('Kd_y_ball', u.u_ball.Kd[1, 0])
+
+    # summary_op = tf.summary.merge_all()
+
+    with tf.Session() as sess:
+
         tf.global_variables_initializer().run()
+
+        #train_writer = tf.summary.FileWriter(outname, sess.graph)
+
 
         print('---> Training control model')
         # sys.stdout.flush()
@@ -214,16 +280,95 @@ def run_model(**kwargs):
 
             start_train = time.time()
 
-            avg_loss = 0.0            
+            avg_loss = 0.0
+            val_loss = 0.0
+            # Kp_x_ball = 0.0
+            # Kp_y_ball = 0.0
+            # Ki_x_ball = 0.0
+            # Ki_y_ball = 0.0
+            # Kd_x_ball = 0.0
+            # Kd_y_ball = 0.0
+
 
             for data in data_iter_vb:
-                info_dict = inference.update(feed_dict = {Y:data})
+                info_dict = inference.update(feed_dict = {Y: data})
                 avg_loss += info_dict['loss']
-                # inference.print_progress(info_dict)
+                # Kp_x_ball += sess.run(u.u_ball.Kp[0, 0])
+                # Kp_y_ball += sess.run(u.u_ball.Kp[1, 0])
+                # Ki_x_ball += sess.run(u.u_ball.Ki[0, 0])
+                # Ki_y_ball += sess.run(u.u_ball.Ki[1, 0])
+                # Kd_x_ball += sess.run(u.u_ball.Kd[0, 0])
+                # Kd_y_ball += sess.run(u.u_ball.Kd[1, 0])
+
+                
             avg_loss = avg_loss /batch_size / n_iter_per_epoch
             
+            ctrl_cost.append(avg_loss)
+
+            # Kp_x_ball = Kp_x_ball/batch_size / n_iter_per_epoch
+
+            # Kp_x.append(Kp_x_ball)
+
+            # Kp_y_ball = Kp_y_ball/batch_size / n_iter_per_epoch
+
+            # Kp_y.append(Kp_y_ball)
+
+            # Ki_x_ball = Ki_x_ball/batch_size / n_iter_per_epoch
+
+            # Ki_x.append(Ki_x_ball)
+
+            # Ki_y_ball = Ki_y_ball/batch_size / n_iter_per_epoch
+
+            # Ki_y.append(Ki_y_ball)
+
+            # Kd_x_ball = Kd_x_ball/batch_size / n_iter_per_epoch
+
+            # Kd_x.append(Kd_x_ball)
+
+            # Kd_y_ball = Kd_y_ball/batch_size / n_iter_per_epoch
+
+            # Kd_y.append(Kd_y_ball)
+
+
+            for val_data in data_iter_vd:
+                val_loss += sess.run(inference.loss, feed_dict = {Y: val_data})
+            val_loss = val_loss /batch_size / n_val_iter_per_epoch
+            val_costs.append(val_loss)
+
+            # tf.summary.scalar('Kp_x_ball', u.u_ball.Kp[0, 0])
+            # tf.summary.scalar('Kp_y_ball', u.u_ball.Kp[1, 0])
+            # tf.summary.scalar('Ki_x_ball', u.u_ball.Ki[0, 0])
+            # tf.summary.scalar('Ki_y_ball', u.u_ball.Ki[1, 0])
+            # tf.summary.scalar('Kd_x_ball', u.u_ball.Kd[0, 0])
+            # tf.summary.scalar('Kd_y_ball', u.u_ball.Kd[1, 0])
+
+            # summary_op = tf.summary.merge_all()
+
+            # train_summary = sess.run(summary_op)
+            # inference.print_progress(info_dict)
+            # train_writer.add_summary(train_summary)
+
+
+
+            np.save(outname + '/train_costs', ctrl_cost)
+            np.save(outname + '/val_costs', val_costs)
+            # np.save(outname + '/Kp_x', Kp_x)
+            # np.save(outname + '/Kp_y', Kp_y)
+            # np.save(outname + '/Ki_x', Ki_x)
+            # np.save(outname + '/Ki_y', Ki_y)
+            # np.save(outname + '/Kd_x', Kd_x)
+            # np.save(outname + '/Kd_y', Kd_y)
+
+
+
+
+
+
+                       
 
             print("loss <= {:0.3f}".format(avg_loss))
+
+            print("val_loss <= {:0.3f}".format(val_loss))
 
             # curr_val_cost = 0
             # for i in range(len(val_data)):
@@ -239,7 +384,7 @@ def run_model(**kwargs):
             print('Epoch %i takes %0.3f s' % ((ie + 1), (time.time() - start_train)))
             
 
-        train_writer.close()
+        # train_writer.close()
 
 
 
