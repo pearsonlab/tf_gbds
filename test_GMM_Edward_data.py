@@ -213,7 +213,7 @@ def run_model(**kwargs):
     batch_size = 1
     data_iter_vb = DatasetTrialIndexIterator(train_data, randomize=True)
 
-    data_iter_vd = DatasetTrialIndexIterator(val_data, randomize=True)
+    # data_iter_vd = DatasetTrialIndexIterator(val_data, randomize=True)
 
     n_iter_per_epoch = ntrials//batch_size
     n_val_iter_per_epoch = nvaltrials//batch_size 
@@ -231,24 +231,35 @@ def run_model(**kwargs):
     # Iterate over the training data for the specified number of epochs
     
     var_list=g.getParams() + u.getParams() +qg.getParams() +qu.getParams()
+    
+    with tf.name_scope('goal_samples'):
+        q_g_mean = tf.squeeze(qg.postX, 2,
+                              name='q_g_mean')
+        q_g = tf.squeeze(qg.sample(1), name='q_g')
+    with tf.name_scope('control_signal_samples'):
+        q_U_mean = tf.squeeze(qu.postX, 2,
+                              name='q_U_mean')
+        q_U = tf.squeeze(qu.sample(1), name='q_U')
 
     with tf.name_scope('train_KLqp'):   
         inference = KLqp({g:qg, u:qu}, data={Y_pred: Y})
     
+        # inference.initialize(var_list=g.getParams() + u.getParams() +qg.getParams() +qu.getParams(),
+        #     optimizer=tf.train.AdamOptimizer(learning_rate), logdir = "/home/qiankuang/Documents/projects/model_saved")
         inference.initialize(var_list=g.getParams() + u.getParams() +qg.getParams() +qu.getParams(),
-          optimizer=tf.train.AdamOptimizer(learning_rate), logdir = "/home/qiankuang/Documents/projects/model_saved")
-    
+          optimizer=tf.train.AdamOptimizer(learning_rate))
+
        
-    tf.summary.scalar('Kp_y_ball', u.u_ball.Kp[0, 0])
-    tf.summary.scalar('Kp_x_ball', tf.reduce_mean(u.u_ball.Kp))
+    tf.summary.scalar('Kp_x_ball', u.u_ball.Kp[0, 0])
 
     tf.summary.scalar('Kp_y_ball', u.u_ball.Kp[1, 0])
     tf.summary.scalar('Ki_x_ball', u.u_ball.Ki[0, 0])
     tf.summary.scalar('Ki_y_ball', u.u_ball.Ki[1, 0])
     tf.summary.scalar('Kd_x_ball', u.u_ball.Kd[0, 0])
     tf.summary.scalar('Kd_y_ball', u.u_ball.Kd[1, 0])
+    
 
-    # summary_op = tf.summary.merge_all()
+    summary_op = tf.summary.merge_all()
 
     with tf.Session() as sess:
 
@@ -277,19 +288,44 @@ def run_model(**kwargs):
             
             ctrl_cost.append(avg_loss)
 
-            for val_data in data_iter_vd:
-                val_loss += sess.run(inference.loss, feed_dict = {Y: val_data})
+            for i in range(len(val_data)):
+                val_loss += sess.run(inference.loss, feed_dict = {Y: val_data[i]})
             val_loss = val_loss /batch_size / n_val_iter_per_epoch
             val_costs.append(val_loss)
 
 
-            # train_summary = sess.run(summary_op)
+            train_summary = sess.run(summary_op)
             # inference.print_progress(info_dict)
-            # train_writer.add_summary(train_summary)
+            train_writer.add_summary(train_summary)
 
             np.save(outname + '/train_costs', ctrl_cost)
             np.save(outname + '/val_costs', val_costs)
+            
+            if (ie + 1) % 20 == 0:
+                print('----> Predicting control signals and goals')
+                ctrl_post_mean = []
+                ctrl_post_samp = []
+                goal_post_mean = []
 
+                for i in range(len(val_data)):
+                    ctrl_post_mean.append(
+                        q_U_mean.eval(feed_dict={Y: val_data[i]}))
+
+                    u_post_samp = []
+                    for _ in range(30):
+                        u_post_samp.append(
+                            q_U.eval(feed_dict={Y: val_data[i]}))
+                    ctrl_post_samp.append(u_post_samp)
+
+                    goal_post_mean.append(
+                        q_g_mean.eval(feed_dict={Y: val_data[i]}))
+
+                np.save(outname + '/ctrl_post_mean_step_%s' % (ie + 1),
+                        ctrl_post_mean)
+                np.save(outname + '/ctrl_post_samp_step_%s' % (ie + 1),
+                        ctrl_post_samp)
+                np.save(outname + '/goal_post_mean_step_%s' % (ie + 1),
+                        goal_post_mean)
 
             print("loss <= {:0.3f}".format(avg_loss))
 

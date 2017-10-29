@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.contrib.keras import layers, models
 import numpy as np
 from edward.models import RandomVariable
-from tensorflow.contrib.distributions import Distribution
+from tensorflow.contrib.distributions import Distribution, Normal
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
 from edward.models import MultivariateNormalTriL
 
@@ -223,7 +223,7 @@ class GBDS_u(RandomVariable, Distribution):
         Y: Time series of positions
         '''
         # Calculate real control signal
-        with tf.name_scope('observed_control_signal')
+        with tf.name_scope('observed_control_signal'):
             U_obs = tf.concat([tf.zeros([1, self.yDim]), 
                                (tf.gather(self.y, self.yCols, axis=1)[1:] -
                                 tf.gather(self.y, self.yCols, axis=1)[:-1]) /
