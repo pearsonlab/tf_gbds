@@ -5,7 +5,7 @@ import sys
 import os
 from os.path import expanduser
 import tensorflow as tf
-from tensorflow.python.client import timeline
+# from tensorflow.python.client import timeline
 import numpy as np
 import time
 import tf_gbds.GenerativeModel_GMM_Edward as G
@@ -20,6 +20,7 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
              eps=1e-5, Kp=1, Ki=0, Kd=0,
              vel=1e-2 * np.ones((3))):
     p = []
+    g_b = []
 
     for s in range(n_trial):
         p_b = np.zeros((n_obs, 2), np.float32)
@@ -44,43 +45,50 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
             error_b = g[t + 1] - p_b[t]
             int_error_b += error_b
             der_error_b = error_b - prev_error_b
-            u_b = Kp * error_b + Ki * int_error_b + Kd * der_error_b + eps * np.random.randn(2,)
+            u_b = (Kp * error_b + Ki * int_error_b + Kd * der_error_b +
+                   eps * np.random.randn(2,))
             prev_error_b = error_b
             p_b[t + 1] = p_b[t] + vel[1:] * np.clip(u_b, -1, 1)
 
             error_g = p_b[t + 1, 1] - p_g[t]
             int_error_g += error_g
             der_error_g = error_g - prev_error_g
-            u_g = Kp * error_g + Ki * int_error_g + Kd * der_error_g + eps * np.random.randn()
+            u_g = (Kp * error_g + Ki * int_error_g + Kd * der_error_g +
+                   eps * np.random.randn())
             prev_error_g = error_g
             p_g[t + 1] = p_g[t] + vel[0] * np.clip(u_g, -1, 1)
 
         p.append(np.hstack([p_g, p_b]))
+        g_b.append(g)
 
-    return p
+    return p, g_b
     
 def initialize_PID_params(type, yDim):
     PID_params = dict()
     PID_params['unc_Kp'] = tf.Variable(initial_value=np.zeros((yDim, 1)),
-                                     name='unc_Kp_'+type, dtype=tf.float32)
+                                       name='unc_Kp_' + type,
+                                       dtype=tf.float32)
     PID_params['unc_Ki'] = tf.Variable(initial_value=np.zeros((yDim, 1)),
-                                     name='unc_Ki_'+type, dtype=np.float32)
+                                       name='unc_Ki_' + type,
+                                       dtype=tf.float32)
     PID_params['unc_Kd'] = tf.Variable(initial_value=np.zeros((yDim, 1)),
-                                     name='unc_Kd_'+type, dtype=np.float32)
-    PID_params['unc_eps'] = tf.Variable(initial_value=-11 * np.ones((1, yDim)),
-                                       name='unc_eps_'+type, dtype=tf.float32)
-
-
+                                       name='unc_Kd_' + type,
+                                       dtype=tf.float32)
+    PID_params['unc_eps'] = tf.Variable(
+        initial_value=-11.513 * np.ones((1, yDim)), name='unc_eps_' + type,
+        dtype=tf.float32)
     return PID_params
 
 def initialize_Dyn_params(type, RecognitionParams):
     Dyn_params = dict()
-    Dyn_params['A'] = tf.Variable(RecognitionParams['A'].astype(np.float32),
-                             name='A_'+type)
-    Dyn_params['QinvChol'] = tf.Variable(RecognitionParams['QinvChol']
-                                            .astype(np.float32), name='QinvChol_'+type)
-    Dyn_params['Q0invChol'] = tf.Variable(RecognitionParams['Q0invChol']
-                                             .astype(np.float32), name='Q0invChol'+type)
+    Dyn_params['A'] = tf.Variable(RecognitionParams['A'], name='A_' + type,
+                                  dtype=tf.float32)
+    Dyn_params['QinvChol'] = tf.Variable(RecognitionParams['QinvChol'],
+                                         name='QinvChol_' + type,
+                                         dtype=tf.float32)
+    Dyn_params['Q0invChol'] = tf.Variable(RecognitionParams['Q0invChol'],
+                                          name='Q0invChol' + type,
+                                          dtype=tf.float32)
     return Dyn_params
 
 def run_model(**kwargs):
@@ -91,7 +99,6 @@ def run_model(**kwargs):
     # session_index = kwargs['session_index']
     # data_loc = kwargs['data_loc']
     rec_lag = kwargs['rec_lag']
-    rec_lag = 0
     nlayers_rec = kwargs['nlayers_rec']
     hidden_dim_rec = kwargs['hidden_dim_rec']
     nlayers_gen = kwargs['nlayers_gen']
@@ -109,20 +116,24 @@ def run_model(**kwargs):
     learning_rate = tf.cast(kwargs['learning_rate'], tf.float32)
     n_epochs = kwargs['n_epochs']
 
-    np.random.seed(seed)  # set seed for consistent train/val split
-
     if not os.path.exists(outname):
         os.makedirs(outname)
-    data = gen_data(n_trial=1000, n_obs=100, Kp=0.8, Ki=0.4, Kd=0.2)
+
+    data, goals = gen_data(n_trial=2000, n_obs=100, Kp=0.8, Ki=0.4, Kd=0.2)
+
+    np.random.seed(seed)  # set seed for consistent train/val split
     train_data = []
     val_data = []
-    for trial in data:
+    val_goals = []
+    for (trial_data, trial_goals) in zip(data, goals):
         if np.random.rand() <= 0.85:
-            train_data.append(trial)
+            train_data.append(trial_data)
         else:
-            val_data.append(trial)
+            val_data.append(trial_data)
+            val_goals.append(trial_goals)
     np.save(outname + '/train_data', train_data)
     np.save(outname + '/val_data', val_data)
+    np.save(outname + '/val_goals', val_goals)
 
     yCols_goalie = [0]
     yCols_ball = [1, 2]
@@ -139,60 +150,63 @@ def run_model(**kwargs):
 
     vel = get_max_velocities(train_data, val_data)
     ntrials = len(train_data)
-    nvaltrials = len(val_data)
+    val_ntrials = len(val_data)
 
-    with tf.name_scope('model_setup'):
-        with tf.name_scope('rec_params'):
+    with tf.name_scope('params'):
+        with tf.name_scope('rec_control_params'):
+            rec_params_u = get_rec_params_GBDS(
+                obs_dim, rec_lag, nlayers_rec, hidden_dim_rec, penalty_Q,
+                PKLparams, 'u')
+        with tf.name_scope('rec_goal_params'):
+            rec_params_g = get_rec_params_GBDS(
+                obs_dim, rec_lag, nlayers_rec, hidden_dim_rec, penalty_Q,
+                PKLparams, 'g')
 
-            rec_params_u = get_rec_params_GBDS(seed, obs_dim, rec_lag, nlayers_rec,
-                                             hidden_dim_rec, penalty_Q,
-                                             PKLparams, 'u')
-            rec_params_g = get_rec_params_GBDS(seed, obs_dim, rec_lag, nlayers_rec,
-                                             hidden_dim_rec, penalty_Q,
-                                             PKLparams, 'g')
+        with tf.name_scope('gen_goalie_params'):
+            gen_params_goalie = get_gen_params_GBDS_GMM(
+                obs_dim_g, obs_dim, add_accel, yCols_goalie, nlayers_gen,
+                hidden_dim_gen, gmm_k, PKLparams, vel, penalty_eps,
+                penalty_sigma, boundaries_g, penalty_g, 'goalie')
+        with tf.name_scope('gen_ball_params'):
+            gen_params_ball = get_gen_params_GBDS_GMM(
+                obs_dim_b, obs_dim, add_accel, yCols_ball, nlayers_gen,
+                hidden_dim_gen, gmm_k, PKLparams, vel, penalty_eps,
+                penalty_sigma, boundaries_g, penalty_g, 'ball')
 
-        with tf.name_scope('gen_params'):
-            with tf.name_scope('gen_goalie_params'):
-                gen_params_goalie = get_gen_params_GBDS_GMM(seed, obs_dim_g, obs_dim, add_accel,
-                                                   yCols_goalie, nlayers_gen, hidden_dim_gen, gmm_k, PKLparams, vel,
-                                                   penalty_eps, penalty_sigma,
-                                                   boundaries_g, penalty_g, 'goalie')
-
-            with tf.name_scope('gen_ball_params'):
-                gen_params_ball = get_gen_params_GBDS_GMM(seed, obs_dim_b, obs_dim, add_accel,
-                                                   yCols_ball, nlayers_gen, hidden_dim_gen, gmm_k,
-                                                   PKLparams, vel, penalty_eps,
-                                                   penalty_sigma, boundaries_g, penalty_g, 'ball')
-
-        
         Y = tf.placeholder(tf.float32, shape=(None, None), name='Y')
         yDim_goalie = len(yCols_goalie)
         yDim_ball = len(yCols_ball)
         yDim = tf.shape(Y)[1]
         xDim = yDim
-        
+
         PID_params_goalie = initialize_PID_params('goalie',yDim_goalie)
         PID_params_ball = initialize_PID_params('ball',yDim_ball)
         Dyn_params_u = initialize_Dyn_params('u',rec_params_u)
         Dyn_params_g = initialize_Dyn_params('g',rec_params_g)
-        
 
-    with tf.name_scope('train'):
-        with tf.name_scope('train_gen_g'):
-            g = G.GBDS_g_all(gen_params_goalie, gen_params_ball, yDim, Y, value = tf.ones([tf.shape(Y)[0],yDim]))
-        with tf.name_scope('train_gen_u'):  
-            u = G.GBDS_u_all(gen_params_goalie, gen_params_ball, g, Y, yDim, PID_params_goalie, PID_params_ball, value = tf.ones([tf.shape(Y)[0],yDim]))
+    with tf.name_scope('model_setup'):
+        with tf.name_scope('gen_g'):
+            g = G.GBDS_g_all(gen_params_goalie, gen_params_ball, yDim, Y,
+                             value=tf.ones([tf.shape(Y)[0],yDim]))
+        with tf.name_scope('gen_u'):
+            u = G.GBDS_u_all(gen_params_goalie, gen_params_ball, g, Y, yDim,
+                             PID_params_goalie, PID_params_ball,
+                             value=tf.ones([tf.shape(Y)[0],yDim]))
 
-        with tf.name_scope('train_rec_g'):
+        with tf.name_scope('rec_g'):
             # qg = R.SmoothingLDSTimeSeries(rec_params_g, Y, xDim, yDim)
-            qg = R.SmoothingPastLDSTimeSeries(rec_params_g, Y, xDim, yDim, Dyn_params_g, ntrials)
-        with tf.name_scope('train_rec_u'):
+            qg = R.SmoothingPastLDSTimeSeries(rec_params_g, Y, xDim, yDim,
+                                              Dyn_params_g, ntrials)
+        with tf.name_scope('rec_u'):
             # qu = R.SmoothingLDSTimeSeries(rec_params_u, Y, xDim, yDim)
-            qu = R.SmoothingPastLDSTimeSeries(rec_params_u, Y, xDim, yDim, Dyn_params_u, ntrials)
-        
-        # Y_pred_t = Y_(t-1)+max_vel*tanh(u_t) ,where Y_pred_0 = Y_0 
-        Y_pred = tf.concat([tf.expand_dims(Y[0],0),(Y[:-1] + tf.reshape(vel, [1, yDim]) * tf.tanh(u[1:]))],0)
+            qu = R.SmoothingPastLDSTimeSeries(rec_params_u, Y, xDim, yDim,
+                                              Dyn_params_u, ntrials)
 
+        # Y_pred_t = Y_(t-1)+max_vel*tanh(u_t) ,where Y_pred_0 = Y_0 
+        Y_pred = tf.concat([tf.expand_dims(Y[0],0),
+                            (Y[:-1] + tf.reshape(vel, [1, yDim]) *
+                                tf.clip_by_value(u[1:], -1, 1))],
+                           0)
 
     print('--------------Generative Params----------------')
     if penalty_eps is not None:
@@ -212,87 +226,66 @@ def run_model(**kwargs):
     # set up an iterator over our training data
     batch_size = 1
     data_iter_vb = DatasetTrialIndexIterator(train_data, randomize=True)
-
     # data_iter_vd = DatasetTrialIndexIterator(val_data, randomize=True)
 
-    n_iter_per_epoch = ntrials//batch_size
-    n_val_iter_per_epoch = nvaltrials//batch_size 
-
+    n_iter_per_epoch = ntrials // batch_size
 
     val_costs = []
-
     ctrl_cost = []
 
-
-
     print('Setting up VB model...')
+    var_list = g.getParams() + u.getParams() + qg.getParams() + qu.getParams()
 
-
-    # Iterate over the training data for the specified number of epochs
-    
-    var_list=g.getParams() + u.getParams() +qg.getParams() +qu.getParams()
-    
     with tf.name_scope('goal_samples'):
         q_g_mean = tf.squeeze(qg.postX, 2,
                               name='q_g_mean')
-        q_g = tf.squeeze(qg.sample(1), name='q_g')
+        q_g = tf.squeeze(qg.sample(30), name='q_g')
     with tf.name_scope('control_signal_samples'):
         q_U_mean = tf.squeeze(qu.postX, 2,
                               name='q_U_mean')
-        q_U = tf.squeeze(qu.sample(1), name='q_U')
+        q_U = tf.squeeze(qu.sample(30), name='q_U')
 
     with tf.name_scope('train_KLqp'):   
         inference = KLqp({g:qg, u:qu}, data={Y_pred: Y})
-    
-        # inference.initialize(var_list=g.getParams() + u.getParams() +qg.getParams() +qu.getParams(),
-        #     optimizer=tf.train.AdamOptimizer(learning_rate), logdir = "/home/qiankuang/Documents/projects/model_saved")
-        inference.initialize(var_list=g.getParams() + u.getParams() +qg.getParams() +qu.getParams(),
-          optimizer=tf.train.AdamOptimizer(learning_rate))
+        # inference.initialize(var_list=var_list,
+        #                      optimizer=tf.train.AdamOptimizer(learning_rate),
+        #                      logdir = "/home/qiankuang/Documents/projects/model_saved")
+        inference.initialize(var_list=var_list,
+                             optimizer=tf.train.AdamOptimizer(learning_rate))
 
-       
     tf.summary.scalar('Kp_x_ball', u.u_ball.Kp[0, 0])
-
     tf.summary.scalar('Kp_y_ball', u.u_ball.Kp[1, 0])
     tf.summary.scalar('Ki_x_ball', u.u_ball.Ki[0, 0])
     tf.summary.scalar('Ki_y_ball', u.u_ball.Ki[1, 0])
     tf.summary.scalar('Kd_x_ball', u.u_ball.Kd[0, 0])
     tf.summary.scalar('Kd_y_ball', u.u_ball.Kd[1, 0])
-    
 
     summary_op = tf.summary.merge_all()
 
     with tf.Session() as sess:
-
         tf.global_variables_initializer().run()
-
         train_writer = tf.summary.FileWriter(outname, sess.graph)
-
 
         print('---> Training control model')
         # sys.stdout.flush()
         for ie in range(n_epochs):
+            # Iterate over the training data for the specified number of epochs
             print('--> entering epoch %i' % (ie + 1))
-
             start_train = time.time()
-
             avg_loss = 0.0
             val_loss = 0.0
-     
-
 
             for data in data_iter_vb:
                 info_dict = inference.update(feed_dict = {Y: data})
                 avg_loss += info_dict['loss']
-        
-            avg_loss = avg_loss /batch_size / n_iter_per_epoch
-            
+
+            avg_loss = avg_loss / batch_size / n_iter_per_epoch
             ctrl_cost.append(avg_loss)
 
             for i in range(len(val_data)):
                 val_loss += sess.run(inference.loss, feed_dict = {Y: val_data[i]})
-            val_loss = val_loss /batch_size / n_val_iter_per_epoch
+            val_loss = val_loss / val_ntrials
             val_costs.append(val_loss)
-
 
             train_summary = sess.run(summary_op)
             # inference.print_progress(info_dict)
@@ -300,7 +293,11 @@ def run_model(**kwargs):
 
             np.save(outname + '/train_costs', ctrl_cost)
             np.save(outname + '/val_costs', val_costs)
-            
+
+            print("training loss: {:0.3f}".format(avg_loss))
+            print("validation set loss: {:0.3f}".format(val_loss))
+            print('Epoch %i takes %0.3f s' % ((ie + 1), (time.time() - start_train)))
+
             if (ie + 1) % 20 == 0:
                 print('----> Predicting control signals and goals')
                 ctrl_post_mean = []
@@ -310,13 +307,8 @@ def run_model(**kwargs):
                 for i in range(len(val_data)):
                     ctrl_post_mean.append(
                         q_U_mean.eval(feed_dict={Y: val_data[i]}))
-
-                    u_post_samp = []
-                    for _ in range(30):
-                        u_post_samp.append(
-                            q_U.eval(feed_dict={Y: val_data[i]}))
-                    ctrl_post_samp.append(u_post_samp)
-
+                    ctrl_post_samp.append(
+                        q_U.eval(feed_dict={Y: val_data[i]}))
                     goal_post_mean.append(
                         q_g_mean.eval(feed_dict={Y: val_data[i]}))
 
@@ -327,22 +319,12 @@ def run_model(**kwargs):
                 np.save(outname + '/goal_post_mean_step_%s' % (ie + 1),
                         goal_post_mean)
 
-            print("loss <= {:0.3f}".format(avg_loss))
-
-            print("val_loss <= {:0.3f}".format(val_loss))
-
-
-
-            print('Epoch %i takes %0.3f s' % ((ie + 1), (time.time() - start_train)))
-            
-
         train_writer.close()
-
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--outname', type=str, default='model_saved',
+    parser.add_argument('--outname', type=str, default='model_saved_gmm',
                         help='Name for model directory')
     parser.add_argument('--seed', type=int, default=1234,
                         help='Random seed')
@@ -358,7 +340,7 @@ if __name__ == '__main__':
     # parser.add_argument('--data_loc', type=str,
     #                     default='~/data/penaltykick/model_data/compiled_penalty_kick_wspikes_wgaze_resplined.hdf5',
     #                     help='Location of data file')
-    parser.add_argument('--rec_lag', type=int, default=10,
+    parser.add_argument('--rec_lag', type=int, default=0,
                         help='Number of timepoints to include as input to recognition model')
     parser.add_argument('--nlayers_rec', type=int, default=3,
                         help='Number of layers in recognition model NNs')
@@ -382,7 +364,7 @@ if __name__ == '__main__':
                         help='Goal state boundary that corresponds to penalty')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                         help='Learning rate for adam optimizer')
-    parser.add_argument('--n_epochs', type=int, default=100,
+    parser.add_argument('--n_epochs', type=int, default=1000,
                         help='Number of iterations through the full training set')
     args = parser.parse_args()
 
