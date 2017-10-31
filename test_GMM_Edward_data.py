@@ -99,6 +99,7 @@ def run_model(**kwargs):
     # session_index = kwargs['session_index']
     # data_loc = kwargs['data_loc']
     rec_lag = kwargs['rec_lag']
+    rec_lag = 5
     nlayers_rec = kwargs['nlayers_rec']
     hidden_dim_rec = kwargs['hidden_dim_rec']
     nlayers_gen = kwargs['nlayers_gen']
@@ -194,11 +195,11 @@ def run_model(**kwargs):
                              value=tf.ones([tf.shape(Y)[0],yDim]))
 
         with tf.name_scope('rec_g'):
-            # qg = R.SmoothingLDSTimeSeries(rec_params_g, Y, xDim, yDim)
+            # qg = R.SmoothingLDSTimeSeries(rec_params_g, Y, xDim, yDim, Dyn_params_g)
             qg = R.SmoothingPastLDSTimeSeries(rec_params_g, Y, xDim, yDim,
                                               Dyn_params_g, ntrials)
         with tf.name_scope('rec_u'):
-            # qu = R.SmoothingLDSTimeSeries(rec_params_u, Y, xDim, yDim)
+            # qu = R.SmoothingLDSTimeSeries(rec_params_u, Y, xDim, yDim, Dyn_params_g)
             qu = R.SmoothingPastLDSTimeSeries(rec_params_u, Y, xDim, yDim,
                                               Dyn_params_u, ntrials)
 

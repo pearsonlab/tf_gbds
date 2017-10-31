@@ -244,17 +244,22 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
                 self.lag = RecognitionParams['lag']
             else:
                 self.lag = 5
-
+        # self.Input = Input
         # manipulate input to include past observations (up to lag)
         # in each row
         with tf.name_scope('pad_lag'):
+            Input_ = Input
             for i in range(1, self.lag + 1):
-                lagged = tf.concat([tf.reshape(Input[0, :yDim], [1, yDim]),
-                                    Input[:-1, -yDim:]], 0, name='lagged')
-                Input = tf.concat([Input, lagged], 1)
+                lagged = tf.concat([tf.reshape(Input_[0, :yDim], [1, yDim]),
+                                    Input_[:-1, -yDim:]], 0, name='lagged')
+                Input_ = tf.concat([Input_, lagged], 1)
         super(SmoothingPastLDSTimeSeries, self).__init__(RecognitionParams,
-                                                         Input, xDim, yDim,Dyn_params,
+                                                         Input_, xDim, yDim,Dyn_params,
                                                          nrng, name, value, dtype,
                                                          reparameterization_type,
                                                          validate_args, allow_nan_stats)
-        self._kwargs['ntrials'] = self.ntrials
+        self.Input = Input
+        
+        self._kwargs['Input'] = Input
+        self._kwargs['ntrials'] = ntrials
+        

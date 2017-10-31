@@ -277,7 +277,7 @@ class GBDS_u(RandomVariable, Distribution):
                     name='non_clip_logpdf'))
 
             resU = value[1:] - Upred
-            LogDensity = -tf.reduce_sum(resU**2 / (2 * self.eps**2))
+            LogDensity -= tf.reduce_sum(resU**2 / (2 * self.eps**2))
             LogDensity -= (0.5 * tf.log(2 * np.pi) +
                            tf.reduce_sum(tf.log(self.eps)))
         with tf.name_scope('control_signal_penalty'):
