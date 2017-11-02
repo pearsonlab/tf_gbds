@@ -249,7 +249,7 @@ def get_vel(data, max_vel=None):
     velocities = data[1:] - data[:-1]
     if max_vel is not None:
         velocities /= max_vel
-    velocities = tf.concat([tf.zeros((1, dims), np.float32), velocities], 0,
+    velocities = tf.concat([tf.zeros((1, dims), tf.float32), velocities], 0,
                            name='velocities')
     states = tf.concat([positions, velocities], 1, name='position_vel')
     return states
@@ -429,7 +429,7 @@ def get_gen_params_GBDS(obs_dim_agent, obs_dim, add_accel,
 
 def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
                             yCols_agent, nlayers_gen, hidden_dim_gen,
-                            gmm_k, PKLparams,
+                            K, C, PKLparams,
                             vel, penalty_eps, penalty_sigma,
                             boundaries_g, penalty_g, name):
 
@@ -442,9 +442,9 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
             state_dim = obs_dim * 2
 
     with tf.name_scope('gen_gmm_%s' % name):
-        NN_GMM, _ = get_network('gen_gmm_%s' % name, state_dim,
-                                (obs_dim_agent * gmm_k * 2 + gmm_k),
-                                hidden_dim_gen, nlayers_gen, PKLparams)
+        GMM_net, _ = get_network('gen_gmm_%s' % name, state_dim,
+                                 (obs_dim_agent * K * 2 + K),
+                                 hidden_dim_gen, nlayers_gen, PKLparams)
 
     gen_params = dict(all_vel=vel,
                       vel=vel[yCols_agent],
@@ -454,8 +454,8 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
                       bounds_g=boundaries_g,
                       pen_g=penalty_g,
                       get_states=get_states,
-                      GMM_net=NN_GMM,
-                      GMM_k=gmm_k)
+                      GMM_net=GMM_net,
+                      K=K, C=C)
 
     return gen_params
 

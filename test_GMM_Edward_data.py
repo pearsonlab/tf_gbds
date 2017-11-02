@@ -104,7 +104,8 @@ def run_model(**kwargs):
     hidden_dim_rec = kwargs['hidden_dim_rec']
     nlayers_gen = kwargs['nlayers_gen']
     hidden_dim_gen = kwargs['hidden_dim_gen']
-    gmm_k = kwargs['gmm_k']
+    K = kwargs['K']
+    C = kwargs['C']
     add_accel = kwargs['add_accel']
     penalty_eps = kwargs['penalty_eps']
     penalty_sigma = kwargs['penalty_sigma']
@@ -166,12 +167,12 @@ def run_model(**kwargs):
         with tf.name_scope('gen_goalie_params'):
             gen_params_goalie = get_gen_params_GBDS_GMM(
                 obs_dim_g, obs_dim, add_accel, yCols_goalie, nlayers_gen,
-                hidden_dim_gen, gmm_k, PKLparams, vel, penalty_eps,
+                hidden_dim_gen, K, C, PKLparams, vel, penalty_eps,
                 penalty_sigma, boundaries_g, penalty_g, 'goalie')
         with tf.name_scope('gen_ball_params'):
             gen_params_ball = get_gen_params_GBDS_GMM(
                 obs_dim_b, obs_dim, add_accel, yCols_ball, nlayers_gen,
-                hidden_dim_gen, gmm_k, PKLparams, vel, penalty_eps,
+                hidden_dim_gen, K, C, PKLparams, vel, penalty_eps,
                 penalty_sigma, boundaries_g, penalty_g, 'ball')
 
         Y = tf.placeholder(tf.float32, shape=(None, None), name='Y')
@@ -210,14 +211,16 @@ def run_model(**kwargs):
                            0)
 
     print('--------------Generative Params----------------')
-    if penalty_eps is not None:
-        print('Penalty on control signal noise, epsilon (Generative): %i' % penalty_eps)
-    if penalty_sigma is not None:
-        print('Penalty on goal state noise, sigma (Generative): %i' % penalty_sigma)
-    if penalty_g[0] is not None:
-        print('Penalty on goal state leaving boundary 1 (Generative): %i' % penalty_g[0])
-    if penalty_g[1] is not None:
-        print('Penalty on goal state leaving boundary 2 (Generative): %i' % penalty_g[1])
+    # if penalty_eps is not None:
+    #     print('Penalty on control signal noise, epsilon (Generative): %i' % penalty_eps)
+    # if penalty_sigma is not None:
+    #     print('Penalty on goal state noise, sigma (Generative): %i' % penalty_sigma)
+    # if penalty_g[0] is not None:
+    #     print('Penalty on goal state leaving boundary 1 (Generative): %i' % penalty_g[0])
+    # if penalty_g[1] is not None:
+    #     print('Penalty on goal state leaving boundary 2 (Generative): %i' % penalty_g[1])
+    print('Num Substrategies: %i' % K)
+    print('Num Highest-level Strategies: %i' % C)
     print('--------------Recognition Params---------------')
     print('Num Layers (VILDS recognition): %i' % nlayers_rec)
     print('Hidden Dims (VILDS recognition): %i' % hidden_dim_rec)
@@ -351,8 +354,10 @@ if __name__ == '__main__':
                         help='Number of layers in generative model NNs')
     parser.add_argument('--hidden_dim_gen', type=int, default=64,
                         help='Number of hidden units in generative model NNs')
-    parser.add_argument('--gmm_k', type=int, default=8,
-                        help='Number of Gaussian components in GMM')
+    parser.add_argument('--K', type=int, default=8,
+                        help='Number of substrategies(Gaussian components in GMM)')
+    parser.add_argument('--C', type=int, default=8,
+                        help='Number of highest-level strategies')
     parser.add_argument('--add_accel', action='store_true',
                         help='Add acceleration to states')
     parser.add_argument('--penalty_eps', type=float, default=None,
