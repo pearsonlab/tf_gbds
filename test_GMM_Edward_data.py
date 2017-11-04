@@ -10,6 +10,7 @@ import numpy as np
 import time
 import tf_gbds.GenerativeModel_GMM_Edward as G
 import tf_gbds.RecognitionModel_Edward as R
+import edward as ed
 from edward import KLqp
 
 # import pickle as pkl
@@ -175,40 +176,39 @@ def run_model(**kwargs):
                 hidden_dim_gen, K, C, PKLparams, vel, penalty_eps,
                 penalty_sigma, boundaries_g, penalty_g, 'ball')
 
-        Y = tf.placeholder(tf.float32, shape=(None, None), name='Y')
+        Y = tf.placeholder(tf.float32, shape=(None, None), name='data')
         yDim_goalie = len(yCols_goalie)
         yDim_ball = len(yCols_ball)
-        yDim = tf.shape(Y)[1]
+        yDim = tf.shape(Y_ph)[-1]
         xDim = yDim
 
-        PID_params_goalie = initialize_PID_params('goalie',yDim_goalie)
-        PID_params_ball = initialize_PID_params('ball',yDim_ball)
-        Dyn_params_u = initialize_Dyn_params('u',rec_params_u)
-        Dyn_params_g = initialize_Dyn_params('g',rec_params_g)
+        PID_params_goalie = initialize_PID_params('goalie', yDim_goalie)
+        PID_params_ball = initialize_PID_params('ball', yDim_ball)
+        Dyn_params_u = initialize_Dyn_params('u', rec_params_u)
+        Dyn_params_g = initialize_Dyn_params('g', rec_params_g)
 
     with tf.name_scope('model_setup'):
         with tf.name_scope('gen_g'):
-            g = G.GBDS_g_all(gen_params_goalie, gen_params_ball, yDim, Y,
+            g = G.GBDS_g_all(gen_params_goalie, gen_params_ball, yDim, Y_ph,
                              value=tf.ones([tf.shape(Y)[0],yDim]))
         with tf.name_scope('gen_u'):
-            u = G.GBDS_u_all(gen_params_goalie, gen_params_ball, g, Y, yDim,
+            u = G.GBDS_u_all(gen_params_goalie, gen_params_ball, g, Y_ph, yDim,
                              PID_params_goalie, PID_params_ball,
                              value=tf.ones([tf.shape(Y)[0],yDim]))
 
         with tf.name_scope('rec_g'):
             # qg = R.SmoothingLDSTimeSeries(rec_params_g, Y, xDim, yDim, Dyn_params_g)
-            qg = R.SmoothingPastLDSTimeSeries(rec_params_g, Y, xDim, yDim,
+            qg = R.SmoothingPastLDSTimeSeries(rec_params_g, Y_ph, xDim, yDim,
                                               Dyn_params_g, ntrials)
         with tf.name_scope('rec_u'):
             # qu = R.SmoothingLDSTimeSeries(rec_params_u, Y, xDim, yDim, Dyn_params_g)
-            qu = R.SmoothingPastLDSTimeSeries(rec_params_u, Y, xDim, yDim,
+            qu = R.SmoothingPastLDSTimeSeries(rec_params_u, Y_ph, xDim, yDim,
                                               Dyn_params_u, ntrials)
 
-        # Y_pred_t = Y_(t-1)+max_vel*tanh(u_t) ,where Y_pred_0 = Y_0 
+        # Y_pred_t = Y_(t-1)+max_vel*tanh(u_t) ,where Y_pred_0 = Y_0
         Y_pred = tf.concat([tf.expand_dims(Y[0],0),
                             (Y[:-1] + tf.reshape(vel, [1, yDim]) *
-                                tf.clip_by_value(u[1:], -1, 1))],
-                           0)
+                                tf.clip_by_value(u[1:], -1, 1))], 0)
 
     print('--------------Generative Params----------------')
     # if penalty_eps is not None:
@@ -266,64 +266,64 @@ def run_model(**kwargs):
 
     summary_op = tf.summary.merge_all()
 
-    with tf.Session() as sess:
-        tf.global_variables_initializer().run()
-        train_writer = tf.summary.FileWriter(outname, sess.graph)
+    sess = ed.get_session()
+    tf.global_variables_initializer().run()
+    train_writer = tf.summary.FileWriter(outname, sess.graph)
 
-        print('---> Training control model')
-        # sys.stdout.flush()
-        for ie in range(n_epochs):
-            # Iterate over the training data for the specified number of epochs
-            print('--> entering epoch %i' % (ie + 1))
-            start_train = time.time()
-            avg_loss = 0.0
-            val_loss = 0.0
+    print('---> Training model')
+    # sys.stdout.flush()
+    for ie in range(n_epochs):
+        # Iterate over the training data for the specified number of epochs
+        print('--> entering epoch %i' % (ie + 1))
+        start_train = time.time()
+        avg_loss = 0.0
+        val_loss = 0.0
 
-            for data in data_iter_vb:
-                info_dict = inference.update(feed_dict = {Y: data})
-                avg_loss += info_dict['loss']
+        for data in data_iter_vb:
+            info_dict = inference.update(feed_dict = {Y: data})
+            avg_loss += info_dict['loss']
 
-            avg_loss = avg_loss / batch_size / n_iter_per_epoch
-            ctrl_cost.append(avg_loss)
+        avg_loss = avg_loss / batch_size / n_iter_per_epoch
+        ctrl_cost.append(avg_loss)
+
+        for i in range(len(val_data)):
+            val_loss += sess.run(inference.loss, feed_dict = {Y: val_data[i]})
+        val_loss = val_loss / val_ntrials
+        val_costs.append(val_loss)
+
+        train_summary = sess.run(summary_op)
+        # inference.print_progress(info_dict)
+        train_writer.add_summary(train_summary)
+
+        np.save(outname + '/train_costs', ctrl_cost)
+        np.save(outname + '/val_costs', val_costs)
+
+        print("training loss: {:0.3f}".format(avg_loss))
+        print("validation set loss: {:0.3f}".format(val_loss))
+        print('Epoch %i takes %0.3f s' % ((ie + 1), (time.time() - start_train)))
+
+        if (ie + 1) % 20 == 0:
+            print('----> Predicting control signals and goals')
+            ctrl_post_mean = []
+            ctrl_post_samp = []
+            goal_post_mean = []
 
             for i in range(len(val_data)):
-                val_loss += sess.run(inference.loss, feed_dict = {Y: val_data[i]})
-            val_loss = val_loss / val_ntrials
-            val_costs.append(val_loss)
+                ctrl_post_mean.append(
+                    q_U_mean.eval(feed_dict={Y: val_data[i]}))
+                ctrl_post_samp.append(
+                    q_U.eval(feed_dict={Y: val_data[i]}))
+                goal_post_mean.append(
+                    q_g_mean.eval(feed_dict={Y: val_data[i]}))
 
-            train_summary = sess.run(summary_op)
-            # inference.print_progress(info_dict)
-            train_writer.add_summary(train_summary)
+            np.save(outname + '/ctrl_post_mean_step_%s' % (ie + 1),
+                    ctrl_post_mean)
+            np.save(outname + '/ctrl_post_samp_step_%s' % (ie + 1),
+                    ctrl_post_samp)
+            np.save(outname + '/goal_post_mean_step_%s' % (ie + 1),
+                    goal_post_mean)
 
-            np.save(outname + '/train_costs', ctrl_cost)
-            np.save(outname + '/val_costs', val_costs)
-
-            print("training loss: {:0.3f}".format(avg_loss))
-            print("validation set loss: {:0.3f}".format(val_loss))
-            print('Epoch %i takes %0.3f s' % ((ie + 1), (time.time() - start_train)))
-
-            if (ie + 1) % 20 == 0:
-                print('----> Predicting control signals and goals')
-                ctrl_post_mean = []
-                ctrl_post_samp = []
-                goal_post_mean = []
-
-                for i in range(len(val_data)):
-                    ctrl_post_mean.append(
-                        q_U_mean.eval(feed_dict={Y: val_data[i]}))
-                    ctrl_post_samp.append(
-                        q_U.eval(feed_dict={Y: val_data[i]}))
-                    goal_post_mean.append(
-                        q_g_mean.eval(feed_dict={Y: val_data[i]}))
-
-                np.save(outname + '/ctrl_post_mean_step_%s' % (ie + 1),
-                        ctrl_post_mean)
-                np.save(outname + '/ctrl_post_samp_step_%s' % (ie + 1),
-                        ctrl_post_samp)
-                np.save(outname + '/goal_post_mean_step_%s' % (ie + 1),
-                        goal_post_mean)
-
-        train_writer.close()
+    train_writer.close()
 
 
 if __name__ == '__main__':

@@ -241,17 +241,19 @@ def get_vel(data, max_vel=None):
     coordinate in each row
     """
     if isinstance(data, tf.Tensor):
-        dims = tf.shape(data)[1]
+        B = tf.shape(data)[0]
+        dims = tf.shape(data)[-1]
         positions = data
     else:
-        dims = data.shape[1]
+        B = data.shape[0]
+        dims = data.shape[-1]
         positions = data.copy()
-    velocities = data[1:] - data[:-1]
+    velocities = data[:, 1:] - data[:, :-1]
     if max_vel is not None:
         velocities /= max_vel
-    velocities = tf.concat([tf.zeros((1, dims), tf.float32), velocities], 0,
-                           name='velocities')
-    states = tf.concat([positions, velocities], 1, name='position_vel')
+    velocities = tf.concat([tf.zeros((B, 1, dims), tf.float32), velocities],
+                           1, name='velocities')
+    states = tf.concat([positions, velocities], -1, name='position_vel')
     return states
 
 
@@ -282,7 +284,7 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
     PKbias_layers = []
     NN = models.Sequential()
     with tf.name_scope('%s_input' % name):
-        NN.add(keras_layers.InputLayer(batch_input_shape=(None, input_dim),
+        NN.add(keras_layers.InputLayer(input_shape=(None, input_dim),
                                        name='%s_Input' % name))
 
     with tf.name_scope('%s_batchnorm' % name):
@@ -291,8 +293,8 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
     with tf.name_scope('%s_filter' % name):
         if filt_size is not None:  # first layer convolution
             # rearrange dims for convolution
-            NN.add(keras_layers.Lambda(lambda x: tf.expand_dims(x, 0),
-                                       name='%s_ExpandDims' % name))
+            # NN.add(keras_layers.Lambda(lambda x: tf.expand_dims(x, 0),
+            #                            name='%s_ExpandDims' % name))
             # custom pad so that no timepoint gets input from future
             NN.add(keras_layers.ZeroPadding1D(padding=(filt_size - 1, 0),
                                               name='%s_ZeroPadding' % name))
@@ -304,8 +306,8 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
                 bias_constraint=constraints.MaxNorm(5),
                 name='%s_Conv1D' % name))
             # rearrange dims for dense layers
-            NN.add(keras_layers.Lambda(lambda x: tf.squeeze(x, [0]),
-                                       name='%s_Squeeze' % name))
+            # NN.add(keras_layers.Lambda(lambda x: tf.squeeze(x, [0]),
+            #                            name='%s_Squeeze' % name))
     with tf.name_scope('%s_layers' % name):
         for i in range(num_layers):
             with tf.name_scope('%s_PK_Bias' % name):
@@ -442,9 +444,12 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
             state_dim = obs_dim * 2
 
     with tf.name_scope('gen_gmm_%s' % name):
-        GMM_net, _ = get_network('gen_gmm_%s' % name, state_dim,
-                                 (obs_dim_agent * K * 2 + K),
-                                 hidden_dim_gen, nlayers_gen, PKLparams)
+        GMM_net_1, _ = get_network('gen_gmm_%s' % name, state_dim,
+                                   (obs_dim_agent * K * 2),
+                                   hidden_dim_gen, nlayers_gen, PKLparams)
+        GMM_net_2, _ = get_network('gen_gmm_%s' % name, state_dim,
+                                   C * K ** 2, hidden_dim_gen,
+                                   nlayers_gen, PKLparams)
 
     gen_params = dict(all_vel=vel,
                       vel=vel[yCols_agent],
@@ -454,7 +459,8 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
                       bounds_g=boundaries_g,
                       pen_g=penalty_g,
                       get_states=get_states,
-                      GMM_net=GMM_net,
+                      GMM_net_1=GMM_net_1,
+                      GMM_net_2=GMM_net_2,
                       K=K, C=C)
 
     return gen_params
