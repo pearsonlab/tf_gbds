@@ -432,7 +432,7 @@ def get_gen_params_GBDS(obs_dim_agent, obs_dim, add_accel,
 def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
                             yCols_agent, nlayers_gen, hidden_dim_gen,
                             K, C, B, PKLparams,
-                            vel, penalty_eps, penalty_sigma,
+                            vel, penalty_eps, penalty_sigma, penalty_A,
                             boundaries_g, penalty_g, name):
 
     with tf.name_scope('get_states_%s' % name):
@@ -456,6 +456,7 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
                       yCols=yCols_agent,  # which columns belong to the agent
                       pen_eps=penalty_eps,
                       pen_sigma=penalty_sigma,
+                      pen_A=penalty_A,
                       bounds_g=boundaries_g,
                       pen_g=penalty_g,
                       get_states=get_states,

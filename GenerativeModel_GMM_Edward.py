@@ -2,8 +2,9 @@ import tensorflow as tf
 from tensorflow.contrib.keras import layers, models
 import numpy as np
 from edward.models import RandomVariable
-from tensorflow.contrib.distributions import Distribution, Normal
+from tensorflow.contrib.distributions import Categorical, Distribution, Normal
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
+from tensorflow.contrib.bayesflow import entropy
 
 
 # def logsumexp(x, axis=None):
@@ -374,12 +375,20 @@ class GBDS_g(RandomVariable, Distribution):
                 else:
                     self.bounds_g = 1.0
             with tf.name_scope('penalty'):
-                # penalties on goal state escaping boundaries
+                # penalty on goal state escaping boundaries
                 if GenerativeParams['pen_g'] is not None:
                     self.pen_g = (GenerativeParams['pen_g'] /
                                   tf.cast(self.B, tf.float32))
                 else:
                     self.pen_g = None
+
+        with tf.name_scope('transition_matrices_penalty'):
+            # penalty on transition matrices of HMM
+            if GenerativeParams['pen_A'] is not None:
+                self.pen_A = (GenerativeParams['pen_A'] /
+                              tf.cast(self.B, tf.float32))
+            else:
+                self.pen_A = None
 
         with tf.name_scope('velocity'):                    
             # velocity for each observation dimension (of all agents)
@@ -437,7 +446,7 @@ class GBDS_g(RandomVariable, Distribution):
 
             with tf.name_scope('w'):
                 with tf.name_scope('A'):
-                    output_A = tf.nn.softmax(tf.reshape(
+                    all_A = tf.nn.softmax(tf.reshape(
                         self.GMM_A(states)[:, :-1],
                         [self.B, -1, self.C, self.K, self.K],
                         name='reshape_A'), dim=3, name='softmax_A')
@@ -447,7 +456,7 @@ class GBDS_g(RandomVariable, Distribution):
                     w_ck = tf.concat(
                         [tf.expand_dims(pi_repeat, 0),
                         tf.scan(lambda a, x: tf.matmul(x, a),
-                            tf.transpose(output_A, [1, 0, 2, 3, 4]),
+                            tf.transpose(all_A, [1, 0, 2, 3, 4]),
                             initializer=pi_repeat, name='cum_mult_A')],
                         0, name='w_ck')
                     w_k = tf.transpose(
@@ -473,7 +482,7 @@ class GBDS_g(RandomVariable, Distribution):
             # else:
             #     raise Exception("Goal states must be provided " +
             #                     "(either posterior or generated)")
-        return (all_mu, all_lambda, w_k, next_g)
+        return (all_mu, all_lambda, all_A, w_k, next_g)
 
     def sample_GMM(self, mu, lmbda, w):
         """
@@ -506,13 +515,14 @@ class GBDS_g(RandomVariable, Distribution):
 
     def _log_prob(self, value):
         with tf.name_scope('get_params_g_pred'):
-            all_mu, all_lambda, all_w, g_pred = self.get_preds(
+            all_mu, all_lambda, all_A, all_w, g_pred = self.get_preds(
                 self.y[:, :-1, :], training=True, post_g=value)
 
         with tf.name_scope('goal_state_loss'):                              
-            w_brdcst = tf.reshape(all_w, [self.B, -1, self.K, 1])
-            gmm_res_g = (tf.reshape(value[:, 1:], [self.B, -1, 1, yDim]) -
-                         g_pred)
+            w_brdcst = tf.reshape(all_w, [self.B, -1, self.K, 1],
+                                  name='reshape_w')
+            gmm_res_g = (tf.reshape(value[:, 1:], [self.B, -1, 1, yDim],
+                                    name='reshape_sample') - g_pred)
             gmm_term = (tf.log(w_brdcst + 1e-8) - ((1 + all_lambda) /
                 (2 * tf.reshape(self.sigma, [1, -1]) ** 2)) *
                 gmm_res_g ** 2)
@@ -522,8 +532,13 @@ class GBDS_g(RandomVariable, Distribution):
             LogDensity = tf.reduce_sum(tf.reduce_logsumexp(tf.reduce_sum(
                 gmm_term, axis=-1), axis=-1, keep_dims=True))
 
-        # with tf.name_scope('penalty_A'):
-            # column entropy
+        with tf.name_scope('penalty_A'):
+            if self.pen_A is not None:
+                # penalize columnwise entropy of transition matrices A's
+                LogDensity -= (self.pen_A * tf.recude_sum(
+                    entropy.entropy_shannon(
+                        probs=tf.transpose(all_A, [0, 1, 2, 4, 3]),
+                        name='columnwise_entropy'), name='sum_entropy'))
 
         with tf.name_scope('goal_and_control_penalty'):
             if self.pen_g is not None:
