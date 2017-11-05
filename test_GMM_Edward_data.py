@@ -16,53 +16,155 @@ from edward import KLqp
 # import pickle as pkl
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
+MODEL_DIR = 'model_gmm'
+# MAX_SESSIONS = 10
+# SESSION_TYPE = 'recording'
+# SESSION_INDEX_DIR = ''
+DATA_DIR = ''
 
-def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
-             eps=1e-5, Kp=1, Ki=0, Kd=0,
-             vel=1e-2 * np.ones((3))):
-    p = []
-    g_b = []
+REC_LAG = 10
+REC_NLAYERS = 3
+REC_HIDDEN_DIM = 25
 
-    for s in range(n_trial):
-        p_b = np.zeros((n_obs, 2), np.float32)
-        p_g = np.zeros((n_obs, 1), np.float32)
-        g = np.zeros(p_b.shape, np.float32)
-        prev_error_b = 0
-        prev_error_g = 0
-        int_error_b = 0
-        int_error_g = 0
+GEN_NLAYERS = 3
+GEN_HIDDEN_DIM = 64
+K = 20
+C = 8
 
-        init = np.pi * (np.random.rand() * 2 - 1)
-        g_mu_y = 0.75 * np.sin(1. * (np.linspace(0, 2 * np.pi, n_obs) - init))
-        g_mu = np.hstack([np.ones((n_obs, 1)), g_mu_y.reshape(n_obs, 1)])
-        g_lambda = np.array([16, 16], np.float32)
-        g[0] = [1, 0.75 * (np.random.rand() * 2 - 1)]
+ADD_ACCEL = False
+EPS_INIT = 1e-5
+EPS_PENALTY = None
+SIGMA_INIT = 1e-5
+SIGMA_PENALTY = None
+# model class allows for having 2 boundaries with different penalties,
+# but we later found that unnecessary, so the CLI only takes on penalty.
+# We left the possibility for 2 penalties in the model class just in case
+# it may be useful on a different dataset/task
+GOAL_BOUNDARY = 1.0
+GOAL_BOUND_PENALTY = None
 
-        for t in range(n_obs - 1):
-            g[t + 1] = (g[t] + g_lambda * g_mu[t + 1]) / (1 + g_lambda)
-            var = sigma ** 2 / (1 + g_lambda)
-            g[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
+SEED = 1234
+TRAIN_OPTIMIZER = 'Adam'
+LEARNING_RATE = 1e-3
+NUM_EPOCHS = 2000
+BATCH_SIZE = 128
 
-            error_b = g[t + 1] - p_b[t]
-            int_error_b += error_b
-            der_error_b = error_b - prev_error_b
-            u_b = (Kp * error_b + Ki * int_error_b + Kd * der_error_b +
-                   eps * np.random.randn(2,))
-            prev_error_b = error_b
-            p_b[t + 1] = p_b[t] + vel[1:] * np.clip(u_b, -1, 1)
 
-            error_g = p_b[t + 1, 1] - p_g[t]
-            int_error_g += error_g
-            der_error_g = error_g - prev_error_g
-            u_g = (Kp * error_g + Ki * int_error_g + Kd * der_error_g +
-                   eps * np.random.randn())
-            prev_error_g = error_g
-            p_g[t + 1] = p_g[t] + vel[0] * np.clip(u_g, -1, 1)
+flags = tf.app.flags()
 
-        p.append(np.hstack([p_g, p_b]))
-        g_b.append(g)
+flags.Define_string('model_type', 'KLqp',
+                    'Type of model to build {KLqp, HMM}')
+flags.Define_string('model_dir', MODEL_DIR,
+                    'Directory where the model is saved')
+flags.Define_integer('max_sessions', MAX_SESSIONS,
+                     'Maximum number of sessions to load')
+flags.Define_string('session_type', SESSION_TYPE,
+                    'Type of data session')
+flags.Define_string('session_index_dir', SESSION_INDEX_DIR,
+                    'Directory of session index file')
+flags.Define_string('data_dir', DATA_DIR, 'Directory of data file')
 
-    return p, g_b
+flags.Define_integer('rec_lag', REC_LAG, 'Number of previous timepoints \
+                     to include as input to recognition model')
+flags.Define_integer('rec_nlayers', REC_NLAYERS, 'Number of layers in \
+                     recognition model neural networks')
+flags.Define_integer('rec_hidden_dim', REC_HIDDEN_DIM,
+                     'Number of hidden units in each (dense) layer of \
+                     recognition model neural networks')
+
+flags.Define_integer('gen_nlayers', GEN_NLAYERS, 'Number of layers in \
+                     generative model neural networks')
+flags.Define_integer('gen_hidden_dim', GEN_HIDDEN_DIM,
+                     'number of hidden units in each (dense) layer of \
+                     generative model neural networks')
+flags.Define_integer('K', K, 'Number of sub-strategies (components of GMM)')
+flags.Define_integer('C', C, 'Number of highest-level strategies')
+
+flags.Define_boolean('add_accel', ADD_ACCEL,
+                     'Should acceleration be added to states?')
+flags.Define_float('eps_init', EPS_INIT,
+                   'Initial value of control signal noise')
+flags.Define_float('eps_penalty', EPS_PENALTY,
+                   'Penalty on control signal noise')
+flags.Define_float('sigma_init', SIGMA_INIT,
+                   'Initial value of goal state noise')
+flags.Define_float('sigma_penalty', SIGMA_PENALTY,
+                   'Penalty on goal state noise')
+flags.Define_float('goal_bound', GOAL_BOUNDARY, 'Goal state boundaries')
+flags.Define_float('goal_bound_penalty', GOAL_BOUND_PENALTY,
+                   'Penalty for goal states escaping boundaries')
+
+flags.Define_integer('seed', SEED, 'Random seed')
+flags.Define_string('optimizer', TRAIN_OPTIMIZER, 'Training optimizer')
+flags.Define_float('learning_rate', LEARNING_RATE, 'Initial learning rate')
+flags.Define_integer('num_epochs', NUM_EPOCHS,
+                     'Number of iterations through the full training set')
+flags.Define_integer('batch_size', BATCH_SIZE, 'Size of mini-batch')
+
+FLAGS = flags.FLAGS
+
+def build_hyperparameter_dict(flags):
+    d = {}
+
+    d['model_dir'] = flags.model_dir
+    d['max_sessions'] = flags.max_sessions
+    d['session_type'] = flags.session_type
+    d['session_index_dir'] = flags.session_index_dir
+    d['data_dir'] = flags.data_dir
+
+    d['rec_lag'] = flags.rec_lag
+    d['rec_nlayers'] = flags.rec_nlayers
+    d['rec_hidden_dim'] = flags.rec_hidden_dim
+
+    d['gen_nlayers'] = flags.gen_nlayers
+    d['gen_hidden_dim'] = flags.gen_hidden_dim
+    d['K'] = flags.K
+    d['C'] = flags.C
+
+    d['add_accel'] = flags.add_accel
+    d['eps_init'] = flags.eps_init
+    d['eps_penalty'] = flags.eps_penalty
+    d['sigma_init'] = flags.sigma_init
+    d['sigma_penalty'] = flags.sigma_penalty
+    d['goal_bound'] = flags.goal_bound
+    d['goal_bound_penalty'] = flags.goal_bound_penalty
+
+    d['seed'] = flags.seed
+    d['optimizer'] = flags.optimizer
+    d['learning_rate'] = flags.learning_rate
+    d['num_epochs'] = flags.num_epochs
+    d['batch_size'] = flags.batch_size
+
+    return d
+
+class hps_dict_to_obj(dict):
+  """Helper class allowing us to access hps dictionary more easily."""
+
+  def __getattr__(self, key):
+    if key in self:
+      return self[key]
+    else:
+      assert False, ("%s does not exist." % key)
+  def __setattr__(self, key, value):
+    self[key] = value
+
+def load_data:
+
+def model_setup:
+
+def train:
+
+def write_model_samples:
+
+def write_model_parameters:
+
+def main(_):
+    d = build_hyperparameter_dict(FLAGS)
+    hps = hps_dict_to_obj(d)    # hyper-parameters
+    model_type = FLAGS.model_type
+
+# if __name__ == "__main__":
+#     tf.app.run()
     
 def initialize_PID_params(type, yDim):
     PID_params = dict()
@@ -93,32 +195,6 @@ def initialize_Dyn_params(type, RecognitionParams):
     return Dyn_params
 
 def run_model(**kwargs):
-    outname = kwargs['outname']
-    seed = kwargs['seed']
-    # max_sessions = kwargs['max_sessions']
-    # session_type = kwargs['session_type']
-    # session_index = kwargs['session_index']
-    # data_loc = kwargs['data_loc']
-    rec_lag = kwargs['rec_lag']
-    rec_lag = 5
-    nlayers_rec = kwargs['nlayers_rec']
-    hidden_dim_rec = kwargs['hidden_dim_rec']
-    nlayers_gen = kwargs['nlayers_gen']
-    hidden_dim_gen = kwargs['hidden_dim_gen']
-    K = kwargs['K']
-    C = kwargs['C']
-    add_accel = kwargs['add_accel']
-    penalty_eps = kwargs['penalty_eps']
-    penalty_sigma = kwargs['penalty_sigma']
-    # model class allows for having 2 boundaries with different penalties,
-    # but we later found that unnecessary, so the CLI only takes on penalty.
-    # We left the possibility for 2 penalties in the model class just in case
-    # it may be useful on a different dataset/task
-    boundaries_g = (kwargs['boundary_g'], 2.0)
-    penalty_g = (kwargs['penalty_g'], None)
-    learning_rate = tf.cast(kwargs['learning_rate'], tf.float32)
-    n_epochs = kwargs['n_epochs']
-
     if not os.path.exists(outname):
         os.makedirs(outname)
 
@@ -168,12 +244,12 @@ def run_model(**kwargs):
         with tf.name_scope('gen_goalie_params'):
             gen_params_goalie = get_gen_params_GBDS_GMM(
                 obs_dim_g, obs_dim, add_accel, yCols_goalie, nlayers_gen,
-                hidden_dim_gen, K, C, PKLparams, vel, penalty_eps,
+                hidden_dim_gen, K, C, B, PKLparams, vel, penalty_eps,
                 penalty_sigma, boundaries_g, penalty_g, 'goalie')
         with tf.name_scope('gen_ball_params'):
             gen_params_ball = get_gen_params_GBDS_GMM(
                 obs_dim_b, obs_dim, add_accel, yCols_ball, nlayers_gen,
-                hidden_dim_gen, K, C, PKLparams, vel, penalty_eps,
+                hidden_dim_gen, K, C, B, PKLparams, vel, penalty_eps,
                 penalty_sigma, boundaries_g, penalty_g, 'ball')
 
         Y = tf.placeholder(tf.float32, shape=(None, None), name='data')
@@ -324,54 +400,3 @@ def run_model(**kwargs):
                     goal_post_mean)
 
     train_writer.close()
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--outname', type=str, default='model_saved_gmm',
-                        help='Name for model directory')
-    parser.add_argument('--seed', type=int, default=1234,
-                        help='Random seed')
-    # parser.add_argument('--max_sessions', type=int, default=10,
-    #                     help='Max number of sessions to load')
-    # parser.add_argument('--session_type', default='recording', type=str,
-    #                     choices=['recording', 'injection'],
-    #                     help='Type of data session. Either neural recording ' +
-    #                          'session or saline/muscimol injection session')
-    # parser.add_argument('--session_index', type=str,
-    #                     default='~/data/penaltykick/model_data/session_index.csv',
-    #                     help='Location of session index file')
-    # parser.add_argument('--data_loc', type=str,
-    #                     default='~/data/penaltykick/model_data/compiled_penalty_kick_wspikes_wgaze_resplined.hdf5',
-    #                     help='Location of data file')
-    parser.add_argument('--rec_lag', type=int, default=0,
-                        help='Number of timepoints to include as input to recognition model')
-    parser.add_argument('--nlayers_rec', type=int, default=3,
-                        help='Number of layers in recognition model NNs')
-    parser.add_argument('--hidden_dim_rec', type=int, default=25,
-                        help='Number of hidden units in recognition model NNs')
-    parser.add_argument('--nlayers_gen', type=int, default=3,
-                        help='Number of layers in generative model NNs')
-    parser.add_argument('--hidden_dim_gen', type=int, default=64,
-                        help='Number of hidden units in generative model NNs')
-    parser.add_argument('--K', type=int, default=8,
-                        help='Number of substrategies(Gaussian components in GMM)')
-    parser.add_argument('--C', type=int, default=8,
-                        help='Number of highest-level strategies')
-    parser.add_argument('--add_accel', action='store_true',
-                        help='Add acceleration to states')
-    parser.add_argument('--penalty_eps', type=float, default=None,
-                        help='Penalty on epsilon (control signal noise)')
-    parser.add_argument('--penalty_sigma', type=float, default=None,
-                        help='Penalty on sigma (goal state noise)')
-    parser.add_argument('--penalty_g', type=float, default=None,
-                        help='Penalty for goal states escaping boundary_g.')
-    parser.add_argument('--boundary_g', type=float, default=1.0,
-                        help='Goal state boundary that corresponds to penalty')
-    parser.add_argument('--learning_rate', type=float, default=1e-3,
-                        help='Learning rate for adam optimizer')
-    parser.add_argument('--n_epochs', type=int, default=1000,
-                        help='Number of iterations through the full training set')
-    args = parser.parse_args()
-
-    run_model(**vars(args))
