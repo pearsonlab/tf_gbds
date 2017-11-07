@@ -389,51 +389,52 @@ def get_rec_params_GBDS(obs_dim, lag, num_layers, hidden_dim, penalty_Q,
     return rec_params
 
 
-def get_gen_params_GBDS(obs_dim_agent, obs_dim, add_accel,
-                        yCols_agent, num_layers_rec, hidden_dim, PKLparams,
-                        vel, penalty_eps, penalty_sigma,
-                        boundaries_g, penalty_g, name):
+# def get_gen_params_GBDS(obs_dim_agent, obs_dim, add_accel,
+#                         yCols_agent, num_layers_rec, hidden_dim, PKLparams,
+#                         vel, penalty_eps, penalty_sigma,
+#                         boundaries_g, penalty_g, name):
 
-    with tf.name_scope('get_states_%s' % name):
-        if add_accel:
-            get_states = get_accel
-        else:
-            get_states = get_vel
+#     with tf.name_scope('get_states_%s' % name):
+#         if add_accel:
+#             get_states = get_accel
+#         else:
+#             get_states = get_vel
 
-    with tf.name_scope('gen_mu_%s' % name):
-        NN_postJ_mu, _ = get_network('gen_mu_%s' % name,
-                                     obs_dim_agent * 2,
-                                     obs_dim_agent * 2,
-                                     hidden_dim,
-                                     num_layers_rec,
-                                     PKLparams)
+#     with tf.name_scope('gen_mu_%s' % name):
+#         NN_postJ_mu, _ = get_network('gen_mu_%s' % name,
+#                                      obs_dim_agent * 2,
+#                                      obs_dim_agent * 2,
+#                                      hidden_dim,
+#                                      num_layers_rec,
+#                                      PKLparams)
 
-    with tf.name_scope('gen_sigma_%s' % name):
-        NN_postJ_sigma, _ = get_network('gen_sigma_%s' % name,
-                                        obs_dim_agent * 2,
-                                        (obs_dim_agent * 2)**2,
-                                        hidden_dim,
-                                        num_layers_rec,
-                                        PKLparams)
+#     with tf.name_scope('gen_sigma_%s' % name):
+#         NN_postJ_sigma, _ = get_network('gen_sigma_%s' % name,
+#                                         obs_dim_agent * 2,
+#                                         (obs_dim_agent * 2)**2,
+#                                         hidden_dim,
+#                                         num_layers_rec,
+#                                         PKLparams)
 
-    gen_params = dict(vel=vel[yCols_agent],
-                      yCols=yCols_agent,  # which columns belong to the agent
-                      pen_eps=penalty_eps,
-                      pen_sigma=penalty_sigma,
-                      bounds_g=boundaries_g,
-                      pen_g=penalty_g,
-                      NN_postJ_mu=NN_postJ_mu,
-                      NN_postJ_sigma=NN_postJ_sigma,
-                      get_states=get_states)
+#     gen_params = dict(vel=vel[yCols_agent],
+#                       yCols=yCols_agent,  # which columns belong to the agent
+#                       pen_eps=penalty_eps,
+#                       pen_sigma=penalty_sigma,
+#                       bounds_g=boundaries_g,
+#                       pen_g=penalty_g,
+#                       NN_postJ_mu=NN_postJ_mu,
+#                       NN_postJ_sigma=NN_postJ_sigma,
+#                       get_states=get_states)
 
-    return gen_params
+#     return gen_params
 
 
 def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
                             yCols_agent, nlayers_gen, hidden_dim_gen,
-                            K, C, B, PKLparams,
-                            vel, penalty_eps, penalty_sigma, penalty_A,
-                            boundaries_g, penalty_g, name):
+                            K, C, PKLparams, vel,
+                            penalty_eps, penalty_sigma, penalty_A,
+                            boundaries_g, penalty_g,
+                            clip, clip_range, clip_tol, eta, name):
 
     with tf.name_scope('get_states_%s' % name):
         if add_accel:
@@ -459,12 +460,49 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
                       pen_A=penalty_A,
                       bounds_g=boundaries_g,
                       pen_g=penalty_g,
+                      clip=clip,
+                      clip_range=clip_range,
+                      clip_tol=clip_tol,
+                      eta=eta,
                       get_states=get_states,
                       GMM_net_1=GMM_net_1,
                       GMM_net_2=GMM_net_2,
-                      K=K, C=C, B=B)
+                      K=K, C=C)
 
     return gen_params
+
+
+def initialize_PID_params(player, Dim):
+    PID_params = {}
+    PID_params['unc_Kp'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
+                                       name='unc_Kp_' + player,
+                                       dtype=tf.float32)
+    PID_params['unc_Ki'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
+                                       name='unc_Ki_' + player,
+                                       dtype=tf.float32)
+    PID_params['unc_Kd'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
+                                       name='unc_Kd_' + player,
+                                       dtype=tf.float32)
+    PID_params['unc_eps'] = tf.Variable(
+        initial_value=-11.513 * np.ones((1, Dim)), name='unc_eps_' + player,
+        dtype=tf.float32)
+
+    return PID_params
+
+
+def initialize_Dyn_params(player, RecognitionParams):
+    Dyn_params = {}
+    Dyn_params['A'] = tf.Variable(RecognitionParams['A'], name='A_' + player,
+                                  dtype=tf.float32)
+    Dyn_params['QinvChol'] = tf.Variable(RecognitionParams['QinvChol'],
+                                         name='QinvChol_' + player,
+                                         dtype=tf.float32)
+    Dyn_params['Q0invChol'] = tf.Variable(RecognitionParams['Q0invChol'],
+                                          name='Q0invChol_' + player,
+                                          dtype=tf.float32)
+
+    return Dyn_params
+
 
 # def compile_functions_vb_training(model, learning_rate, add_pklayers=False,
 #                                   joint_spikes=False, cap_noise=False,
@@ -640,6 +678,24 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
         g_b.append(g)
 
     return p, g_b
+
+
+def generator(arrays, batch_size):
+    size = len(arrays)
+    n_batch = math.ceil(size / batch_size)
+    start = 0
+    while True:
+        batches = []
+        for _ in range(n_batch):
+            stop = start + batch_size
+            diff = stop - size
+            if diff <= 0:
+                batch = np.array(arrays[start:stop])
+                start = stop
+            else:
+                batch = np.array(arrays[start:])
+            batches.append(batch)
+        yield batches
 
 
 class DatasetTrialIndexIterator(object):

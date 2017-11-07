@@ -1,4 +1,3 @@
-import argparse
 from tf_gbds.utils import *
 # from tf_gbds.prep_GAN import prep_GAN_data, prep_injection_conditions
 import sys
@@ -26,7 +25,7 @@ SYNTHETIC_DATA = True
 P1_DIM = 1
 P2_DIM = 2
 
-REC_LAG = 0
+REC_LAG = 10
 REC_NLAYERS = 3
 REC_HIDDEN_DIM = 25
 
@@ -37,7 +36,8 @@ C = 8
 
 ADD_ACCEL = False
 CLIP = True
-CLIP_RANGE = [-1.+1e-5, 1-1e-5]
+CLIP_RANGE = 1.
+CLIP_TOL = 1e-5
 ETA = 1e-6
 EPS_INIT = 1e-5
 EPS_TRAINABLE = False
@@ -103,6 +103,8 @@ flags.DEFINE_boolean('add_accel', ADD_ACCEL,
 flags.DEFINE_boolean('clip', CLIP, 'Is the control signal censored?')
 flags.DEFINE_float('clip_range', CLIP_RANGE,
                    'The range beyond which control signals are censored')
+flags.DEFINE_float('clip_tol', CLIP_TOL,
+                   'The tolerance of signal censoring')
 flags.DEFINE_float('eta', ETA, 'The scale of control signal noise')
 flags.DEFINE_float('eps_init', EPS_INIT,
                    'Initial value of control signal variance')
@@ -159,6 +161,7 @@ def build_hyperparameter_dict(flags):
     d['add_accel'] = flags.add_accel
     d['clip'] = flags.clip
     d['clip_range'] = flags.clip_range
+    d['clip_tol'] = flags.clip_tol
     d['eta'] = flags.eta
     d['eps_init'] = flags.eps_init
     d['eps_trainable'] = flags.eps_trainable
@@ -172,9 +175,9 @@ def build_hyperparameter_dict(flags):
 
     d['seed'] = flags.seed
     d['train_ratio'] = flags.train_ratio
-    d['optimizer'] = flags.optimizer
+    d['opt'] = flags.optimizer
     d['learning_rate'] = flags.learning_rate
-    d['num_epochs'] = flags.num_epochs
+    d['n_epochs'] = flags.num_epochs
     d['B'] = flags.batch_size
 
     return d
@@ -215,37 +218,7 @@ def load_data(hps):
 
     return train_data, val_data
 
-def initialize_PID_params(player, Dim):
-    PID_params = {}
-    PID_params['unc_Kp'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
-                                       name='unc_Kp_' + player,
-                                       dtype=tf.float32)
-    PID_params['unc_Ki'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
-                                       name='unc_Ki_' + player,
-                                       dtype=tf.float32)
-    PID_params['unc_Kd'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
-                                       name='unc_Kd_' + player,
-                                       dtype=tf.float32)
-    PID_params['unc_eps'] = tf.Variable(
-        initial_value=-11.513 * np.ones((1, Dim)), name='unc_eps_' + player,
-        dtype=tf.float32)
-
-    return PID_params
-
-def initialize_Dyn_params(player, RecognitionParams):
-    Dyn_params = {}
-    Dyn_params['A'] = tf.Variable(RecognitionParams['A'], name='A_' + player,
-                                  dtype=tf.float32)
-    Dyn_params['QinvChol'] = tf.Variable(RecognitionParams['QinvChol'],
-                                         name='QinvChol_' + player,
-                                         dtype=tf.float32)
-    Dyn_params['Q0invChol'] = tf.Variable(RecognitionParams['Q0invChol'],
-                                          name='Q0invChol_' + player,
-                                          dtype=tf.float32)
-
-    return Dyn_params
-
-def model_setup(hps):
+def run_model(model_type, hps):
     if not os.path.exists(hps.model_dir):
         os.makedirs(hps.model_dir)
 
@@ -278,31 +251,33 @@ def model_setup(hps):
     with tf.name_scope('gen_goalie_params'):
         gen_params_goalie = get_gen_params_GBDS_GMM(
             hps.p1_dim, total_dim, hps.add_accel, p1_cols, hps.gen_nlayers,
-            hps.gen_hidden_dim, hps.K, hps.C, hps.B, PKLparams, vel,
+            hps.gen_hidden_dim, hps.K, hps.C, PKLparams, vel,
             hps.eps_penalty, hps.sigma_penalty, hps.A_penalty,
-            hps.goal_bound, hps.goal_bound_penalty, name='Goalie')
+            hps.goal_bound, hps.goal_bound_penalty,
+            hps.clip, hps.clip_range, hps.clip_tol, hps.eta, name='Goalie')
     with tf.name_scope('gen_ball_params'):
         gen_params_ball = get_gen_params_GBDS_GMM(
             hps.p2_dim, total_dim, hps.add_accel, p2_cols, hps.gen_nlayers,
-            hps.gen_hidden_dim, hps.K, hps.C, hps.B, PKLparams, vel,
+            hps.gen_hidden_dim, hps.K, hps.C, PKLparams, vel,
             hps.eps_penalty, hps.sigma_penalty, hps.A_penalty,
-            hps.goal_bound, hps.goal_bound_penalty, name='Ball')
+            hps.goal_bound, hps.goal_bound_penalty,
+            hps.clip, hps.clip_range, hps.clip_tol, hps.eta, name='Ball')
 
     PID_params_goalie = initialize_PID_params('Goalie', hps.p1_dim)
     PID_params_ball = initialize_PID_params('Ball', hps.p2_dim)
     Dyn_params_u = initialize_Dyn_params('U', rec_params_u)
     Dyn_params_g = initialize_Dyn_params('G', rec_params_g)
 
-    Y_ph = tf.placeholder(tf.float32, shape=(hps.B, None, total_dim),
+    Y_ph = tf.placeholder(tf.float32, shape=(None, None, total_dim),
                           name='data')
 
     with tf.name_scope('gen_g'):
         p_g = G.GBDS_g_all(gen_params_goalie, gen_params_ball, total_dim,
-                           Y_ph, value=tf.ones([hps.B, total_dim]))
+                           Y_ph, value=tf.zeros_like(Y_ph))
     with tf.name_scope('gen_u'):
         p_u = G.GBDS_u_all(gen_params_goalie, gen_params_ball, p_g, Y_ph,
                            total_dim, PID_params_goalie, PID_params_ball,
-                           value=tf.ones([hps.B, total_dim]))
+                           value=tf.zeros_like(Y_ph))
 
     with tf.name_scope('rec_g'):
         q_g = R.SmoothingPastLDSTimeSeries(rec_params_g, Y_ph, total_dim,
@@ -314,9 +289,13 @@ def model_setup(hps):
                                            train_ntrials)
 
     # Y_pred_t = Y_(t-1)+max_vel*tanh(u_t) ,where Y_pred_0 = Y_0
-    # Y_pred = tf.concat(
-    #     [Y_ph[:, 0], (Y_ph[:, :-1] + tf.reshape(vel, [1, total_dim]) *
-    #         tf.clip_by_value(p_u[:, 1:], -1, 1))], 1, name='Y_pred')
+    if hps.clip:
+        Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1), (Y_ph[:, :-1] +
+            tf.reshape(vel, [1, total_dim]) * tf.clip_by_value(p_u[:, 1:],
+                -hps.clip_range, hps.clip_range))], 1, name='Y')
+    else:
+        Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1), (Y_ph[:, :-1] +
+            tf.reshape(vel, [1, total_dim]) * p_u[:, 1:])], 1, name='Y')
 
     print('--------------Generative Params----------------')
     if hps.eps_penalty is not None:
@@ -332,7 +311,29 @@ def model_setup(hps):
     print('Hidden Dims (VILDS recognition): %i' % hps.rec_hidden_dim)
     print('Input lag (VILDS recognition): %i' % hps.rec_lag)
 
-# def train:
+    if model_type == 'VB_KLqp':
+        batches = next(generator(train_data, hps.B))
+        n_batches = math.ceil(len(train_data) / hps.B)
+        var_list = (p_g.getParams() + p_u.getParams() +
+                    q_g.getParams() + q_u.getParams())
+        if hps.opt == 'Adam':
+            optimizer = tf.train.AdamOptimizer(hps.learning_rate)
+
+        inference = KLqp({p_g:q_g, p_u:q_u}, data={Y: Y_ph})
+        inference.initialize(var_list=var_list,
+                             optimizer=optimizer)
+
+        sess = ed.get_session()
+        tf.global_variables_initializer().run()
+        train_writer = tf.summary.FileWriter(hps.model_dir, sess.graph)
+
+        for _ in range(hps.n_epochs):
+            for batch in batches:
+                info_dict = inference.update({Y_ph: batch})
+                inference.print_progress(info_dict)
+
+        saver = tf.train.Saver()
+        saver.save(sess, hps.model_dir)
 
 # def write_model_samples:
 
@@ -342,9 +343,7 @@ def main(_):
     d = build_hyperparameter_dict(FLAGS)
     hps = hps_dict_to_obj(d)  # hyper-parameters
     model_type = FLAGS.model_type
-
-    if model_type == 'VB_KLqp':
-        model_setup(hps)
+    run_model(model_type, hps)
 
 if __name__ == "__main__":
     tf.app.run()

@@ -23,7 +23,7 @@ def blk_tridiag_chol(A, B):
         * R[1] - [T-1 x n x n] tensor of (lower) 1st block off-diagonal
         elements of Cholesky
     """
-    def _step(acc,  inputs):
+    def _step(acc, inputs):
         """
         Compute the Cholesky decomposition of a symmetric block tridiagonal
         matrix.
@@ -33,16 +33,23 @@ def blk_tridiag_chol(A, B):
         LL, _ = acc
         AA, BB = inputs
 
-        CC = tf.transpose(tf.matrix_solve(LL, BB))
-        DD = AA - tf.matmul(CC, tf.transpose(CC))
+        CC = tf.transpose(tf.matrix_solve(LL, BB), perm=[0, 2, 1])
+        DD = AA - tf.matmul(CC, tf.transpose(CC, perm=[0, 2, 1]))
         LL = tf.cholesky(DD)
+
         return [LL, CC]
 
-    L = tf.cholesky(A[0])
-    C = tf.zeros_like(B[0])
+    L = tf.cholesky(A[:, 0])
+    C = tf.zeros_like(B[:, 0])
 
-    R = tf.scan(_step, [A[1:], B], initializer=[L, C])
-    R[0] = tf.concat([tf.expand_dims(L, 0), R[0]], 0)
+    R = tf.scan(_step,
+                [tf.transpose(A[:, 1:], perm=[1, 0, 2, 3]),
+                 tf.transpose(B, perm=[1, 0, 2, 3])],
+                initializer=[L, C])
+    R[0] = tf.concat([tf.expand_dims(L, 1),
+                      tf.transpose(R[0], perm=[1, 0, 2, 3])], 1)
+    R[1] = tf.transpose(R[1], perm=[1, 0, 2, 3])
+
     return R
 
 
@@ -69,20 +76,29 @@ def blk_chol_inv(A, B, b, lower=True, transpose=False):
     def _step(acc, inputs):
         x = acc
         A, B, b = inputs
+
         return tf.matrix_solve(A, b - tf.matmul(B, x))
 
     if transpose:
-        A = tf.transpose(A, perm=[0, 2, 1])
-        B = tf.transpose(B, perm=[0, 2, 1])
+        A = tf.transpose(A, perm=[0, 1, 3, 2])
+        B = tf.transpose(B, perm=[0, 1, 3, 2])
     if lower:
-        x0 = tf.matrix_solve(A[0], b[0])
-        X = tf.scan(_step, [A[1:], B, b[1:]], initializer=x0)
-        X = tf.concat([tf.expand_dims(x0, 0), X], 0)
+        x0 = tf.matrix_solve(A[:, 0], b[:, 0])
+        X = tf.scan(_step, [tf.transpose(A[:, 1:], perm=[1, 0, 2, 3]),
+                            tf.transpose(B, perm=[1, 0, 2, 3]),
+                            tf.transpose(b[:, 1:], perm=[1, 0, 2, 3])],
+                    initializer=x0)
+        X = tf.transpose(X, perm=[1, 0, 2, 3])
+        X = tf.concat([tf.expand_dims(x0, 1), X], 1)
     else:
-        xN = tf.matrix_solve(A[-1], b[-1])
-        X = tf.scan(_step, [A[:-1][::-1], B[::-1], b[:-1][::-1]],
+        xN = tf.matrix_solve(A[:, -1], b[:, -1])
+        X = tf.scan(_step, [tf.transpose(A[:, :-1, ::-1], perm=[1, 0, 2, 3]),
+                            tf.transpose(B[:, ::-1], perm=[1, 0, 2, 3]),
+                            tf.transpose(b[:, :-1, ::-1], perm=[1, 0, 2, 3])],
                     initializer=xN)
-        X = tf.concat([tf.expand_dims(xN, 0), X], 0)[::-1]
+        X = tf.transpose(X, perm=[1, 0, 2, 3])
+        X = tf.concat([tf.expand_dims(xN, 1), X], 1)[:, ::-1]
+
     return X
 
 
@@ -107,17 +123,27 @@ def blk_chol_mtimes(A, B, x, lower=True, transpose=False):
     """
     def _lower_step(acc, input):
         A, B, x1, x2 = input
+
         return tf.matmul(A, x1) + tf.matmul(B, x2)
 
     if transpose:
-        A = tf.transpose(A, perm=[0, 2, 1])
-        B = tf.transpose(B, perm=[0, 2, 1])
+        A = tf.transpose(A, perm=[0, 1, 3, 2])
+        B = tf.transpose(B, perm=[0, 1, 3, 2])
     if lower:
-        b0 = tf.matmul(A[0], x[0])
-        X = tf.scan(_lower_step, [A[1:], B, x[1:], x[0:-1]], initializer=b0)
-        X = tf.concat([tf.expand_dims(b0, 0), X], 0)
+        b0 = tf.matmul(A[:, 0], x[:, 0])
+        X = tf.scan(_lower_step, [tf.transpose(A[:, 1:], perm=[1, 0, 2, 3]),
+                                  tf.transpose(B, perm=[1, 0, 2, 3]),
+                                  tf.transpose(x[:, 1:], perm=[1, 0, 2, 3]),
+                                  tf.transpose(x[:, 0:-1], perm=[1, 0, 2, 3])],
+                    initializer=b0)
+        X = tf.concat([tf.expand_dims(b0, 1), X], 1)
     else:
-        bN = tf.matmul(A[-1], x[-1])
-        X = tf.scan(_lower_step, [A[0:-1], B, x[0:-1], x[1:]], initializer=bN)
-        X = tf.concat([X, tf.expand_dims(bN, 0)], 0)
+        bN = tf.matmul(A[:, -1], x[:, -1])
+        X = tf.scan(_lower_step, [tf.transpose(A[:, 0:-1], perm=[1, 0, 2, 3]),
+                                  tf.transpose(B, perm=[1, 0, 2, 3]),
+                                  tf.transpose(x[:, 0:-1], perm=[1, 0, 2, 3]),
+                                  tf.transpose(x[:, 1:], perm=[1, 0, 2, 3])],
+                    initializer=bN)
+        X = tf.concat([X, tf.expand_dims(bN, 1)], 1)
+
     return X
