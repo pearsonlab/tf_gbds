@@ -1,20 +1,17 @@
 import tensorflow as tf
 import math
-from os.path import expanduser
+from os.path import expanduser, join
 import h5py
 from scipy.stats import norm
 import numpy as np
 import pandas as pd
 from tensorflow.contrib.keras import layers as keras_layers
 from tensorflow.contrib.keras import constraints, models
-# import theano
-# import theano.tensor as T
-# import lasagne
-# from lasagne.nonlinearities import rectify, linear
 from matplotlib.colors import Normalize
 # import sys
 # sys.path.append(expanduser('~/code/gbds/code/'))
 from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
+from edward import KLqp
 
 
 class set_cbar_zero(Normalize):
@@ -389,46 +386,6 @@ def get_rec_params_GBDS(obs_dim, lag, num_layers, hidden_dim, penalty_Q,
     return rec_params
 
 
-# def get_gen_params_GBDS(obs_dim_agent, obs_dim, add_accel,
-#                         yCols_agent, num_layers_rec, hidden_dim, PKLparams,
-#                         vel, penalty_eps, penalty_sigma,
-#                         boundaries_g, penalty_g, name):
-
-#     with tf.name_scope('get_states_%s' % name):
-#         if add_accel:
-#             get_states = get_accel
-#         else:
-#             get_states = get_vel
-
-#     with tf.name_scope('gen_mu_%s' % name):
-#         NN_postJ_mu, _ = get_network('gen_mu_%s' % name,
-#                                      obs_dim_agent * 2,
-#                                      obs_dim_agent * 2,
-#                                      hidden_dim,
-#                                      num_layers_rec,
-#                                      PKLparams)
-
-#     with tf.name_scope('gen_sigma_%s' % name):
-#         NN_postJ_sigma, _ = get_network('gen_sigma_%s' % name,
-#                                         obs_dim_agent * 2,
-#                                         (obs_dim_agent * 2)**2,
-#                                         hidden_dim,
-#                                         num_layers_rec,
-#                                         PKLparams)
-
-#     gen_params = dict(vel=vel[yCols_agent],
-#                       yCols=yCols_agent,  # which columns belong to the agent
-#                       pen_eps=penalty_eps,
-#                       pen_sigma=penalty_sigma,
-#                       bounds_g=boundaries_g,
-#                       pen_g=penalty_g,
-#                       NN_postJ_mu=NN_postJ_mu,
-#                       NN_postJ_sigma=NN_postJ_sigma,
-#                       get_states=get_states)
-
-#     return gen_params
-
-
 def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
                             yCols_agent, nlayers_gen, hidden_dim_gen,
                             K, PKLparams, vel,
@@ -467,7 +424,7 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
     return gen_params
 
 
-def initialize_PID_params(player, Dim):
+def init_PID_params(player, Dim):
     PID_params = {}
     PID_params['unc_Kp'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
                                        name='unc_Kp_' + player,
@@ -485,7 +442,7 @@ def initialize_PID_params(player, Dim):
     return PID_params
 
 
-def initialize_Dyn_params(player, RecognitionParams):
+def init_Dyn_params(player, RecognitionParams):
     Dyn_params = {}
     Dyn_params['A'] = tf.Variable(RecognitionParams['A'], name='A_' + player,
                                   dtype=tf.float32)
@@ -627,6 +584,7 @@ def initialize_Dyn_params(player, RecognitionParams):
 
 #     return gan_g_train_fn, gan_d_train_fn
 
+
 def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
              eps=1e-5, Kp=1, Ki=0, Kd=0,
              vel=1e-2 * np.ones((3))):
@@ -678,6 +636,7 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
 def batch_generator(arrays, batch_size):
     size = len(arrays)
     n_batch = math.ceil(size / batch_size)
+    np.random.shuffle(arrays)
     start = 0
     while True:
         batches = []

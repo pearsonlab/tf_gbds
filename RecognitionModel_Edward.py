@@ -108,7 +108,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
 
         with tf.name_scope('noise_penalty'):
             if 'p' in RecognitionParams:
-                self.p = tf.Variable(RecognitionParams['p'],
+                self.p = tf.constant(RecognitionParams['p'],
                                      name='p', dtype=tf.float32)
             else:
                 self.p = None
@@ -184,7 +184,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                         initializer=tf.zeros([self.B]))), axis=-1)
 
     def _sample_n(self, n, seed=None):
-        with tf.name_scope('posterior_samples'):
+        with tf.name_scope('samples'):
             result = tf.map_fn(self.getSample, tf.zeros([n, self.B]))
         return tf.squeeze(result, -1)
 

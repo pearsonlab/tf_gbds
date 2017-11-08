@@ -25,11 +25,11 @@ class GBDS_g_all(RandomVariable, Distribution):
         yDim_ball = len(self.yCols_ball)
         yDim_goalie = len(self.yCols_goalie)
 
-        self.g_goalie = GBDS_g(GenerativeParams_goalie, yDim_goalie, yDim, y,
-                               value=tf.gather(value, self.yCols_goalie,
+        self.goalie = GBDS_g(GenerativeParams_goalie, yDim_goalie, yDim, y,
+                             value=tf.gather(value, self.yCols_goalie,
                                                axis=-1))
-        self.g_ball = GBDS_g(GenerativeParams_ball, yDim_ball, yDim, y,
-                             value=tf.gather(value, self.yCols_ball, axis=-1))
+        self.ball = GBDS_g(GenerativeParams_ball, yDim_ball, yDim, y,
+                           value=tf.gather(value, self.yCols_ball, axis=-1))
 
         super(GBDS_g_all, self).__init__(
             name=name, value=value, dtype=dtype,
@@ -42,15 +42,15 @@ class GBDS_g_all(RandomVariable, Distribution):
         self._kwargs['yDim'] = yDim
 
     def _log_prob(self, value):
-        log_prob_ball = self.g_ball.log_prob(
+        log_prob_ball = self.ball.log_prob(
             tf.gather(value, self.yCols_ball, axis=-1))
-        log_prob_goalie = self.g_goalie.log_prob(
+        log_prob_goalie = self.goalie.log_prob(
             tf.gather(value, self.yCols_goalie, axis=-1))
 
         return log_prob_ball + log_prob_goalie
 
     def getParams(self):
-        return self.g_ball.getParams() + self.g_goalie.getParams()
+        return self.ball.getParams() + self.goalie.getParams()
 
 class GBDS_u_all(RandomVariable, Distribution):
     def __init__(self, GenerativeParams_goalie, GenerativeParams_ball, g, y,
@@ -70,13 +70,13 @@ class GBDS_u_all(RandomVariable, Distribution):
         g_ball = tf.gather(self.g, self.yCols_ball, axis=-1)
         g_goalie = tf.gather(self.g, self.yCols_goalie, axis=-1)
 
-        self.u_goalie = GBDS_u(GenerativeParams_goalie, g_goalie, y,
-                               yDim_goalie, PID_params_goalie,
-                               value=tf.gather(value, self.yCols_goalie,
+        self.goalie = GBDS_u(GenerativeParams_goalie, g_goalie, y,
+                             yDim_goalie, PID_params_goalie,
+                             value=tf.gather(value, self.yCols_goalie,
                                                axis=-1))
-        self.u_ball = GBDS_u(GenerativeParams_ball, g_ball, y,
-                             yDim_ball, PID_params_ball,
-                             value=tf.gather(value, self.yCols_ball, axis=-1))
+        self.ball = GBDS_u(GenerativeParams_ball, g_ball, y,
+                           yDim_ball, PID_params_ball,
+                           value=tf.gather(value, self.yCols_ball, axis=-1))
 
         super(GBDS_u_all, self).__init__(
             name=name, value=value, dtype=dtype,
@@ -92,14 +92,14 @@ class GBDS_u_all(RandomVariable, Distribution):
         self._kwargs['PID_params_ball'] = PID_params_ball
 
     def _log_prob(self, value):
-        log_prob_ball = self.u_ball.log_prob(
+        log_prob_ball = self.ball.log_prob(
             tf.gather(value, self.yCols_ball, axis=-1))
-        log_prob_goalie = self.u_goalie.log_prob(
+        log_prob_goalie = self.goalie.log_prob(
             tf.gather(value, self.yCols_goalie, axis=-1))
         return log_prob_ball + log_prob_goalie
 
     def getParams(self):
-        return self.u_ball.getParams() + self.u_goalie.getParams()
+        return self.ball.getParams() + self.goalie.getParams()
 
 class GBDS_u(RandomVariable, Distribution):
     """
