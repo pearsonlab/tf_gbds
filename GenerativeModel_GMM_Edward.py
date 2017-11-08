@@ -4,7 +4,6 @@ import numpy as np
 from edward.models import RandomVariable
 from tensorflow.contrib.distributions import Categorical, Distribution, Normal
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
-from tensorflow.contrib.bayesflow import entropy
 
 
 # def logsumexp(x, axis=None):
@@ -382,30 +381,15 @@ class GBDS_g(RandomVariable, Distribution):
             self.yDim = yDim
             self.y = y
             self.B = tf.shape(y)[0]  # batch size
-            self.C = GenerativeParams['C']  # number of highest-level strategies
-            self.K = GenerativeParams['K']  # number of substrategies
 
         with tf.name_scope('get_states'):
             # function that calculates states from positions
             self.get_states = GenerativeParams['get_states']
 
-        with tf.name_scope('pi'):
-            # initial distribution of HMM
-            self.log_pi = tf.Variable(initial_value=(np.log(1 / self.K) *
-                np.ones((self.C, self.K, 1))), name='log_pi',
-                dtype=tf.float32)
-            self.pi = tf.nn.softmax(self.log_pi, dim=1, name='pi')
-
-        with tf.name_scope('phi'):
-            # distribution of highest-level strategies
-            self.log_phi = tf.Variable(initial_value=(np.log(1 / self.C) *
-                np.ones((self.C, 1))), name='log_phi', dtype=tf.float32)
-            self.phi = tf.nn.softmax(self.log_phi, dim=0, name='phi')
-
         with tf.name_scope('GMM_NN'):
+            self.GMM_k = GenerativeParams['GMM_k']  # number of GMM components
             # GMM neural networks
-            self.GMM_mu_lambda = GenerativeParams['GMM_net_1']
-            self.GMM_A = GenerativeParams['GMM_net_2']
+            self.GMM_net = GenerativeParams['GMM_net']
 
         with tf.name_scope('goal_state_penalty'):
             # penalty on sigma (noise on goal state)
@@ -427,13 +411,6 @@ class GBDS_g(RandomVariable, Distribution):
                     self.pen_g = GenerativeParams['pen_g']
                 else:
                     self.pen_g = None
-
-        with tf.name_scope('transition_matrices_penalty'):
-            # penalty on transition matrices of HMM
-            if GenerativeParams['pen_A'] is not None:
-                self.pen_A = GenerativeParams['pen_A']
-            else:
-                self.pen_A = None
 
         with tf.name_scope('velocity'):                    
             # velocity for each observation dimension (of all agents)
@@ -469,10 +446,10 @@ class GBDS_g(RandomVariable, Distribution):
         """
         if training and post_g is None:
             raise Exception(
-                "Must provide sample of g from posterior during training")
+                'Must provide sample of g from posterior during training')
 
         with tf.name_scope('states'):
-            # get states from position   
+            # get states from position
             states = self.get_states(Y, max_vel=self.all_vel)
             if extra_conds is not None:
                 states = tf.concat([states, extra_conds], axis=-1)
@@ -480,34 +457,21 @@ class GBDS_g(RandomVariable, Distribution):
         with tf.name_scope('get_GMM_params'):
             with tf.name_scope('mu'):
                 all_mu = tf.reshape(
-                    self.GMM_mu_lambda(states)[:, :, :(self.yDim * self.K)],
-                    [self.B, -1, self.K, self.yDim], name='reshape_mu')
+                    self.GMM_net(states)[:, :, :(self.yDim * self.GMM_k)],
+                    [self.B, -1, self.GMM_k, self.yDim], name='reshape_mu')
 
             with tf.name_scope('lambda'):
                 all_lambda = tf.nn.softplus(tf.reshape(
-                    self.GMM_mu_lambda(states)[:, :, (self.yDim * self.K):],
-                    [self.B, -1, self.K, self.yDim], name='reshape_lambda'),
-                    name='softplus_lambda')
+                    self.GMM_net(states)[:, :, (self.yDim * self.GMM_k):(2 *
+                        self.yDim * self.GMM_k)],
+                    [self.B, -1, self.GMM_k, self.yDim],
+                    name='reshape_lambda'), name='softplus_lambda')
 
             with tf.name_scope('w'):
-                with tf.name_scope('A'):
-                    all_A = tf.nn.softmax(tf.reshape(
-                        self.GMM_A(states)[:, :-1],
-                        [self.B, -1, self.C, self.K, self.K],
-                        name='reshape_A'), dim=3, name='softmax_A')
-                with tf.name_scope('w_k'):
-                    pi_repeat = tf.tile(tf.expand_dims(self.pi, 0),
-                                        [self.B, 1, 1, 1], name='pi_repeat')
-                    w_ck = tf.concat(
-                        [tf.expand_dims(pi_repeat, 0),
-                        tf.scan(lambda a, x: tf.matmul(x, a),
-                            tf.transpose(all_A, [1, 0, 2, 3, 4]),
-                            initializer=pi_repeat, name='cum_mult_A')],
-                        0, name='w_ck')
-                    w_k = tf.transpose(
-                        tf.reduce_sum(tf.multiply(w_ck,
-                            tf.expand_dims(self.phi, -1)),
-                        axis=2, name='integrate_c'), [1, 0, 2, 3], name='w_k')
+                all_w = tf.nn.softmax(tf.reshape(
+                    self.GMM_net(states)[:, :, (2 * self.yDim * self.GMM_k):],
+                    [self.B, -1, self.GMM_k],
+                    name='reshape_w'), dim=-1, name='softmax_w')
 
         with tf.name_scope('next_g'):
                 # Draw next goals based on force
@@ -527,7 +491,7 @@ class GBDS_g(RandomVariable, Distribution):
             # else:
             #     raise Exception("Goal states must be provided " +
             #                     "(either posterior or generated)")
-        return (all_mu, all_lambda, all_A, w_k, next_g)
+        return (all_mu, all_lambda, all_w, next_g)
 
     def sample_GMM(self, mu, lmbda, w):
         """
@@ -541,8 +505,7 @@ class GBDS_g(RandomVariable, Distribution):
         def select_components(acc, inputs):
             sub_mu, sub_lambda, w = inputs
             z = tf.range(self.K, name='classes')
-            p = tf.multinomial(tf.log(tf.squeeze(w, -1)), 1,
-                               name='draw')
+            p = tf.multinomial(tf.log(w), 1, name='draw')
             component = z[tf.cast(p[0, 0], tf.int32)]
 
             return sub_mu[:, component, :], sub_lambda[:, component, :]
@@ -550,22 +513,24 @@ class GBDS_g(RandomVariable, Distribution):
         (mu_k, lambda_k) = tf.scan(
             select_components, [tf.transpose(mu, [1, 0, 2, 3]),
             tf.transpose(lmbda, [1, 0, 2, 3]),
-            tf.transpose(w, [1, 0, 2, 3])],
+            tf.transpose(w, [1, 0, 2])],
             initializer=(tf.zeros([self.B, self.yDim]),
                          tf.zeros([self.B, self.yDim])),
             name='select_components')
+        mu_k = tf.transpose(mu_k, perm=[1, 0, 2])
+        lambda_k = tf.transpose(lambda_k, perm=[1, 0, 2])
         updates = {}
 
         return (mu_k, lambda_k), updates
 
     def _log_prob(self, value):
         with tf.name_scope('get_params_g_pred'):
-            all_mu, all_lambda, all_A, all_w, g_pred = self.get_preds(
-                self.y[:, :-1, :], training=True, post_g=value)
+            all_mu, all_lambda, all_w, g_pred = self.get_preds(
+                self.y[:, :-1], training=True, post_g=value)
 
         LogDensity = 0.0
         with tf.name_scope('goal_state_loss'):
-            w_brdcst = tf.reshape(all_w, [self.B, -1, self.K, 1],
+            w_brdcst = tf.reshape(all_w, [self.B, -1, self.GMM_k, 1],
                                   name='reshape_w')
             gmm_res_g = (tf.reshape(value[:, 1:], [self.B, -1, 1, self.yDim],
                                     name='reshape_sample') - g_pred)
@@ -577,15 +542,6 @@ class GBDS_g(RandomVariable, Distribution):
                          tf.log(tf.reshape(self.sigma, [1, 1, 1, -1])))
             LogDensity += tf.reduce_sum(tf.reduce_logsumexp(tf.reduce_sum(
                 gmm_term, axis=-1), axis=-1), axis=-1)
-
-        with tf.name_scope('penalty_A'):
-            if self.pen_A is not None:
-                # penalize columnwise entropy of transition matrices A's
-                LogDensity -= (self.pen_A * tf.recude_sum(
-                    entropy.entropy_shannon(
-                        probs=tf.transpose(all_A, [0, 1, 2, 4, 3]),
-                        name='columnwise_entropy'), axis=[1, 2, 3, 4],
-                    name='sum_entropy'))
 
         with tf.name_scope('goal_and_control_penalty'):
             if self.pen_g is not None:
@@ -606,6 +562,5 @@ class GBDS_g(RandomVariable, Distribution):
         '''
         Return the learnable parameters of the model
         '''
-        rets = (self.GMM_mu_lambda.variables + self.GMM_A.variables +
-                [self.log_pi] + [self.log_phi])
+        rets = self.GMM_net.variables
         return rets

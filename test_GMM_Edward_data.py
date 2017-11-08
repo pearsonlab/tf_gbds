@@ -31,8 +31,7 @@ REC_HIDDEN_DIM = 25
 
 GEN_NLAYERS = 3
 GEN_HIDDEN_DIM = 64
-K = 20
-C = 8
+K = 8
 
 ADD_ACCEL = False
 CLIP = True
@@ -45,7 +44,6 @@ EPS_PENALTY = None
 SIGMA_INIT = 1e-5
 SIGMA_TRAINABLE = False
 SIGMA_PENALTY = None
-A_PENALTY = None
 # model class allows for having 2 boundaries with different penalties,
 # but we later found that unnecessary, so the CLI only takes on penalty.
 # We left the possibility for 2 penalties in the model class just in case
@@ -96,7 +94,6 @@ flags.DEFINE_integer('gen_hidden_dim', GEN_HIDDEN_DIM,
                      'Number of hidden units in each (dense) layer of \
                      generative model neural networks')
 flags.DEFINE_integer('K', K, 'Number of sub-strategies (components of GMM)')
-flags.DEFINE_integer('C', C, 'Number of highest-level strategies')
 
 flags.DEFINE_boolean('add_accel', ADD_ACCEL,
                      'Should acceleration be added to states?')
@@ -118,8 +115,6 @@ flags.DEFINE_boolean('sigma_trainable', SIGMA_TRAINABLE,
                      'Is sigma trainable?')
 flags.DEFINE_float('sigma_penalty', SIGMA_PENALTY,
                    'Penalty on goal state variance')
-flags.DEFINE_float('A_penalty', A_PENALTY,
-                   'Penalty on the columnwise entropy of transition matrices')
 flags.DEFINE_float('goal_bound', GOAL_BOUNDARY, 'Goal state boundaries')
 flags.DEFINE_float('goal_bound_penalty', GOAL_BOUND_PENALTY,
                    'Penalty for goal states escaping boundaries')
@@ -156,7 +151,6 @@ def build_hyperparameter_dict(flags):
     d['gen_nlayers'] = flags.gen_nlayers
     d['gen_hidden_dim'] = flags.gen_hidden_dim
     d['K'] = flags.K
-    d['C'] = flags.C
 
     d['add_accel'] = flags.add_accel
     d['clip'] = flags.clip
@@ -169,7 +163,6 @@ def build_hyperparameter_dict(flags):
     d['sigma_init'] = flags.sigma_init
     d['sigma_trainable'] = flags.sigma_trainable
     d['sigma_penalty'] = flags.sigma_penalty
-    d['A_penalty'] = flags.A_penalty
     d['goal_bound'] = flags.goal_bound
     d['goal_bound_penalty'] = flags.goal_bound_penalty
 
@@ -251,15 +244,15 @@ def run_model(model_type, hps):
     with tf.name_scope('gen_goalie_params'):
         gen_params_goalie = get_gen_params_GBDS_GMM(
             hps.p1_dim, total_dim, hps.add_accel, p1_cols, hps.gen_nlayers,
-            hps.gen_hidden_dim, hps.K, hps.C, PKLparams, vel,
-            hps.eps_penalty, hps.sigma_penalty, hps.A_penalty,
+            hps.gen_hidden_dim, hps.K, PKLparams, vel,
+            hps.eps_penalty, hps.sigma_penalty,
             hps.goal_bound, hps.goal_bound_penalty,
             hps.clip, hps.clip_range, hps.clip_tol, hps.eta, name='Goalie')
     with tf.name_scope('gen_ball_params'):
         gen_params_ball = get_gen_params_GBDS_GMM(
             hps.p2_dim, total_dim, hps.add_accel, p2_cols, hps.gen_nlayers,
-            hps.gen_hidden_dim, hps.K, hps.C, PKLparams, vel,
-            hps.eps_penalty, hps.sigma_penalty, hps.A_penalty,
+            hps.gen_hidden_dim, hps.K, PKLparams, vel,
+            hps.eps_penalty, hps.sigma_penalty,
             hps.goal_bound, hps.goal_bound_penalty,
             hps.clip, hps.clip_range, hps.clip_tol, hps.eta, name='Ball')
 
@@ -304,15 +297,14 @@ def run_model(model_type, hps):
         print('Penalty on goal state variance, sigma (Generative): %i' % hps.sigma_penalty)
     if hps.goal_bound_penalty is not None:
         print('Penalty on goal state leaving boundary (Generative): %i' % hps.goal_bound_penalty)
-    print('Number of Substrategies: %i' % hps.K)
-    print('Number of Highest-level Strategies: %i' % hps.C)
+    print('Number of GMM components: %i' % hps.K)
     print('--------------Recognition Params---------------')
     print('Num Layers (VILDS recognition): %i' % hps.rec_nlayers)
     print('Hidden Dims (VILDS recognition): %i' % hps.rec_hidden_dim)
     print('Input lag (VILDS recognition): %i' % hps.rec_lag)
 
     if model_type == 'VB_KLqp':
-        batches = next(generator(train_data, hps.B))
+        batches = next(batch_generator(train_data, hps.B))
         n_batches = math.ceil(len(train_data) / hps.B)
         var_list = (p_g.getParams() + p_u.getParams() +
                     q_g.getParams() + q_u.getParams())
@@ -320,7 +312,8 @@ def run_model(model_type, hps):
             optimizer = tf.train.AdamOptimizer(hps.learning_rate)
 
         inference = KLqp({p_g:q_g, p_u:q_u}, data={Y: Y_ph})
-        inference.initialize(var_list=var_list,
+        inference.initialize(n_iter=hps.n_epochs * n_batches,
+                             var_list=var_list,
                              optimizer=optimizer)
 
         sess = ed.get_session()
