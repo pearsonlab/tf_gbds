@@ -46,13 +46,13 @@ SIGMA_PENALTY = None
 # We left the possibility for 2 penalties in the model class just in case
 # it may be useful on a different dataset/task
 GOAL_BOUNDARY = 1.0
-GOAL_BOUND_PENALTY = 1e16
+GOAL_BOUND_PENALTY = 1e10
 
 SEED = 1234
 TRAIN_RATIO = 0.85
 TRAIN_OPTIMIZER = 'Adam'
 LEARNING_RATE = 1e-3
-NUM_EPOCHS = 2000
+NUM_EPOCHS = 500
 BATCH_SIZE = 128
 NUM_SAMPLES = 30
 
@@ -60,7 +60,7 @@ NUM_SAMPLES = 30
 flags = tf.app.flags
 
 flags.DEFINE_string('model_type', 'VI_KLqp',
-                    'Type of model to build {VB_KLqp, HMM')
+                    'Type of model to build {VI_KLqp, HMM')
 flags.DEFINE_string('model_dir', MODEL_DIR,
                     'Directory where the model is saved')
 # flags.DEFINE_integer('max_sessions', MAX_SESSIONS,
@@ -192,7 +192,7 @@ class hps_dict_to_obj(dict):
 def load_data(hps):
     if hps.synthetic_data:
         data, goals = gen_data(
-            n_trial=2000, n_obs=100, Kp=0.8, Ki=0.4, Kd=0.2)
+            n_trial=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
         np.random.seed(hps.seed)  # set seed for consistent train/val split
         train_data = []
         val_data = []
@@ -344,7 +344,7 @@ def run_model(model_type, hps):
 
         inference = ed.KLqp({p_G:q_G, p_U:q_U}, data={Y: Y_ph})
         inference.initialize(n_iter=hps.n_epochs * n_batches,
-                             scale={Y: train_ntrials / hps.B},
+                             # scale={Y: train_ntrials / hps.B},
                              var_list=var_list,
                              optimizer=optimizer,
                              logdir=hps.model_dir + '/log')

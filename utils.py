@@ -589,29 +589,31 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
              eps=1e-5, Kp=1, Ki=0, Kd=0,
              vel=1e-2 * np.ones((3))):
     p = []
-    g_b = []
+    g = []
 
-    for s in range(n_trial):
+    for _ in range(n_trial):
         p_b = np.zeros((n_obs, 2), np.float32)
         p_g = np.zeros((n_obs, 1), np.float32)
-        g = np.zeros(p_b.shape, np.float32)
+        g_b = np.zeros((n_obs, 2), np.float32)
         prev_error_b = 0
         prev_error_g = 0
         int_error_b = 0
         int_error_g = 0
 
-        init = np.pi * (np.random.rand() * 2 - 1)
-        g_mu_y = 0.75 * np.sin(1. * (np.linspace(0, 2 * np.pi, n_obs) - init))
-        g_mu = np.hstack([np.ones((n_obs, 1)), g_mu_y.reshape(n_obs, 1)])
-        g_lambda = np.array([16, 16], np.float32)
-        g[0] = [1, 0.75 * (np.random.rand() * 2 - 1)]
+        init_b_x = np.pi * (np.random.rand() * 2 - 1)
+        g_b_x_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) - init_b_x))
+        init_b_y = np.pi * (np.random.rand() * 2 - 1)
+        g_b_y_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) - init_b_y))
+        g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1), g_b_y_mu.reshape(n_obs, 1)])
+        g_b_lambda = np.array([16, 16], np.float32)
+        g_b[0] = [0.25 * (np.random.rand() * 2 - 1), 0.25 * (np.random.rand() * 2 - 1)]
 
         for t in range(n_obs - 1):
-            g[t + 1] = (g[t] + g_lambda * g_mu[t + 1]) / (1 + g_lambda)
-            var = sigma ** 2 / (1 + g_lambda)
-            g[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
+            g_b[t + 1] = (g_b[t] + g_b_lambda * g_b_mu[t + 1]) / (1 + g_b_lambda)
+            var = sigma ** 2 / (1 + g_b_lambda)
+            g_b[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
 
-            error_b = g[t + 1] - p_b[t]
+            error_b = g_b[t + 1] - p_b[t]
             int_error_b += error_b
             der_error_b = error_b - prev_error_b
             u_b = (Kp * error_b + Ki * int_error_b + Kd * der_error_b +
@@ -627,10 +629,10 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
             prev_error_g = error_g
             p_g[t + 1] = p_g[t] + vel[0] * np.clip(u_g, -1, 1)
 
-        p.append(np.hstack([p_g, p_b]))
-        g_b.append(g)
+        p.append(np.hstack((p_g, p_b)))
+        g.append(g_b)
 
-    return p, g_b
+    return p, g
 
 
 def batch_generator(arrays, batch_size):
