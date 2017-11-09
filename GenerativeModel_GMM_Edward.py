@@ -242,6 +242,16 @@ class GBDS_u(RandomVariable, Distribution):
         return (Upred, Ypred)
 
     def clip_loss(self, acc, inputs):
+        '''
+        upsilon (derived from time series of y) is a censored version of
+        a noisy control signal: \hat{u} ~ N(u, \eta^2).
+        log p(upsilon|u, g) = log p(upsilon|u) + log(u|g)
+        log p(upsilon|u) breaks down into three cases,
+        namely left-clipped (upsilon_t = -1), right-clipped (upsilon_t = 1),
+        and non-clipped (-1 < upsilon_t < 1). For the first two cases,
+        Normal CDF is used instead of PDF due to censoring.
+        The log density term is computed for each and then add up.
+        '''
         (U_obs, value) = inputs
         left_clip_ind = tf.where(tf.less_equal(
             U_obs, (-self.clip_range + self.clip_tol)),
@@ -291,7 +301,7 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope('next_time_step_pred'):
             Upred, _ = self.get_preds(self.y[:, :-1], training=True,
                                       post_g=self.g, post_U=value)
-        
+
         LogDensity = 0.0
         with tf.name_scope('control_signal_loss'):
             # calculate loss on control signal
@@ -547,11 +557,9 @@ class GBDS_g(RandomVariable, Distribution):
             if self.pen_g is not None:
                 # linear penalty on goal state escaping game space
                 LogDensity -= (self.pen_g * tf.reduce_sum(
-                    tf.cast(tf.greater(value, self.bounds_g), tf.float32),
-                    axis=[1, 2]))
+                    tf.nn.relu(value - self.bounds_g), axis=[1, 2]))
                 LogDensity -= (self.pen_g * tf.reduce_sum(
-                    tf.cast(tf.less(value, -self.bounds_g), tf.float32),
-                    axis=[1, 2]))
+                    tf.nn.relu(-value - self.bounds_g), axis=[1, 2]))
             if self.pen_sigma is not None:
                 # penalty on sigma
                 LogDensity -= (self.pen_sigma * tf.reduce_sum(self.unc_sigma))

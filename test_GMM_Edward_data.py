@@ -1,17 +1,15 @@
 from tf_gbds.utils import *
-# from tf_gbds.prep_GAN import prep_GAN_data, prep_injection_conditions
 import os
 from os.path import expanduser
 import tensorflow as tf
-# from tensorflow.python.client import timeline
 import numpy as np
 import time
 import tf_gbds.GenerativeModel_GMM_Edward as G
 import tf_gbds.RecognitionModel_Edward as R
 import edward as ed
 
-# import pickle as pkl
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
+
 
 MODEL_DIR = 'model_gmm'
 # MAX_SESSIONS = 10
@@ -48,7 +46,7 @@ SIGMA_PENALTY = None
 # We left the possibility for 2 penalties in the model class just in case
 # it may be useful on a different dataset/task
 GOAL_BOUNDARY = 1.0
-GOAL_BOUND_PENALTY = None
+GOAL_BOUND_PENALTY = 1e16
 
 SEED = 1234
 TRAIN_RATIO = 0.85
@@ -61,7 +59,7 @@ NUM_SAMPLES = 30
 
 flags = tf.app.flags
 
-flags.DEFINE_string('model_type', 'VB_KLqp',
+flags.DEFINE_string('model_type', 'VI_KLqp',
                     'Type of model to build {VB_KLqp, HMM')
 flags.DEFINE_string('model_dir', MODEL_DIR,
                     'Directory where the model is saved')
@@ -221,6 +219,7 @@ def run_model(model_type, hps):
         os.makedirs(hps.model_dir)
 
     train_data, val_data = load_data(hps)
+    train_ntrials = len(train_data)
     val_ntrials = len(val_data)
     val_data = np.array(val_data)
     print('Data loaded.')
@@ -335,9 +334,9 @@ def run_model(model_type, hps):
                 GMM_mu, GMM_lambda, GMM_w, _ = p_G.ball.get_preds(
                     Y_ph, training=True, post_g=q_G.sample(1))
 
-    if model_type == 'VB_KLqp':
+    if model_type == 'VI_KLqp':
         batches = next(batch_generator(train_data, hps.B))
-        n_batches = math.ceil(len(train_data) / hps.B)
+        n_batches = math.ceil(train_ntrials / hps.B)
         var_list = (p_G.getParams() + p_U.getParams() +
                     q_G.getParams() + q_U.getParams())
         if hps.opt == 'Adam':
@@ -345,6 +344,7 @@ def run_model(model_type, hps):
 
         inference = ed.KLqp({p_G:q_G, p_U:q_U}, data={Y: Y_ph})
         inference.initialize(n_iter=hps.n_epochs * n_batches,
+                             scale={Y: train_ntrials / hps.B},
                              var_list=var_list,
                              optimizer=optimizer,
                              logdir=hps.model_dir + '/log')
@@ -356,17 +356,14 @@ def run_model(model_type, hps):
                 info_dict = inference.update({Y_ph: batch})
                 inference.print_progress(info_dict)
 
-            val_loss = sess.run(inference.loss,
-                                feed_dict={Y_ph: val_data})
-            print('\n', 'Validation set loss after epoch %i: %.3f' %
-                  (i + 1, val_loss / val_ntrials))
+            if (i + 1) % 10 == 0:
+                val_loss = sess.run(inference.loss,
+                                    feed_dict={Y_ph: val_data})
+                print('\n', 'Validation set loss after epoch %i: %.3f' %
+                      (i + 1, val_loss / val_ntrials))
 
         saver = tf.train.Saver()
         saver.save(sess, hps.model_dir + '/saved_model')
-
-# def write_model_samples:
-
-# def write_model_parameters:
 
 def main(_):
     d = build_hyperparameter_dict(FLAGS)
@@ -376,103 +373,3 @@ def main(_):
 
 if __name__ == "__main__":
     tf.app.run()
-
-# def run_model(**kwargs):
-
-#     # set up an iterator over our training data
-#     batch_size = 1
-#     data_iter_vb = DatasetTrialIndexIterator(train_data, randomize=True)
-#     # data_iter_vd = DatasetTrialIndexIterator(val_data, randomize=True)
-
-#     n_iter_per_epoch = ntrials // batch_size
-
-#     val_costs = []
-#     ctrl_cost = []
-
-#     print('Setting up VB model...')
-#     var_list = g.getParams() + u.getParams() + qg.getParams() + qu.getParams()
-
-#     with tf.name_scope('goal_samples'):
-#         q_g_mean = tf.squeeze(qg.postX, 2,
-#                               name='q_g_mean')
-#         q_g = tf.squeeze(qg.sample(30), name='q_g')
-#     with tf.name_scope('control_signal_samples'):
-#         q_U_mean = tf.squeeze(qu.postX, 2,
-#                               name='q_U_mean')
-#         q_U = tf.squeeze(qu.sample(30), name='q_U')
-
-#     with tf.name_scope('train_KLqp'):   
-#         inference = KLqp({g:qg, u:qu}, data={Y_pred: Y})
-#         # inference.initialize(var_list=var_list,
-#         #                      optimizer=tf.train.AdamOptimizer(learning_rate),
-#         #                      logdir = "/home/qiankuang/Documents/projects/model_saved")
-#         inference.initialize(var_list=var_list,
-#                              optimizer=tf.train.AdamOptimizer(learning_rate))
-
-#     tf.summary.scalar('Kp_x_ball', u.u_ball.Kp[0, 0])
-#     tf.summary.scalar('Kp_y_ball', u.u_ball.Kp[1, 0])
-#     tf.summary.scalar('Ki_x_ball', u.u_ball.Ki[0, 0])
-#     tf.summary.scalar('Ki_y_ball', u.u_ball.Ki[1, 0])
-#     tf.summary.scalar('Kd_x_ball', u.u_ball.Kd[0, 0])
-#     tf.summary.scalar('Kd_y_ball', u.u_ball.Kd[1, 0])
-
-#     summary_op = tf.summary.merge_all()
-
-#     sess = ed.get_session()
-#     tf.global_variables_initializer().run()
-#     train_writer = tf.summary.FileWriter(outname, sess.graph)
-
-#     print('---> Training model')
-#     # sys.stdout.flush()
-#     for ie in range(n_epochs):
-#         # Iterate over the training data for the specified number of epochs
-#         print('--> entering epoch %i' % (ie + 1))
-#         start_train = time.time()
-#         avg_loss = 0.0
-#         val_loss = 0.0
-
-#         for data in data_iter_vb:
-#             info_dict = inference.update(feed_dict = {Y: data})
-#             avg_loss += info_dict['loss']
-
-#         avg_loss = avg_loss / batch_size / n_iter_per_epoch
-#         ctrl_cost.append(avg_loss)
-
-#         for i in range(len(val_data)):
-#             val_loss += sess.run(inference.loss, feed_dict = {Y: val_data[i]})
-#         val_loss = val_loss / val_ntrials
-#         val_costs.append(val_loss)
-
-#         train_summary = sess.run(summary_op)
-#         # inference.print_progress(info_dict)
-#         train_writer.add_summary(train_summary)
-
-#         np.save(outname + '/train_costs', ctrl_cost)
-#         np.save(outname + '/val_costs', val_costs)
-
-#         print("training loss: {:0.3f}".format(avg_loss))
-#         print("validation set loss: {:0.3f}".format(val_loss))
-#         print('Epoch %i takes %0.3f s' % ((ie + 1), (time.time() - start_train)))
-
-#         if (ie + 1) % 20 == 0:
-#             print('----> Predicting control signals and goals')
-#             ctrl_post_mean = []
-#             ctrl_post_samp = []
-#             goal_post_mean = []
-
-#             for i in range(len(val_data)):
-#                 ctrl_post_mean.append(
-#                     q_U_mean.eval(feed_dict={Y: val_data[i]}))
-#                 ctrl_post_samp.append(
-#                     q_U.eval(feed_dict={Y: val_data[i]}))
-#                 goal_post_mean.append(
-#                     q_g_mean.eval(feed_dict={Y: val_data[i]}))
-
-#             np.save(outname + '/ctrl_post_mean_step_%s' % (ie + 1),
-#                     ctrl_post_mean)
-#             np.save(outname + '/ctrl_post_samp_step_%s' % (ie + 1),
-#                     ctrl_post_samp)
-#             np.save(outname + '/goal_post_mean_step_%s' % (ie + 1),
-#                     goal_post_mean)
-
-#     train_writer.close()
