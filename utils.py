@@ -1,6 +1,6 @@
 import tensorflow as tf
 import math
-from os.path import expanduser, join
+from os.path import expanduser
 import h5py
 from scipy.stats import norm
 import numpy as np
@@ -11,7 +11,6 @@ from matplotlib.colors import Normalize
 # import sys
 # sys.path.append(expanduser('~/code/gbds/code/'))
 from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
-from edward import KLqp
 
 
 class set_cbar_zero(Normalize):
@@ -232,7 +231,7 @@ def get_max_velocities(y_data, y_val_data):
             ball_y_vels.append(np.abs(np.diff(y_val_data[i][:, 2])).max())
 
     return np.round(np.array([max(goalie_y_vels), max(ball_x_vels),
-                              max(ball_y_vels)]), decimals=3)# + 0.001
+                              max(ball_y_vels)]), decimals=3)  # + 0.001
 
 
 def get_vel(data, max_vel=None):
@@ -468,7 +467,6 @@ def init_Dyn_params(player, RecognitionParams):
     return Dyn_params
 
 
-
 def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
              eps=1e-5, Kp=1, Ki=0, Kd=0,
              vel=1e-2 * np.ones((3))):
@@ -527,7 +525,7 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
 
 
 def batch_generator(arrays, batch_size):
-     """Minibatch generator over one dataset of shape
+    """Minibatch generator over one dataset of shape
     (nobservations, ndimensions)
     """
     size = len(arrays)
@@ -585,7 +583,7 @@ class MultiDatasetTrialIndexIterator(object):
         else:
             for i in range(n_batches):
                 yield tuple(dset[i] for dset in self.data)
-                
+
 
 class DataSetTrialIndexTF(object):
     """Tensor version of Minibatch iterator over one dataset of shape
@@ -594,12 +592,14 @@ class DataSetTrialIndexTF(object):
     def __init__(self, data, batch_size=100):
         self.data = data
         self.batch_size = batch_size
+
     def __iter__(self):
         new_data = [tf.constant(d) for d in self.data]
         data_iter_vb_new = tf.train.batch(new_data, self.batch_size,
                                           dynamic_pad=True)
-        #data_iter_vb = [vb.eval() for vb in data_iter_vb_new]
+        # data_iter_vb = [vb.eval() for vb in data_iter_vb_new]
         return iter(data_iter_vb_new)
+
 
 class DatasetMiniBatchIterator(object):
     """Minibatch iterator over one dataset of shape

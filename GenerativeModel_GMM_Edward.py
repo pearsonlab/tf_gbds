@@ -96,11 +96,12 @@ class GBDS_g_all(RandomVariable, Distribution):
     def getParams(self):
         return self.ball.getParams() + self.goalie.getParams()
 
+
 class GBDS_u_all(RandomVariable, Distribution):
     """A customized Random Variable of control signal in Goal-Based Dynamical
         System combining both goalie agent and ball agent.
     """
-    
+
     def __init__(self, GenerativeParams_goalie, GenerativeParams_ball, g, y,
                  yDim, PID_params_goalie, PID_params_ball, name='GBDS_u_all',
                  value=None, dtype=tf.float32,
@@ -109,8 +110,8 @@ class GBDS_u_all(RandomVariable, Distribution):
 
         """Initialize a batch of GBDS_u random variables combining both ball
             and goalie agent
-        
-        
+
+
         Args:
           GenerativeParams_goalie: A dictionary of parameters for the goalie
                                    agent
@@ -150,7 +151,7 @@ class GBDS_u_all(RandomVariable, Distribution):
           value: The Random Variable sample of goal. Since GBDS_u_all is just a
                  likelihood node, value is just used to specify the shape of g.
                  Set it to tf.zeros_like(Y).
-        """    
+        """
 
         self.yCols_ball = GenerativeParams_ball['yCols']
         self.yCols_goalie = GenerativeParams_goalie['yCols']
@@ -166,7 +167,7 @@ class GBDS_u_all(RandomVariable, Distribution):
         self.goalie = GBDS_u(GenerativeParams_goalie, g_goalie, y,
                              yDim_goalie, PID_params_goalie,
                              value=tf.gather(value, self.yCols_goalie,
-                                               axis=-1))
+                                             axis=-1))
         self.ball = GBDS_u(GenerativeParams_ball, g_ball, y,
                            yDim_ball, PID_params_ball,
                            value=tf.gather(value, self.yCols_ball, axis=-1))
@@ -194,19 +195,20 @@ class GBDS_u_all(RandomVariable, Distribution):
     def getParams(self):
         return self.ball.getParams() + self.goalie.getParams()
 
+
 class GBDS_u(RandomVariable, Distribution):
     """A customized Random Variable of control signal in Goal-Based Dynamical
        System
     """
 
-    def __init__(self,GenerativeParams, g, y, yDim, PID_params, name='GBDS_u',
+    def __init__(self, GenerativeParams, g, y, yDim, PID_params, name='GBDS_u',
                  value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
 
         """Initialize a batch of GBDS_u random variables for one of the agents
-        
-        
+
+
         Args:
           GenerativeParams: A dictionary of parameters for the agent
           Entries include:
@@ -257,7 +259,7 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope('PID_controller_params'):
             with tf.name_scope('parameters'):
                 # coefficients for PID controller (one for each dimension)
-                # https://en.wikipedia.org/wiki/PID_controller 
+                # https://en.wikipedia.org/wiki/PID_controller
                 # Discrete_implementation
                 unc_Kp = PID_params['unc_Kp']
                 unc_Ki = PID_params['unc_Ki']
@@ -333,7 +335,7 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope('add_noise'):
             if post_g is None:  # Add control signal noise to generated data
                 Udiff += self.eps * tf.random_normal(Udiff.shape)
-        with tf.name_scope('control_signal'):        
+        with tf.name_scope('control_signal'):
             Upred = post_U[:, :-1] + Udiff
         with tf.name_scope('predicted_position'):
             # get predicted Y
@@ -383,17 +385,17 @@ class GBDS_u(RandomVariable, Distribution):
             right_clip_node.log_cdf(-1., name='right_clip_logcdf'))
         LogDensity += tf.reduce_sum(
             non_clip_node.log_prob(tf.gather_nd(U_obs, non_clip_ind),
-                name='non_clip_logpdf'))
+                                   name='non_clip_logpdf'))
 
         return LogDensity
 
     def _log_prob(self, value):
         """Evaluates the log-density of the GenerativeModel.
         """
-        
+
         # Calculate real control signal
         with tf.name_scope('observed_control_signal'):
-            U_obs = tf.concat([tf.zeros([self.B, 1, self.yDim]), 
+            U_obs = tf.concat([tf.zeros([self.B, 1, self.yDim]),
                                (tf.gather(self.y, self.yCols, axis=-1)[:, 1:] -
                                 tf.gather(self.y, self.yCols,
                                           axis=-1)[:, :-1]) /
@@ -427,21 +429,22 @@ class GBDS_u(RandomVariable, Distribution):
     def getParams(self):
         """Return the learnable parameters of the model
         """
-        
-        rets = self.PID_params #+ [self.unc_eps]
+
+        rets = self.PID_params  # + [self.unc_eps]
         return rets
+
 
 class GBDS_g(RandomVariable, Distribution):
     """A customized Random Variable of goal in Goal-Based Dynamical System
     """
-  
+
     def __init__(self, GenerativeParams, yDim, yDim_in, y, name='GBDS_g',
                  value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
         """Initialize a batch of GBDS_g random variables for one of the agent
-        
-        
+
+
         Args:
           GenerativeParams: A dictionary of parameters for the agent
           Entries include:
@@ -511,7 +514,7 @@ class GBDS_g(RandomVariable, Distribution):
                 else:
                     self.pen_g = None
 
-        with tf.name_scope('velocity'):                    
+        with tf.name_scope('velocity'):
             # velocity for each observation dimension (of all agents)
             self.all_vel = tf.constant(GenerativeParams['all_vel'],
                                        dtype=tf.float32, name='velocity')
@@ -560,8 +563,9 @@ class GBDS_g(RandomVariable, Distribution):
 
             with tf.name_scope('lambda'):
                 all_lambda = tf.nn.softplus(tf.reshape(
-                    self.GMM_net(states)[:, :, (self.yDim * self.GMM_k):(2 *
-                        self.yDim * self.GMM_k)],
+                    self.GMM_net(states)[:, :, (self.yDim *
+                                                self.GMM_k):(2 * self.yDim *
+                                                             self.GMM_k)],
                     [self.B, -1, self.GMM_k, self.yDim],
                     name='reshape_lambda'), name='softplus_lambda')
 
@@ -598,8 +602,8 @@ class GBDS_g(RandomVariable, Distribution):
 
         (mu_k, lambda_k) = tf.scan(
             select_components, [tf.transpose(mu, [1, 0, 2, 3]),
-            tf.transpose(lmbda, [1, 0, 2, 3]),
-            tf.transpose(w, [1, 0, 2])],
+                                tf.transpose(lmbda, [1, 0, 2, 3]),
+                                tf.transpose(w, [1, 0, 2])],
             initializer=(tf.zeros([self.B, self.yDim]),
                          tf.zeros([self.B, self.yDim])),
             name='select_components')
@@ -626,8 +630,9 @@ class GBDS_g(RandomVariable, Distribution):
             gmm_term += (0.5 * tf.log(1 + all_lambda) -
                          0.5 * tf.log(2 * np.pi) -
                          tf.log(tf.reshape(self.sigma, [1, 1, 1, -1])))
-            LogDensity += tf.reduce_sum(logsumexp(tf.reduce_sum(
-                gmm_term, axis=-1), axis=-1), axis=[-2,-1])
+            LogDensity += tf.reduce_sum(logsumexp(tf.reduce_sum(gmm_term,
+                                                                axis=-1),
+                                                  axis=-1), axis=[-2, -1])
 
         with tf.name_scope('goal_and_control_penalty'):
             if self.pen_g is not None:
