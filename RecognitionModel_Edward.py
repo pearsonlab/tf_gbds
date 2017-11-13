@@ -5,11 +5,11 @@ https://github.com/earcher/vilds/blob/master/code/RecognitionModel.py
 """
 import tensorflow as tf
 import numpy as np
-import tf_gbds.lib.sym_blk_tridiag_inv as sym
 import tf_gbds.lib.blk_tridiag_chol_tools as blk
 from edward.models import RandomVariable
 from tensorflow.contrib.distributions import Distribution
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
+
 
 class SmoothingLDSTimeSeries(RandomVariable, Distribution):
     """A "smoothing" Recognition Model
@@ -18,7 +18,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
 
     Different forms of recognition models will have this interface
 
-    The constructor accepts neural networks which are used to parameterize mu 
+    The constructor accepts neural networks which are used to parameterize mu
     and Sigma, and create the appropriate sampling expression.
 
     x ~ N( mu(y), sigma(y) )
@@ -31,8 +31,8 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
         """Initialize a batch of SmoothingLDSTimeSeries random variables
-        
-        
+
+
         Args:
           RecognitionParams: (dictionary)
                 Dictionary of timeseries-specific parameters. Contents:
@@ -41,9 +41,9 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                           less than 1
                      * NN paramers: NN_Mu, NN_Lambda, NN_LambdaX
                      * QinvChol: [Batch_size x n x n] square root of the
-                                 innovation covariance Q
+                                 innovation covariance Q inverse
                      * Q0invChol: [Batch_size x n x n] square root of the
-                                  innitial innovation covariance
+                                  innitial innovation covariance inverse
           Input: 'y' tensorflow placeholder (n_input)
                 Observation matrix based on which we produce q(x)
           Dyn_params: (dictionary)
@@ -52,13 +52,13 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                           have eigeninitial_values with magnitude strictly
                           less than 1
                      * QinvChol: [Batch_size x n x n] square root of the
-                                 innovation covariance Q
+                                 innovation covariance Q inverse
                      * Q0invChol: [Batch_size x n x n] square root of the
-                                  innitial innovation covariance
+                                  innitial innovation covariance inverse
           xDim, yDim: (integers) dimension of
                 latent space (x) and observation (y)
           value: The Recognition Random Variable sample of goal or control
-                 signal 
+                 signal
         """
         self.Dyn_params = Dyn_params
         self.nrng = nrng
@@ -82,20 +82,19 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             self.lambda_net_out = self.NN_Lambda(self.Input)
         # Lambda will automatically be of size [Batch_size x T x xDim x xDim]
             self.LambdaChol = tf.reshape(self.lambda_net_out,
-                                         [self.B, self.Tt, xDim, xDim]) 
-                                         # + T.eye(self.xDim)
+                                         [self.B, self.Tt, xDim, xDim])
 
         with tf.name_scope('LambdaXChol'):
             self.NN_LambdaX = RecognitionParams['NN_LambdaX']['network']
             self.lambdaX_net_out = self.NN_LambdaX(self.Input[:, 1:])
-            self.LambdaXChol = tf.reshape(self.lambdaX_net_out, 
+            self.LambdaXChol = tf.reshape(self.lambdaX_net_out,
                                           [self.B, self.Tt - 1, xDim, xDim])
         with tf.name_scope('init_posterior'):
             self._initialize_posterior_distribution(RecognitionParams)
 
         super(SmoothingLDSTimeSeries, self).__init__(
             value=value, name=name, dtype=dtype,
-            reparameterization_type=reparameterization_type, 
+            reparameterization_type=reparameterization_type,
             validate_args=validate_args, allow_nan_stats=allow_nan_stats)
         self._kwargs['RecognitionParams'] = RecognitionParams
         self._kwargs['Input'] = Input
@@ -105,9 +104,9 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
         self._kwargs['Dyn_params'] = Dyn_params
 
     def _initialize_posterior_distribution(self, RecognitionParams):
-    
+
         # Now actually compute the precisions (from their square roots)
-        
+
         with tf.name_scope('Lambda'):
             self.Lambda = tf.matmul(self.LambdaChol,
                                     tf.transpose(self.LambdaChol,
@@ -164,10 +163,10 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             # and off-diagonal (BB) blocks.
             with tf.name_scope('diagonal'):
                 self.AA = (self.Lambda +
-                    tf.concat([tf.zeros([self.B, 1, self.xDim, self.xDim]),
-                               self.LambdaX], 1) +
-                    AQinvArepPlusQ)
-            with tf.name_scope('off-diagonal'):    
+                           tf.concat([tf.zeros([self.B, 1, self.xDim,
+                                                self.xDim]), self.LambdaX],
+                                     1) + AQinvArepPlusQ)
+            with tf.name_scope('off-diagonal'):
                 self.BB = (tf.matmul(self.LambdaChol[:, :-1],
                                      tf.transpose(self.LambdaXChol,
                                                   perm=[0, 1, 3, 2])) +
@@ -256,11 +255,11 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
     """
     def __init__(self, RecognitionParams, Input, xDim, yDim, Dyn_params,
                  nrng=None, name='SmoothingPastLDSTimeSeries',
-                 value=None , dtype=tf.float32,
+                 value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
         """Initialize a batch of SmoothingPastLDSTimeSeries random variables
-        
+
         Args:
           RecognitionParams: (dictionary)
                 Dictionary of timeseries-specific parameters. Contents:
@@ -269,9 +268,9 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
                           less than 1
                      * NN paramers: NN_Mu, NN_Lambda, NN_LambdaX
                      * QinvChol: [Batch_size x n x n] square root of the
-                                 innovation covariance Q
+                                 innovation covariance Q inverse
                      * Q0invChol: [Batch_size x n x n] square root of the
-                                  innitial innovation covariance
+                                  innitial innovation covariance inverse
                      * lag
           Input: 'y' tensorflow placeholder (n_input)
                 Observation matrix based on which we produce q(x)
@@ -281,14 +280,14 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
                           have eigeninitial_values with magnitude strictly
                           less than 1
                      * QinvChol: [Batch_size x n x n] square root of the
-                                 innovation covariance Q
+                                 innovation covariance Q inverse
                      * Q0invChol: [Batch_size x n x n] square root of the
-                                  innitial innovation covariance
+                                  innitial innovation covariance inverse
           xDim, yDim: (integers) dimension of
                 latent space (x) and observation (y)
           value: The Recognition Random Variable sample of goal or control
-                 signal 
-        
+                 signal
+
         """
         with tf.name_scope('lag'):
             if 'lag' in RecognitionParams:

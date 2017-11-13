@@ -63,7 +63,8 @@ def compute_sym_blk_tridiag(AA, BB, iia=None, iib=None):
         S_i = tf.matmul(
           BB[:, iib[idx]],
           tf.matrix_inverse(AA[:, iia[tf.minimum(idx + 1, nT - 2)]] -
-            tf.matmul(Sp1, tf.transpose(B_ip1, perm=[0, 2, 1]))))
+                            tf.matmul(Sp1, tf.transpose(B_ip1,
+                                                        perm=[0, 2, 1]))))
         Sm = tf.where(tf.equal(tf.tile([idx], [batch_size]), nT - 2),
                       S_nTm1, S_i)
 
@@ -112,7 +113,7 @@ def compute_sym_blk_tridiag(AA, BB, iia=None, iib=None):
                  initializer=tf.matmul(tf.transpose(S[:, -1], perm=[0, 2, 1]),
                                        D[:, 0]))
 
-    return [D, OD, S] 
+    return [D, OD, S]
 
 
 def compute_sym_blk_tridiag_inv_b(S, D, b):
@@ -137,7 +138,6 @@ def compute_sym_blk_tridiag_inv_b(S, D, b):
     """
     batch_size = tf.shape(b)[0]
     nT = tf.shape(b)[1]
-    d = tf.shape(b)[2]
     initp = tf.zeros(tf.shape(b)[2:4], dtype=tf.float32)
 
     def compute_p(acc, inputs):

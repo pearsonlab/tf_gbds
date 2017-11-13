@@ -1,9 +1,7 @@
 from tf_gbds.utils import *
 import os
-from os.path import expanduser
 import tensorflow as tf
 import numpy as np
-import time
 import tf_gbds.GenerativeModel_GMM_Edward as G
 import tf_gbds.RecognitionModel_Edward as R
 import edward as ed
@@ -132,6 +130,7 @@ flags.DEFINE_integer('num_samples', NUM_SAMPLES,
 
 FLAGS = flags.FLAGS
 
+
 def build_hyperparameter_dict(flags):
     d = {}
 
@@ -179,6 +178,7 @@ def build_hyperparameter_dict(flags):
 
     return d
 
+
 class hps_dict_to_obj(dict):
     """Helper class allowing us to access hps dictionary more easily.
     """
@@ -187,8 +187,10 @@ class hps_dict_to_obj(dict):
             return self[key]
         else:
             assert False, ('%s does not exist.' % key)
+
     def __setattr__(self, key, value):
         self[key] = value
+
 
 def load_data(hps):
     """ Loading real data from local folder
@@ -217,6 +219,7 @@ def load_data(hps):
 
     return train_data, val_data
 
+
 def run_model(model_type, hps):
     """ Train GBDS model on real data
     """
@@ -239,8 +242,6 @@ def run_model(model_type, hps):
         # but left just in case
         penalty_Q = None
         PKLparams = None
-        row_sparse = False
-        add_pklayers = False
 
         vel = get_max_velocities(train_data, val_data)
         train_ntrials = len(train_data)
@@ -279,7 +280,7 @@ def run_model(model_type, hps):
         # Creat the placeholder to input data
         Y_ph = tf.placeholder(tf.float32, shape=(None, None, total_dim),
                               name='data')
-        # Generate real goal and control signal 
+        # Generate real goal and control signal
         with tf.name_scope('gen_g'):
             p_G = G.GBDS_g_all(gen_params_goalie, gen_params_ball, total_dim,
                                Y_ph, value=tf.zeros_like(Y_ph))
@@ -352,7 +353,7 @@ def run_model(model_type, hps):
                     q_G.getParams() + q_U.getParams())
         if hps.opt == 'Adam':
             optimizer = tf.train.AdamOptimizer(hps.learning_rate)
-        inference = ed.KLqp({p_G:q_G, p_U:q_U}, data={Y: Y_ph})
+        inference = ed.KLqp({p_G: q_G, p_U: q_U}, data={Y: Y_ph})
         inference.initialize(n_iter=hps.n_epochs * n_batches,
                              # scale={Y: train_ntrials / hps.B},
                              var_list=var_list,
@@ -375,6 +376,7 @@ def run_model(model_type, hps):
         saver = tf.train.Saver()
         saver.save(sess, hps.model_dir + '/saved_model')
 
+
 def main(_):
     """ The main process of training the GBDS model
     """
@@ -382,6 +384,7 @@ def main(_):
     hps = hps_dict_to_obj(d)  # hyper-parameters
     model_type = FLAGS.model_type
     run_model(model_type, hps)
+
 
 if __name__ == "__main__":
     tf.app.run()

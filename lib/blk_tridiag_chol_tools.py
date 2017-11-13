@@ -13,8 +13,8 @@ def blk_tridiag_chol(A, B):
     block-tridiagonal matrix.
     Inputs:
     A - [Batch_size x T x n x n] tensor,
-        where each A[i,:,:] is the ith block diagonal matrix
-    B - [Batch_size x T-1 x n x n] tensor, where each B[i,:,:] is the ith
+        where each A[:,i,:,:] is the ith block diagonal matrix
+    B - [Batch_size x T-1 x n x n] tensor, where each B[:,i,:,:] is the ith
         (upper) 1st block off-diagonal matrix
     Outputs:
     R - python list with two elements
@@ -59,16 +59,16 @@ def blk_chol_inv(A, B, b, lower=True, transpose=False):
     block-bi-diagonal matrix ( where only the first (lower or upper)
     off-diagonal block is nonzero.
     Inputs:
-    A - [Batch_size x T x n x n] tensor, where each A[i,:,:] is the ith block
+    A - [Batch_size x T x n x n] tensor, where each A[:,i,:,:] is the ith block
         diagonal matrix
-    B - [Batch_size x T-1 x n x n] tensor, where each B[i,:,:] is the ith
+    B - [Batch_size x T-1 x n x n] tensor, where each B[:,i,:,:] is the ith
         (upper or lower) 1st block off-diagonal matrix
     b - [Batchs_size x T x n] tensor
 
     lower (default: True) - boolean specifying whether to treat B as the lower
           or upper 1st block off-diagonal of matrix C
     transpose (default: False) - boolean specifying whether to transpose the
-          off-diagonal blocks B[i,:,:] (useful if you want to compute solve
+          off-diagonal blocks B[:,i,:,:] (useful if you want to compute solve
           the problem C^T x = b with a representation of C.)
     Outputs:
     x - solution of Cx = b
@@ -108,15 +108,15 @@ def blk_chol_mtimes(A, B, x, lower=True, transpose=False):
     block-bi-diagonal matrix ( where only the first (lower or upper)
     off-diagonal block is nonzero.
     Inputs:
-    A - [Batch_size x T x n x n] tensor, where each A[i,:,:] is the ith block
+    A - [Batch_size x T x n x n] tensor, where each A[:,i,:,:] is the ith block
         diagonal matrix
-    B - [Batch_size x T-1 x n x n] tensor, where each B[i,:,:] is the ith
+    B - [Batch_size x T-1 x n x n] tensor, where each B[:,i,:,:] is the ith
         (upper or lower) 1st block off-diagonal matrix  
 
     lower (default: True) - boolean specifying whether to treat B as the lower
           or upper 1st block off-diagonal of matrix C
     transpose (default: False) - boolean specifying whether to transpose the
-          off-diagonal blocks B[i,:,:] (useful if you want to compute solve
+          off-diagonal blocks B[:,i,:,:] (useful if you want to compute solve
           the problem C^T x = b with a representation of C.)
     Outputs:
     b - result of Cx = b
