@@ -12,16 +12,16 @@ def blk_tridiag_chol(A, B):
     Compute the cholesky decomposition of a symmetric, positive definite
     block-tridiagonal matrix.
     Inputs:
-    A - [T x n x n]   tensor, where each A[i,:,:] is the ith block diagonal
-        matrix
-    B - [T-1 x n x n] tensor, where each B[i,:,:] is the ith (upper) 1st block
-        off-diagonal matrix
+    A - [Batch_size x T x n x n] tensor,
+        where each A[i,:,:] is the ith block diagonal matrix
+    B - [Batch_size x T-1 x n x n] tensor, where each B[i,:,:] is the ith
+        (upper) 1st block off-diagonal matrix
     Outputs:
     R - python list with two elements
-        * R[0] - [T x n x n] tensor of block diagonal elements of Cholesky
-        decomposition
-        * R[1] - [T-1 x n x n] tensor of (lower) 1st block off-diagonal
-        elements of Cholesky
+        * R[0] - [Batch_size x T x n x n] tensor of block diagonal elements
+        of Cholesky decomposition
+        * R[1] - [Batch_size x T-1 x n x n] tensor of (lower) 1st block
+        off-diagonal elements of Cholesky
     """
     def _step(acc, inputs):
         """
@@ -59,11 +59,11 @@ def blk_chol_inv(A, B, b, lower=True, transpose=False):
     block-bi-diagonal matrix ( where only the first (lower or upper)
     off-diagonal block is nonzero.
     Inputs:
-    A - [T x n x n]   tensor, where each A[i,:,:] is the ith block diagonal
-        matrix
-    B - [T-1 x n x n] tensor, where each B[i,:,:] is the ith (upper or lower)
-        1st block off-diagonal matrix
-    b - [T x n] tensor
+    A - [Batch_size x T x n x n] tensor, where each A[i,:,:] is the ith block
+        diagonal matrix
+    B - [Batch_size x T-1 x n x n] tensor, where each B[i,:,:] is the ith
+        (upper or lower) 1st block off-diagonal matrix
+    b - [Batchs_size x T x n] tensor
 
     lower (default: True) - boolean specifying whether to treat B as the lower
           or upper 1st block off-diagonal of matrix C
@@ -108,10 +108,10 @@ def blk_chol_mtimes(A, B, x, lower=True, transpose=False):
     block-bi-diagonal matrix ( where only the first (lower or upper)
     off-diagonal block is nonzero.
     Inputs:
-    A - [T x n x n]   tensor, where each A[i,:,:] is the ith block diagonal
-        matrix
-    B - [T-1 x n x n] tensor, where each B[i,:,:] is the ith (upper or lower)
-        1st block off-diagonal matrix  
+    A - [Batch_size x T x n x n] tensor, where each A[i,:,:] is the ith block
+        diagonal matrix
+    B - [Batch_size x T-1 x n x n] tensor, where each B[i,:,:] is the ith
+        (upper or lower) 1st block off-diagonal matrix  
 
     lower (default: True) - boolean specifying whether to treat B as the lower
           or upper 1st block off-diagonal of matrix C

@@ -1,21 +1,65 @@
 import tensorflow as tf
-from tensorflow.contrib.keras import layers, models
 import numpy as np
 from edward.models import RandomVariable
-from tensorflow.contrib.distributions import Categorical, Distribution, Normal
+from tensorflow.contrib.distributions import Distribution, Normal
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
 
 
-# def logsumexp(x, axis=None):
-#     x_max = tf.reduce_max(x, axis=axis, keep_dims=True)
-#     return (tf.log(tf.reduce_sum(tf.exp(x - x_max),
-#                                  axis=axis, keep_dims=True)) + x_max)
+def logsumexp(x, axis=None):
+    x_max = tf.reduce_max(x, axis=axis, keep_dims=True)
+    return (tf.log(tf.reduce_sum(tf.exp(x - x_max),
+                                 axis=axis, keep_dims=True)) + x_max)
+
 
 class GBDS_g_all(RandomVariable, Distribution):
+    """A customized Random Variable of goal in Goal-Based Dynamical System
+    combining both goalie agent and ball agent.
+    """
+
     def __init__(self, GenerativeParams_goalie, GenerativeParams_ball, yDim,
-                 y, name='GBDS_g_all', value=None , dtype=tf.float32,
+                 y, name='GBDS_g_all', value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
+
+        """Initialize a batch of GBDS_g random variables combining both ball
+            and goalie agent
+
+
+        Args:
+          GenerativeParams_goalie: A dictionary of parameters for the goalie
+                                   agent
+          GenerativeParams_ball: A dictionary of parameters for the ball agent
+          Entries both include:
+            - get_states: function that calculates current state from position
+            - pen_eps: Penalty on control signal noise, epsilon
+            - pen_sigma: Penalty on goals state noise, sigma
+            - pen_g: Two penalties on goal state leaving boundaries (Can be set
+                     None)
+            - bounds_g: Boundaries corresponding to above penalties
+            - NN_postJ_mu: Neural network that parametrizes the mean of the
+                           posterior of J (i.e. mu and sigma), conditioned on
+                           goals
+            - NN_postJ_sigma: Neural network that parametrizes the covariance
+                              of the posterior of J (i.e. mu and sigma),
+                              conditioned on goals
+            - yCols: Columns of Y this agent corresponds to. Used to index
+                     columns in real data to compare against generated data.
+            - vel: Maximum velocity of each dimension in columns belong to this
+                   agent(yCols)
+            - all_vel: Maximum velocity of each dimension in columns belong to
+                       all agents
+            - clip: Clipping signal
+            - clip_range: the range of the clipping states
+            - clip_tol: the tolenrance of clipping
+            - GMM_net: Gaussian Mixture Model network
+            - GMM_k: Number of GMM components
+          yDim: Number of dimensions for the data
+          y: Time series of positions
+          value: The Random Variable sample of goal. Since GBDS_g_all is just
+                 a likelihood node, value is just used to specify the shape
+                 of g. Set it to tf.zeros_like(Y).
+
+        """
 
         self.yCols_ball = GenerativeParams_ball['yCols']
         self.yCols_goalie = GenerativeParams_goalie['yCols']
@@ -27,7 +71,7 @@ class GBDS_g_all(RandomVariable, Distribution):
 
         self.goalie = GBDS_g(GenerativeParams_goalie, yDim_goalie, yDim, y,
                              value=tf.gather(value, self.yCols_goalie,
-                                               axis=-1))
+                                             axis=-1))
         self.ball = GBDS_g(GenerativeParams_ball, yDim_ball, yDim, y,
                            value=tf.gather(value, self.yCols_ball, axis=-1))
 
@@ -53,11 +97,60 @@ class GBDS_g_all(RandomVariable, Distribution):
         return self.ball.getParams() + self.goalie.getParams()
 
 class GBDS_u_all(RandomVariable, Distribution):
+    """A customized Random Variable of control signal in Goal-Based Dynamical
+        System combining both goalie agent and ball agent.
+    """
+    
     def __init__(self, GenerativeParams_goalie, GenerativeParams_ball, g, y,
                  yDim, PID_params_goalie, PID_params_ball, name='GBDS_u_all',
                  value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
+
+        """Initialize a batch of GBDS_u random variables combining both ball
+            and goalie agent
+        
+        
+        Args:
+          GenerativeParams_goalie: A dictionary of parameters for the goalie
+                                   agent
+          GenerativeParams_ball: A dictionary of parameters for the ball agent
+          Entries both include:
+            - get_states: function that calculates current state from position
+            - pen_eps: Penalty on control signal noise, epsilon
+            - pen_sigma: Penalty on goals state noise, sigma
+            - pen_g: Two penalties on goal state leaving boundaries (Can be set
+                     None)
+            - bounds_g: Boundaries corresponding to above penalties
+            - NN_postJ_mu: Neural network that parametrizes the mean of the
+                           posterior of J (i.e. mu and sigma), conditioned on
+                           goals
+            - NN_postJ_sigma: Neural network that parametrizes the covariance
+                              of the posterior of J (i.e. mu and sigma),
+                              conditioned on goals
+            - yCols: Columns of Y this agent corresponds to. Used to index
+                     columns in real data to compare against generated data.
+            - vel: Maximum velocity of each dimension in columns belong to this
+                   agent(yCols)
+            - all_vel: Maximum velocity of each dimension in columns belong to
+                       all agents
+            - clip: Clipping signal
+            - clip_range: the range of the clipping states
+            - clip_tol: the tolenrance of clipping
+            - GMM_net: Gaussian Mixture Model network
+            - GMM_k: Number of GMM components
+          yDim: Number of dimensions for the data
+          y: Time series of positions
+          g: The dependent customized Random Variable of goal in Goal-Based
+             Dynamical System (GBDS_g_all)
+          PID_params_goalie: A dictionary of PID controller parameters for the
+                             goalie model
+          PID_params_ball: A dictionary of PID controller parameters for the
+                           ball model
+          value: The Random Variable sample of goal. Since GBDS_u_all is just a
+                 likelihood node, value is just used to specify the shape of g.
+                 Set it to tf.zeros_like(Y).
+        """    
 
         self.yCols_ball = GenerativeParams_ball['yCols']
         self.yCols_goalie = GenerativeParams_goalie['yCols']
@@ -102,37 +195,51 @@ class GBDS_u_all(RandomVariable, Distribution):
         return self.ball.getParams() + self.goalie.getParams()
 
 class GBDS_u(RandomVariable, Distribution):
+    """A customized Random Variable of control signal in Goal-Based Dynamical
+       System
     """
-    Goal-Based Dynamical System
 
-    Inputs:
-    - GenerativeParams: A dictionary of parameters for the model
-        Entries include:
-        - get_states: function that calculates current state from position
-        - pen_eps: Penalty on control signal noise, epsilon
-        - pen_sigma: Penalty on goals state noise, sigma
-        - pen_g: Two penalties on goal state leaving boundaries (Can be set
-                 None)
-        - bounds_g: Boundaries corresponding to above penalties
-        - NN_postJ_mu: Neural network that parametrizes the mean of the
-                       posterior of J (i.e. mu and sigma), conditioned on
-                       goals
-        - NN_postJ_sigma: Neural network that parametrizes the covariance of
-                          the posterior of J (i.e. mu and sigma), conditioned
-                          on goals
-        - yCols: Columns of Y this agent corresponds to. Used to index columns
-                 in real data to compare against generated data.
-        - vel: Maximum velocity of each dimension in yCols.
-    - yDim: Number of dimensions for this agent
-    - yDim_in: Number of total dimensions in the data
-    - srng: Theano symbolic random number generator (theano RandomStreams
-            object)
-    - nrng: Numpy random number generator
-    """
     def __init__(self,GenerativeParams, g, y, yDim, PID_params, name='GBDS_u',
                  value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
+
+        """Initialize a batch of GBDS_u random variables for one of the agents
+        
+        
+        Args:
+          GenerativeParams: A dictionary of parameters for the agent
+          Entries include:
+            - get_states: function that calculates current state from position
+            - pen_eps: Penalty on control signal noise, epsilon
+            - pen_sigma: Penalty on goals state noise, sigma
+            - pen_g: Two penalties on goal state leaving boundaries (Can be set
+                     None)
+            - bounds_g: Boundaries corresponding to above penalties
+            - NN_postJ_mu: Neural network that parametrizes the mean of the
+                           posterior of J (i.e. mu and sigma), conditioned on
+                           goals
+            - NN_postJ_sigma: Neural network that parametrizes the covariance
+                              of the posterior of J (i.e. mu and sigma),
+                              conditioned on goals
+            - yCols: Columns of Y this agent corresponds to. Used to index
+                     columns in real data to compare against generated data.
+            - vel: Maximum velocity of each dimension in columns belong to this
+                   agent(yCols)
+            - all_vel: Maximum velocity of each dimension in columns belong to
+                       all agents
+            - clip: Clipping signal
+            - clip_range: the range of the clipping states
+            - clip_tol: the tolenrance of clipping
+            - GMM_net: Gaussian Mixture Model network
+            - GMM_k: Number of GMM components
+          g: The dependent customized Random Variable of goal in Goal-Based
+             Dynamical System (GBDS_g)
+          y: Time series of positions
+          yDim: Number of dimensions for this agent
+          PID_params: A dictionary of PID controller parameters
+          value: The Random Variable sample of control signal
+        """
 
         self.g = g
         self.y = y
@@ -150,7 +257,8 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope('PID_controller_params'):
             with tf.name_scope('parameters'):
                 # coefficients for PID controller (one for each dimension)
-                # https://en.wikipedia.org/wiki/PID_controller#Discrete_implementation
+                # https://en.wikipedia.org/wiki/PID_controller 
+                # Discrete_implementation
                 unc_Kp = PID_params['unc_Kp']
                 unc_Ki = PID_params['unc_Ki']
                 unc_Kd = PID_params['unc_Kd']
@@ -242,8 +350,7 @@ class GBDS_u(RandomVariable, Distribution):
         return (Upred, Ypred)
 
     def clip_loss(self, acc, inputs):
-        '''
-        upsilon (derived from time series of y) is a censored version of
+        """upsilon (derived from time series of y) is a censored version of
         a noisy control signal: \hat{u} ~ N(u, \eta^2).
         log p(upsilon|u, g) = log p(upsilon|u) + log(u|g)
         log p(upsilon|u) breaks down into three cases,
@@ -251,7 +358,7 @@ class GBDS_u(RandomVariable, Distribution):
         and non-clipped (-1 < upsilon_t < 1). For the first two cases,
         Normal CDF is used instead of PDF due to censoring.
         The log density term is computed for each and then add up.
-        '''
+        """
         (U_obs, value) = inputs
         left_clip_ind = tf.where(tf.less_equal(
             U_obs, (-self.clip_range + self.clip_tol)),
@@ -281,18 +388,15 @@ class GBDS_u(RandomVariable, Distribution):
         return LogDensity
 
     def _log_prob(self, value):
-        '''
-        Return a theano function that evaluates the log-density of the
-        GenerativeModel.
-
-        g: Goal state time series (sample from the recognition model)
-        Y: Time series of positions
-        '''
+        """Evaluates the log-density of the GenerativeModel.
+        """
+        
         # Calculate real control signal
         with tf.name_scope('observed_control_signal'):
             U_obs = tf.concat([tf.zeros([self.B, 1, self.yDim]), 
                                (tf.gather(self.y, self.yCols, axis=-1)[:, 1:] -
-                                tf.gather(self.y, self.yCols, axis=-1)[:, :-1]) /
+                                tf.gather(self.y, self.yCols,
+                                          axis=-1)[:, :-1]) /
                                tf.reshape(self.vel, [1, self.yDim])], 1,
                               name='U_obs')
         # Get predictions for next timestep (at each timestep except for last)
@@ -308,32 +412,6 @@ class GBDS_u(RandomVariable, Distribution):
             LogDensity += tf.scan(self.clip_loss, (U_obs, value),
                                   initializer=0.0, name='clip_noise')
 
-            # left_clip_ind = tf.where(tf.less_equal(
-            #     U_obs, (-self.clip_range + self.clip_tol)),
-            #     name='left_clip_indices')
-            # right_clip_ind = tf.where(tf.greater_equal(
-            #     U_obs, (self.clip_range - self.clip_tol)),
-            #     name='right_clip_indices')
-            # non_clip_ind = tf.where(tf.logical_and(
-            #     tf.greater(U_obs, (-self.clip_range + self.clip_tol)),
-            #     tf.less(U_obs, (self.clip_range - self.clip_tol))),
-            #     name='non_clip_indices')
-            # left_clip_node = Normal(tf.gather_nd(value, left_clip_ind),
-            #                         self.eta, name='left_clip_node')
-            # right_clip_node = Normal(tf.gather_nd(-value, right_clip_ind),
-            #                          self.eta, name='right_clip_node')
-            # non_clip_node = Normal(tf.gather_nd(value, non_clip_ind),
-            #                        self.eta, name='non_clip_node')
-            # LogDensity += tf.reduce_sum(tf.reshape(
-            #     left_clip_node.log_cdf(-1., name='left_clip_logcdf'),
-            #     [self.B, -1]), axis=1)
-            # LogDensity += tf.reduce_sum(tf.reshape(
-            #     right_clip_node.log_cdf(-1., name='right_clip_logcdf'),
-            #     [self.B, -1]), axis=1)
-            # LogDensity += tf.reduce_sum(tf.reshape(
-            #     non_clip_node.log_prob(tf.gather_nd(U_obs, non_clip_ind),
-            #         name='non_clip_logpdf'), [self.B, -1]), axis=1)
-
             resU = value[:, 1:] - Upred
             LogDensity -= tf.reduce_sum(resU ** 2 / (2 * self.eps ** 2),
                                         axis=[1, 2])
@@ -347,44 +425,55 @@ class GBDS_u(RandomVariable, Distribution):
         return LogDensity
 
     def getParams(self):
-        '''
-        Return the learnable parameters of the model
-        '''
+        """Return the learnable parameters of the model
+        """
+        
         rets = self.PID_params #+ [self.unc_eps]
         return rets
 
 class GBDS_g(RandomVariable, Distribution):
+    """A customized Random Variable of goal in Goal-Based Dynamical System
     """
-    Goal-Based Dynamical System
-
-    Inputs:
-    - GenerativeParams: A dictionary of parameters for the model
-        Entries include:
-        - get_states: function that calculates current state from position
-        - pen_eps: Penalty on control signal noise, epsilon
-        - pen_sigma: Penalty on goals state noise, sigma
-        - pen_g: Two penalties on goal state leaving boundaries (Can be set
-                 None)
-        - bounds_g: Boundaries corresponding to above penalties
-        - NN_postJ_mu: Neural network that parametrizes the mean of the
-                       posterior of J (i.e. mu and sigma), conditioned on
-                       goals
-        - NN_postJ_sigma: Neural network that parametrizes the covariance of
-                          the posterior of J (i.e. mu and sigma), conditioned
-                          on goals
-        - yCols: Columns of Y this agent corresponds to. Used to index columns
-                 in real data to compare against generated data.
-        - vel: Maximum velocity of each dimension in yCols.
-    - yDim: Number of dimensions for this agent
-    - yDim_in: Number of total dimensions in the data
-    - srng: Theano symbolic random number generator (theano RandomStreams
-            object)
-    - nrng: Numpy random number generator
-    """
+  
     def __init__(self, GenerativeParams, yDim, yDim_in, y, name='GBDS_g',
                  value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
+        """Initialize a batch of GBDS_g random variables for one of the agent
+        
+        
+        Args:
+          GenerativeParams: A dictionary of parameters for the agent
+          Entries include:
+            - get_states: function that calculates current state from position
+            - pen_eps: Penalty on control signal noise, epsilon
+            - pen_sigma: Penalty on goals state noise, sigma
+            - pen_g: Two penalties on goal state leaving boundaries (Can be set
+                     None)
+            - bounds_g: Boundaries corresponding to above penalties
+            - NN_postJ_mu: Neural network that parametrizes the mean of the
+                           posterior of J (i.e. mu and sigma), conditioned on
+                           goals
+            - NN_postJ_sigma: Neural network that parametrizes the covariance
+                              of the posterior of J (i.e. mu and sigma),
+                              conditioned on goals
+            - yCols: Columns of Y this agent corresponds to. Used to index
+                     columns in real data to compare against generated data.
+            - vel: Maximum velocity of each dimension in columns belong to this
+                   agent(yCols)
+            - all_vel: Maximum velocity of each dimension in columns belong to
+                       all agents
+            - clip: Clipping signal
+            - clip_range: the range of the clipping states
+            - clip_tol: the tolenrance of clipping
+            - GMM_net: Gaussian Mixture Model network
+            - GMM_k: Number of GMM components
+          yDim: Number of dimensions for the agent
+          yDim_in: Number of dimensions for the data
+          y: Time series of positions
+          value: The Random Variable sample of goal.
+
+        """
 
         with tf.name_scope('dimension'):
             self.yDim_in = yDim_in  # dimension of observation input
@@ -446,8 +535,7 @@ class GBDS_g(RandomVariable, Distribution):
 
     def get_preds(self, Y, training=False, post_g=None,
                   gen_g=None, extra_conds=None):
-        """
-        Return the predicted next J, g, U, and Y for each point in Y.
+        """Return the predicted next J, g, U, and Y for each point in Y.
 
         For training: provide post_g, sample from the posterior,
                       which is used to calculate the ELBO
@@ -490,22 +578,10 @@ class GBDS_g(RandomVariable, Distribution):
                                       [self.B, -1, 1, self.yDim]) +
                            all_mu * all_lambda) / (1 + all_lambda))
 
-            # elif gen_g is not None:  # Generate next goals
-            #     # Get external force from GMM
-            #     (mu_k, lambda_k), _ = self.sample_GMM(all_mu, all_lambda, all_w)
-            #     goal = ((gen_g[(-1,)] + lambda_k[(-1,)] * mu_k[(-1,)]) /
-            #             (1 + lambda_k[(-1,)]))
-            #     var = self.sigma**2 / (1 + lambda_k[(-1,)])
-            #     goal += tf.random.normal(goal.shape) * tf.sqrt(var)
-            #     next_g = tf.concat([gen_g[1:], goal], axis=0)
-            # else:
-            #     raise Exception("Goal states must be provided " +
-            #                     "(either posterior or generated)")
         return (all_mu, all_lambda, all_w, next_g)
 
     def sample_GMM(self, mu, lmbda, w):
-        """
-        Sample from GMM based on highest weight component
+        """Sample from GMM based on highest weight component
         """
         # mu = tf.reshape(self.GMM_mu(states), [-1, self.K, self.yDim])
         # lmbda = tf.reshape(self.GMM_lambda(states),
@@ -550,8 +626,8 @@ class GBDS_g(RandomVariable, Distribution):
             gmm_term += (0.5 * tf.log(1 + all_lambda) -
                          0.5 * tf.log(2 * np.pi) -
                          tf.log(tf.reshape(self.sigma, [1, 1, 1, -1])))
-            LogDensity += tf.reduce_sum(tf.reduce_logsumexp(tf.reduce_sum(
-                gmm_term, axis=-1), axis=-1), axis=-1)
+            LogDensity += tf.reduce_sum(logsumexp(tf.reduce_sum(
+                gmm_term, axis=-1), axis=-1), axis=[-2,-1])
 
         with tf.name_scope('goal_and_control_penalty'):
             if self.pen_g is not None:
@@ -567,8 +643,7 @@ class GBDS_g(RandomVariable, Distribution):
         return LogDensity
 
     def getParams(self):
-        '''
-        Return the learnable parameters of the model
-        '''
+        """Return the learnable parameters of the model
+        """
         rets = self.GMM_net.variables
         return rets

@@ -180,7 +180,8 @@ def build_hyperparameter_dict(flags):
     return d
 
 class hps_dict_to_obj(dict):
-    '''Helper class allowing us to access hps dictionary more easily.'''
+    """Helper class allowing us to access hps dictionary more easily.
+    """
     def __getattr__(self, key):
         if key in self:
             return self[key]
@@ -190,6 +191,8 @@ class hps_dict_to_obj(dict):
         self[key] = value
 
 def load_data(hps):
+    """ Loading real data from local folder
+    """
     if hps.synthetic_data:
         data, goals = gen_data(
             n_trial=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
@@ -215,6 +218,8 @@ def load_data(hps):
     return train_data, val_data
 
 def run_model(model_type, hps):
+    """ Train GBDS model on real data
+    """
     if not os.path.exists(hps.model_dir):
         os.makedirs(hps.model_dir)
 
@@ -241,6 +246,7 @@ def run_model(model_type, hps):
         train_ntrials = len(train_data)
         val_ntrials = len(val_data)
 
+        # Initialize all of the parameters in the model
         with tf.name_scope('rec_control_params'):
             rec_params_u = get_rec_params_GBDS(
                 total_dim, hps.rec_lag, hps.rec_nlayers, hps.rec_hidden_dim,
@@ -270,9 +276,10 @@ def run_model(model_type, hps):
             PID_params_ball = init_PID_params('Ball', hps.p2_dim)
 
     with tf.name_scope('model_setup'):
+        # Creat the placeholder to input data
         Y_ph = tf.placeholder(tf.float32, shape=(None, None, total_dim),
                               name='data')
-
+        # Generate real goal and control signal 
         with tf.name_scope('gen_g'):
             p_G = G.GBDS_g_all(gen_params_goalie, gen_params_ball, total_dim,
                                Y_ph, value=tf.zeros_like(Y_ph))
@@ -280,7 +287,7 @@ def run_model(model_type, hps):
             p_U = G.GBDS_u_all(gen_params_goalie, gen_params_ball, p_G, Y_ph,
                                total_dim, PID_params_goalie, PID_params_ball,
                                value=tf.zeros_like(Y_ph))
-
+        # Generate posterior goal and control signal
         with tf.name_scope('rec_g'):
             q_G = R.SmoothingPastLDSTimeSeries(rec_params_g, Y_ph, total_dim,
                                                total_dim, Dyn_params_g,
@@ -289,7 +296,7 @@ def run_model(model_type, hps):
             q_U = R.SmoothingPastLDSTimeSeries(rec_params_u, Y_ph, total_dim,
                                                total_dim, Dyn_params_u,
                                                train_ntrials)
-
+        # Generate real state based on control signal and velocility
         with tf.name_scope('obs'):
             # Y_pred_t = Y_(t-1)+max_vel*tanh(u_t) ,where Y_pred_0 = Y_0
             if hps.clip:
@@ -306,11 +313,14 @@ def run_model(model_type, hps):
 
     print('--------------Generative Params----------------')
     if hps.eps_penalty is not None:
-        print('Penalty on control signal variance, epsilon (Generative): %i' % hps.eps_penalty)
+        print('Penalty on control signal variance, epsilon (Generative): %i'
+              % hps.eps_penalty)
     if hps.sigma_penalty is not None:
-        print('Penalty on goal state variance, sigma (Generative): %i' % hps.sigma_penalty)
+        print('Penalty on goal state variance, sigma (Generative): %i'
+              % hps.sigma_penalty)
     if hps.goal_bound_penalty is not None:
-        print('Penalty on goal state leaving boundary (Generative): %i' % hps.goal_bound_penalty)
+        print('Penalty on goal state leaving boundary (Generative): %i'
+              % hps.goal_bound_penalty)
     print('Number of GMM components: %i' % hps.K)
     print('--------------Recognition Params---------------')
     print('Num Layers (VILDS recognition): %i' % hps.rec_nlayers)
@@ -334,6 +344,7 @@ def run_model(model_type, hps):
                 GMM_mu, GMM_lambda, GMM_w, _ = p_G.ball.get_preds(
                     Y_ph, training=True, post_g=q_G.sample(1))
 
+    # Calculate variational inference using Edward KLqp function
     if model_type == 'VI_KLqp':
         batches = next(batch_generator(train_data, hps.B))
         n_batches = math.ceil(train_ntrials / hps.B)
@@ -341,7 +352,6 @@ def run_model(model_type, hps):
                     q_G.getParams() + q_U.getParams())
         if hps.opt == 'Adam':
             optimizer = tf.train.AdamOptimizer(hps.learning_rate)
-
         inference = ed.KLqp({p_G:q_G, p_U:q_U}, data={Y: Y_ph})
         inference.initialize(n_iter=hps.n_epochs * n_batches,
                              # scale={Y: train_ntrials / hps.B},
@@ -366,6 +376,8 @@ def run_model(model_type, hps):
         saver.save(sess, hps.model_dir + '/saved_model')
 
 def main(_):
+    """ The main process of training the GBDS model
+    """
     d = build_hyperparameter_dict(FLAGS)
     hps = hps_dict_to_obj(d)  # hyper-parameters
     model_type = FLAGS.model_type

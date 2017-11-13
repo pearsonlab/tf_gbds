@@ -15,8 +15,7 @@ from edward import KLqp
 
 
 class set_cbar_zero(Normalize):
-    """
-    set_cbar_zero(midpoint = float)       default: midpoint = 0.
+    """set_cbar_zero(midpoint = float)       default: midpoint = 0.
     Normalizes and sets the center of any colormap to the desired value which
     is set using midpoint.
     """
@@ -32,8 +31,7 @@ class set_cbar_zero(Normalize):
 
 
 def gauss_convolve(x, sigma, pad_method='edge_pad'):
-    """
-    Smoothing with gaussian convolution
+    """Smoothing with gaussian convolution
     Pad Methods:
         * edge_pad: pad with the values on the edges
         * extrapolate: extrapolate the end pad based on dx at the end
@@ -71,6 +69,8 @@ def gauss_convolve(x, sigma, pad_method='edge_pad'):
 
 
 def smooth_trial(trial, sigma=4.0, pad_method='extrapolate'):
+    """Apply Gaussian convolution Smoothing method to real data
+    """
     rtrial = trial.copy()
     for i in range(rtrial.shape[1]):
         rtrial[:, i] = gauss_convolve(rtrial[:, i], sigma,
@@ -79,6 +79,8 @@ def smooth_trial(trial, sigma=4.0, pad_method='extrapolate'):
 
 
 def get_session_names(file_loc, columns, values, comb=np.all):
+    """Get session names from real data
+    """
     data_index = pd.read_csv(expanduser(file_loc), index_col=0)
     rows = comb([data_index[column] == value for column, value in zip(columns,
                                                                       values)],
@@ -88,9 +90,8 @@ def get_session_names(file_loc, columns, values, comb=np.all):
 
 def load_pk_data(file_loc, session_names, train_split=0.85, get_spikes=False,
                  get_gaze=False, norm_x=True):
-    """
-    Load penaltykick data. norm_x flag converts range of x-dim from (0, 1) to
-    (-1, 1)
+    """Load penaltykick data. norm_x flag converts range of x-dim from (0, 1)
+    to (-1, 1)
     """
     datafile = h5py.File(expanduser(file_loc))
 
@@ -210,6 +211,8 @@ def load_pk_data(file_loc, session_names, train_split=0.85, get_spikes=False,
 
 
 def get_max_velocities(y_data, y_val_data):
+    """Get the maximium velocities from data
+    """
     goalie_y_vels = []
     ball_x_vels = []
     ball_y_vels = []
@@ -233,8 +236,7 @@ def get_max_velocities(y_data, y_val_data):
 
 
 def get_vel(data, max_vel=None):
-    """
-    Input a time series of positions and include velocities for each
+    """Input a time series of positions and include velocities for each
     coordinate in each row
     """
     if isinstance(data, tf.Tensor):
@@ -255,8 +257,7 @@ def get_vel(data, max_vel=None):
 
 
 def get_accel(data, max_vel=None):
-    """
-    Input a time series of positions and include velocities and acceleration
+    """Input a time series of positions and include velocities and acceleration
     for each coordinate in each row
     """
     if isinstance(data, tf.Tensor):
@@ -274,8 +275,7 @@ def get_accel(data, max_vel=None):
 def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
                 PKLparams, batchnorm=False, is_shooter=False,
                 row_sparse=False, add_pklayers=False, filt_size=None):
-    """
-    Returns a NN with the specified parameters.
+    """Returns a NN with the specified parameters.
     Also returns a list of PKBias layers
     """
     PKbias_layers = []
@@ -295,7 +295,8 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
             # custom pad so that no timepoint gets input from future
             NN.add(keras_layers.ZeroPadding1D(padding=(filt_size - 1, 0),
                                               name='%s_ZeroPadding' % name))
-            # Perform convolution (no pad, no filter flip (for interpretability))
+            # Perform convolution (no pad, no filter flip
+            # (for interpretability))
             NN.add(keras_layers.Conv1D(
                 filters=hidden_dim, kernel_size=filt_size, padding='valid',
                 activation=tf.nn.relu,
@@ -344,6 +345,9 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
 
 def get_rec_params_GBDS(obs_dim, lag, num_layers, hidden_dim, penalty_Q,
                         PKLparams, name):
+    """Return a dictionary of timeseries-specific parameters for recognition
+       model
+    """
 
     with tf.name_scope('rec_mu_%s' % name):
         mu_net, PKbias_layers_mu = get_network('rec_mu_%s' % name,
@@ -361,7 +365,8 @@ def get_rec_params_GBDS(obs_dim, lag, num_layers, hidden_dim, penalty_Q,
                                                        batchnorm=False)
 
     with tf.name_scope('rec_lambdaX_%s' % name):
-        lambdaX_net, PKbias_layers_lambdaX = get_network('rec_lambdaX_%s' % name,
+        lambdaX_net, PKbias_layers_lambdaX = get_network('rec_lambdaX_%s'
+                                                         % name,
                                                          obs_dim * (lag + 1),
                                                          obs_dim**2,
                                                          hidden_dim,
@@ -392,6 +397,9 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
                             penalty_eps, penalty_sigma,
                             boundaries_g, penalty_g,
                             clip, clip_range, clip_tol, eta, name):
+    """Return a dictionary of timeseries-specific parameters for generative
+       model
+    """
 
     with tf.name_scope('get_states_%s' % name):
         if add_accel:
@@ -425,6 +433,8 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
 
 
 def init_PID_params(player, Dim):
+    """Return a dictionary of PID controller parameters
+    """
     PID_params = {}
     PID_params['unc_Kp'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
                                        name='unc_Kp_' + player,
@@ -443,6 +453,8 @@ def init_PID_params(player, Dim):
 
 
 def init_Dyn_params(player, RecognitionParams):
+    """Return a dictionary of dynamical parameters
+    """
     Dyn_params = {}
     Dyn_params['A'] = tf.Variable(RecognitionParams['A'], name='A_' + player,
                                   dtype=tf.float32)
@@ -456,138 +468,12 @@ def init_Dyn_params(player, RecognitionParams):
     return Dyn_params
 
 
-# def compile_functions_vb_training(model, learning_rate, add_pklayers=False,
-#                                   joint_spikes=False, cap_noise=False,
-#                                    mode='FAST_RUN'):
-#     # Define a bare-bones theano training function
-#     batch_y = tf.placeholder(tf.float32, shape=(None, None), name='batch_y')
-#     givens = {model.Y: batch_y}
-#     inputs = [theano.In(batch_y)]
-#     if add_pklayers:
-#         batch_mode = T.ivector('batch_mode')
-#         givens[model.mode] = batch_mode
-#         inputs += [theano.In(batch_mode)]
-#     if joint_spikes and model.isTrainingSpikeModel:
-#         batch_spikes = T.imatrix('batch_spikes')
-#         batch_signals = T.ivector('batch_signals')
-#         givens[model.spikes] = batch_spikes
-#         givens[model.signals] = batch_signals
-#         inputs += [theano.In(batch_spikes), theano.In(batch_signals)]
-
-#     # use lasagne to get adam updates, and constrain norms
-#     # control model functions
-#     model.set_training_mode('CTRL')
-#     ctrl_updates = lasagne.updates.adam(-model.cost(), model.getParams(),
-#     learning_rate=learning_rate)
-#     for param in model.getParams():
-#         if param.name == 'W' or param.name == 'b' or param.name == 'G':
-#         # only on NN parameters
-#             ctrl_updates[param] = lasagne.updates
-#                                    .norm_constraint(ctrl_updates[param],
-#                                                     max_norm=5,
-#                                                      norm_axes=[0])
-#         if cap_noise and (param.name == 'QinvChol' or
-#                            param.name == 'Q0invChol'):
-#             ctrl_updates[param] = lasagne.updates
-#                                    .norm_constraint(ctrl_updates[param],
-#                                                     max_norm=30,
-#                                                     norm_axes=[0])
-
-#     # Finally, compile the function that will actually take gradient steps.
-#     ctrl_train_fn = theano.function(
-#         outputs=model.cost(),
-#         inputs=inputs,
-#         updates=ctrl_updates,
-#         givens=givens,
-#         mode=mode)
-#     ctrl_test_fn = theano.function(
-#         outputs=model.cost(),
-#         inputs=inputs,
-#         givens=givens)
-
-#     return ctrl_train_fn, ctrl_test_fn
-
-
-# def compile_functions_cgan_training(model, learning_rate, mode='FAST_RUN'):
-#     batch_J, batch_s = T.matrices('batch_J', 'batch_s')
-
-#     # GAN generator training function
-#     model.set_training_mode('CGAN_G')
-#     gan_g_updates = lasagne.updates.adam(-model.cost(), model.getParams(),
-#                                          learning_rate=learning_rate)
-#     for param in model.getParams():
-#         if param.name == 'W' or param.name == 'b' or param.name == 'G':
-#          # only on NN parameters
-#             gan_g_updates[param] = lasagne.updates
-#                                     .norm_constraint(gan_g_updates[param],
-#                                                      max_norm=5,
-#                                                      norm_axes=[0])
-
-#     # Finally, compile the function that will actually take gradient steps.
-#     gan_g_train_fn = theano.function(
-#         outputs=model.cost(),
-#         inputs=[theano.In(batch_s)],
-#         updates=gan_g_updates,
-#         givens={model.s: batch_s},
-#         mode=mode)
-
-#     # GAN discriminator training function
-#     model.set_training_mode('CGAN_D')
-#     gan_d_updates = lasagne.updates.adam(-model.cost(), model.getParams(),
-#                                          learning_rate=learning_rate)
-
-#     # Finally, compile the function that will actually take gradient steps.
-#     gan_d_train_fn = theano.function(
-#         outputs=model.cost(),
-#         inputs=[theano.In(batch_J), theano.In(batch_s)],
-#         updates=gan_d_updates,
-#         givens={model.J: batch_J, model.s: batch_s},
-#         mode=mode)
-
-#     return gan_g_train_fn, gan_d_train_fn
-
-
-# def compile_functions_gan_training(model, learning_rate, mode='FAST_RUN'):
-#     batch_g0 = T.matrix('batch_g0')
-
-#     # GAN generator training function
-#     model.set_training_mode('GAN_G')
-#     gan_g_updates = lasagne.updates.adam(-model.cost(), model.getParams(),
-#                                          learning_rate=learning_rate)
-#     for param in model.getParams():
-#         if param.name == 'W' or param.name == 'b' or param.name == 'G':
-#               # only on NN parameters
-#             gan_g_updates[param] = lasagne.updates
-#              .norm_constraint(gan_g_updates[param],
-#                               max_norm=5, norm_axes=[0])
-
-#     # Finally, compile the function that will actually take gradient steps.
-#     gan_g_train_fn = theano.function(
-#         outputs=model.cost(),
-#         inputs=[theano.In(batch_g0)],
-#         updates=gan_g_updates,
-#         givens={model.g0: batch_g0},
-#         mode=mode)
-
-#     # GAN discriminator training function
-#     model.set_training_mode('GAN_D')
-#     gan_d_updates = lasagne.updates.adam(-model.cost(), model.getParams(),
-#                                          learning_rate=learning_rate)
-
-#     # Finally, compile the function that will actually take gradient steps.
-#     gan_d_train_fn = theano.function(
-#         outputs=model.cost(),
-#         inputs=[theano.In(batch_g0)],
-#         updates=gan_d_updates,
-#         givens={model.g0: batch_g0},
-#         mode=mode)
-
-#     return gan_g_train_fn, gan_d_train_fn
-
 
 def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
              eps=1e-5, Kp=1, Ki=0, Kd=0,
              vel=1e-2 * np.ones((3))):
+    """Generate fake data to test the accuracy of the model
+    """
     p = []
     g = []
 
@@ -601,15 +487,20 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
         int_error_g = 0
 
         init_b_x = np.pi * (np.random.rand() * 2 - 1)
-        g_b_x_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) - init_b_x))
+        g_b_x_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
+                                       init_b_x))
         init_b_y = np.pi * (np.random.rand() * 2 - 1)
-        g_b_y_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) - init_b_y))
-        g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1), g_b_y_mu.reshape(n_obs, 1)])
+        g_b_y_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
+                                       init_b_y))
+        g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1), g_b_y_mu.reshape(n_obs,
+                                                                         1)])
         g_b_lambda = np.array([16, 16], np.float32)
-        g_b[0] = [0.25 * (np.random.rand() * 2 - 1), 0.25 * (np.random.rand() * 2 - 1)]
+        g_b[0] = [0.25 * (np.random.rand() * 2 - 1),
+                  0.25 * (np.random.rand() * 2 - 1)]
 
         for t in range(n_obs - 1):
-            g_b[t + 1] = (g_b[t] + g_b_lambda * g_b_mu[t + 1]) / (1 + g_b_lambda)
+            g_b[t + 1] = (g_b[t] + g_b_lambda * g_b_mu[t + 1]) / (1 +
+                                                                  g_b_lambda)
             var = sigma ** 2 / (1 + g_b_lambda)
             g_b[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
 
@@ -636,6 +527,9 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
 
 
 def batch_generator(arrays, batch_size):
+     """Minibatch generator over one dataset of shape
+    (nobservations, ndimensions)
+    """
     size = len(arrays)
     n_batch = math.ceil(size / batch_size)
     np.random.shuffle(arrays)
@@ -655,7 +549,8 @@ def batch_generator(arrays, batch_size):
 
 
 class DatasetTrialIndexIterator(object):
-    """ Basic trial iterator """
+    """Basic trial iterator
+    """
     def __init__(self, y, randomize=False, batch_size=1):
         self.y = y
         self.randomize = randomize
@@ -673,8 +568,7 @@ class DatasetTrialIndexIterator(object):
 
 
 class MultiDatasetTrialIndexIterator(object):
-    """
-    Trial iterator over multiple datasets of shape
+    """Trial iterator over multiple datasets of shape
     (ntrials, trial_len, trial_dimensions)
     """
     def __init__(self, data, randomize=False, batch_size=1):
@@ -693,7 +587,10 @@ class MultiDatasetTrialIndexIterator(object):
                 yield tuple(dset[i] for dset in self.data)
                 
 
-class MultiDataSetTrialIndexTF(object):
+class DataSetTrialIndexTF(object):
+    """Tensor version of Minibatch iterator over one dataset of shape
+    (nobservations, ndimensions)
+    """
     def __init__(self, data, batch_size=100):
         self.data = data
         self.batch_size = batch_size
@@ -701,13 +598,11 @@ class MultiDataSetTrialIndexTF(object):
         new_data = [tf.constant(d) for d in self.data]
         data_iter_vb_new = tf.train.batch(new_data, self.batch_size,
                                           dynamic_pad=True)
-        data_iter_vb = [vb.eval() for vb in data_iter_vb_new]
-        return iter(data_iter_vb)
-
+        #data_iter_vb = [vb.eval() for vb in data_iter_vb_new]
+        return iter(data_iter_vb_new)
 
 class DatasetMiniBatchIterator(object):
-    """
-    Minibatch iterator over one dataset of shape
+    """Minibatch iterator over one dataset of shape
     (nobservations, ndimensions)
     """
     def __init__(self, data, batch_size, randomize=False):
@@ -730,8 +625,7 @@ class DatasetMiniBatchIterator(object):
 
 
 class MultiDatasetMiniBatchIterator(object):
-    """
-    Minibatch iterator over multiple datasets of shape
+    """Minibatch iterator over multiple datasets of shape
     (nobservations, ndimensions)
     """
     def __init__(self, data, batch_size, randomize=False):

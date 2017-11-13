@@ -12,16 +12,17 @@ def compute_sym_blk_tridiag(AA, BB, iia=None, iib=None):
     symmetric so this doesn't really matter, but be careful.
 
     Input:
-    AA - (T x n x n) diagonal blocks
-    BB - (T-1 x n x n) off-diagonal blocks (upper triangle)
+    AA - (Batch_size x T x n x n) diagonal blocks
+    BB - (Batch_size x T-1 x n x n) off-diagonal blocks (upper triangle)
     iia - (T x 1) block index of AA for the diagonal
     iib - (T-1 x 1) block index of BB for the off-diagonal
 
     Output:
-    D  - (T x n x n) diagonal blocks of the inverse
-    OD - (T-1 x n x n) off-diagonal blocks of the inverse (lower triangle)
-    S  - (T-1 x n x n) intermediary matrix computation used in inversion
-         algorithm
+    D  - (Batch_size x T x n x n) diagonal blocks of the inverse
+    OD - (Batch_size x T-1 x n x n) off-diagonal blocks of the inverse
+         (lower triangle)
+    S  - (Batch_size x T-1 x n x n) intermediary matrix computation used in
+         inversion algorithm
 
     From:
     Jain et al, 2006
@@ -111,7 +112,7 @@ def compute_sym_blk_tridiag(AA, BB, iia=None, iib=None):
                  initializer=tf.matmul(tf.transpose(S[:, -1], perm=[0, 2, 1]),
                                        D[:, 0]))
 
-    return [D, OD, S]  # , updates_D+updates_OD+updates_S]
+    return [D, OD, S] 
 
 
 def compute_sym_blk_tridiag_inv_b(S, D, b):
@@ -120,12 +121,12 @@ def compute_sym_blk_tridiag_inv_b(S, D, b):
     matrix.
 
     Input:
-    D  - (T x n x n) diagonal blocks of the inverse
-    S  - (T-1 x n x n) intermediary matrix computation returned by
+    D  - (Batch_size x T x n x n) diagonal blocks of the inverse
+    S  - (Batch_size x T-1 x n x n) intermediary matrix computation returned by
          the function compute_sym_blk_tridiag
 
     Output:
-    x - (T x n) solution of Cx = b
+    x - (Batch_size x T x n) solution of Cx = b
 
    From:
     Jain et al, 2006
@@ -134,11 +135,9 @@ def compute_sym_blk_tridiag_inv_b(S, D, b):
 
     (c) Evan Archer, 2015
     """
-    # print(b)
     batch_size = tf.shape(b)[0]
     nT = tf.shape(b)[1]
     d = tf.shape(b)[2]
-    # print(d)
     initp = tf.zeros(tf.shape(b)[2:4], dtype=tf.float32)
 
     def compute_p(acc, inputs):
@@ -181,5 +180,5 @@ def compute_sym_blk_tridiag_inv_b(S, D, b):
     y = tf.scan(compute_y, [tf.range(nT)],
                 initializer=tf.matmul(D[:, 0], p[:, -1]))
     y = tf.transpose(y, perm=[1, 0, 2, 3])
-    # return [y, updates_q+updates+y]
+
     return y
