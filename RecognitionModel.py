@@ -5,7 +5,7 @@ https://github.com/earcher/vilds/blob/master/code/RecognitionModel.py
 """
 import tensorflow as tf
 import numpy as np
-import tf_gbds.lib.blk_tridiag_chol_tools as blk
+import lib.blk_tridiag_chol_tools as blk
 from edward.models import RandomVariable
 from tensorflow.contrib.distributions import Distribution
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED

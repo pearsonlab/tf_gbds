@@ -1,24 +1,26 @@
-from tf_gbds.utils import *
+from utils import *
 import os
 import tensorflow as tf
 import numpy as np
-import tf_gbds.GenerativeModel_GMM_Edward as G
-import tf_gbds.RecognitionModel_Edward as R
+import GenerativeModel_GMM_Edward as G
+import RecognitionModel_Edward as R
 import edward as ed
 
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
 
 MODEL_DIR = 'model_gmm'
+DATA_LOC = '/home/krm58/Desktop/penaltykick/nointerp__2017-May-04.16-52-55_df.pkl'
+CUT_BEGIN = 19
 # MAX_SESSIONS = 10
 # SESSION_TYPE = 'recording'
 # SESSION_INDEX_DIR = ''
 DATA_DIR = ''
-SYNTHETIC_DATA = True
+SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 
 P1_DIM = 1
-P2_DIM = 2
+P2_DIM = 1
 
 REC_LAG = 10
 REC_NLAYERS = 3
@@ -61,6 +63,8 @@ flags.DEFINE_string('model_type', 'VI_KLqp',
                     'Type of model to build {VI_KLqp, HMM')
 flags.DEFINE_string('model_dir', MODEL_DIR,
                     'Directory where the model is saved')
+flags.DEFINE_string('data_loc', DATA_LOC, 'Directory where the data is saved, to be loaded in')
+flags.DEFINE_integer('cutBegin',CUT_BEGIN, 'How timepoints from the beginning of each trial are we cutting to avoid the "starting zeros" problem?')
 # flags.DEFINE_integer('max_sessions', MAX_SESSIONS,
 #                      'Maximum number of sessions to load')
 # flags.DEFINE_string('session_type', SESSION_TYPE,
@@ -136,6 +140,8 @@ def build_hyperparameter_dict(flags):
 
     d['model_type'] = flags.model_type
     d['model_dir'] = flags.model_dir
+    d['data_loc'] = flags.data_loc
+    d['cutBegin'] = flags.cutBegin
     # d['max_sessions'] = flags.max_sessions
     # d['session_type'] = flags.session_type
     # d['session_index_dir'] = flags.session_index_dir
@@ -199,25 +205,25 @@ def load_data(hps):
         data, goals = gen_data(
             n_trial=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
         np.random.seed(hps.seed)  # set seed for consistent train/val split
-        train_data = []
-        val_data = []
+        y_data = []
+        y_val_data = []
         val_goals = []
         for (trial_data, trial_goals) in zip(data, goals):
             if np.random.rand() <= hps.train_ratio:
-                train_data.append(trial_data)
+                y_data.append(trial_data)
             else:
-                val_data.append(trial_data)
+                y_val_data.append(trial_data)
                 val_goals.append(trial_goals)
-        np.save(hps.model_dir + '/train_data', train_data)
-        np.save(hps.model_dir + '/val_data', val_data)
+        np.save(hps.model_dir + '/y_data', y_data)
+        np.save(hps.model_dir + '/y_val_data', y_val_data)
         np.save(hps.model_dir + '/val_goals', val_goals)
     elif hps.data_dir is not None:
         goals = None
-        train_data, val_data = load_pk_data(hps)  # to be edited
+        y_data, y_val_data = load_pk_data(hps)  # to be edited
     else:
         raise Exception('Data must be provided (either real or synthetic)')
 
-    return train_data, val_data
+    return y_data, y_val_data
 
 
 def run_model(model_type, hps):
@@ -226,26 +232,29 @@ def run_model(model_type, hps):
     if not os.path.exists(hps.model_dir):
         os.makedirs(hps.model_dir)
 
-    train_data, val_data = load_data(hps)
-    train_ntrials = len(train_data)
-    val_ntrials = len(val_data)
-    val_data = np.array(val_data)
+    #y_data, y_val_data = load_data(hps) #this is for the synthesized data Sam and Qian did
+    y_data, y_data_modes, y_data_res, y_data_JS, y_data_opp, y_val_data, y_val_data_modes, y_val_data_res, y_val_data_JS, y_val_data_opp = load_pkhuman_data(hps.data_loc,cutBegin=hps.cutBegin)
+    train_ntrials = len(y_data)
+    val_ntrials = len(y_val_data)
+    y_val_data = np.array(y_val_data)
     print('Data loaded.')
 
     with tf.name_scope('params'):
         with tf.name_scope('columns'):
             p1_cols = np.arange(hps.p1_dim)
-            p2_cols = hps.p1_dim + np.arange(hps.p2_dim)
-            total_dim = hps.p1_dim + hps.p2_dim
+            #p2_cols = hps.p1_dim + np.arange(hps.p2_dim)
+            p2_cols = [2] #[0] is goalie y, [1] is ball x, [2] is ball y. Ball x is not modeled here. 
+            #total_dim = hps.p1_dim + hps.p2_dim
+            total_dim = 3
 
         # No CLI arguments for these bc no longer being used,
         # but left just in case
         penalty_Q = None
         PKLparams = None
 
-        vel = get_max_velocities(train_data, val_data)
-        train_ntrials = len(train_data)
-        val_ntrials = len(val_data)
+        vel = get_max_velocities(y_data, y_val_data)
+        train_ntrials = len(y_data)
+        val_ntrials = len(y_val_data)
 
         # Initialize all of the parameters in the model
         with tf.name_scope('rec_control_params'):
@@ -301,6 +310,7 @@ def run_model(model_type, hps):
         with tf.name_scope('obs'):
             # Y_pred_t = Y_(t-1)+max_vel*tanh(u_t) ,where Y_pred_0 = Y_0
             if hps.clip:
+                #vel_clip = [vel[0], vel[2]]
                 Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1), (Y_ph[:, :-1] +
                                (tf.reshape(vel, [1, total_dim]) *
                                 tf.clip_by_value(p_U[:, 1:], -hps.clip_range,
@@ -347,12 +357,15 @@ def run_model(model_type, hps):
 
     # Calculate variational inference using Edward KLqp function
     if model_type == 'VI_KLqp':
-        batches = next(batch_generator(train_data, hps.B))
+        batches = next(batch_generator(y_data, hps.B))
+        #batches = np.vstack([np.expand_dims(x, 0) for x in batches])
+        #batches = np.reshape(batches, [-1, 1])
         n_batches = math.ceil(train_ntrials / hps.B)
         var_list = (p_G.getParams() + p_U.getParams() +
                     q_G.getParams() + q_U.getParams())
         if hps.opt == 'Adam':
             optimizer = tf.train.AdamOptimizer(hps.learning_rate)
+        #import pdb; pdb.set_trace()
         inference = ed.KLqp({p_G: q_G, p_U: q_U}, data={Y: Y_ph})
         inference.initialize(n_iter=hps.n_epochs * n_batches,
                              # scale={Y: train_ntrials / hps.B},
@@ -364,13 +377,12 @@ def run_model(model_type, hps):
 
         for i in range(hps.n_epochs):
             for batch in batches:
-                import pdb; pdb.set_trace()
                 info_dict = inference.update({Y_ph: batch})
                 inference.print_progress(info_dict)
 
             if (i + 1) % 10 == 0:
                 val_loss = sess.run(inference.loss,
-                                    feed_dict={Y_ph: val_data})
+                                    feed_dict={Y_ph: y_val_data})
                 print('\n', 'Validation set loss after epoch %i: %.3f' %
                       (i + 1, val_loss / val_ntrials))
 
