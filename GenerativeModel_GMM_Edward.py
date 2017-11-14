@@ -309,6 +309,11 @@ class GBDS_u(RandomVariable, Distribution):
         self._kwargs['PID_params'] = PID_params
 
     def get_preds(self, Y, training=False, post_g=None, post_U=None):
+        """Return the predicted next U, and Y for each point in Y.
+
+        For training: provide post_g, sample from the posterior,
+                      which is used to calculate the ELBO
+        """
         with tf.name_scope('error'):
             # PID Controller for next control point
             if post_g is not None:  # calculate error from posterior goals
@@ -538,12 +543,10 @@ class GBDS_g(RandomVariable, Distribution):
 
     def get_preds(self, Y, training=False, post_g=None,
                   gen_g=None, extra_conds=None):
-        """Return the predicted next J, g, U, and Y for each point in Y.
+        """Return the predicted next g for each point in Y.
 
         For training: provide post_g, sample from the posterior,
                       which is used to calculate the ELBO
-        For generating new data: provide gen_g, the generated goal states up to
-                                 the current timepoint
         """
         if training and post_g is None:
             raise Exception(
@@ -587,10 +590,6 @@ class GBDS_g(RandomVariable, Distribution):
     def sample_GMM(self, mu, lmbda, w):
         """Sample from GMM based on highest weight component
         """
-        # mu = tf.reshape(self.GMM_mu(states), [-1, self.K, self.yDim])
-        # lmbda = tf.reshape(self.GMM_lambda(states),
-        #                    [-1, self.K, self.yDim])
-        # all_w = self.GMM_w(states)
 
         def select_components(acc, inputs):
             sub_mu, sub_lambda, w = inputs
