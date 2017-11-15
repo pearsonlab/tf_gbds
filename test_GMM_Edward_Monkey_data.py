@@ -9,12 +9,12 @@ import edward as ed
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
 
-MODEL_DIR = 'model_gmm'
-# MAX_SESSIONS = 10
-# SESSION_TYPE = 'recording'
-# SESSION_INDEX_DIR = ''
-DATA_DIR = ''
-SYNTHETIC_DATA = True
+MODEL_DIR = '/home/qiankuang/data/model_gmm'
+MAX_SESSIONS = 10
+SESSION_TYPE = 'recording'
+SESSION_INDEX_DIR = '/home/qiankuang/data/session_index.csv'
+DATA_DIR = '/home/qiankuang/data/compiled_penalty_kick_wspikes_resplined.hdf5'
+SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 
 P1_DIM = 1
@@ -61,12 +61,12 @@ flags.DEFINE_string('model_type', 'VI_KLqp',
                     'Type of model to build {VI_KLqp, HMM')
 flags.DEFINE_string('model_dir', MODEL_DIR,
                     'Directory where the model is saved')
-# flags.DEFINE_integer('max_sessions', MAX_SESSIONS,
-#                      'Maximum number of sessions to load')
-# flags.DEFINE_string('session_type', SESSION_TYPE,
-#                     'Type of data session')
-# flags.DEFINE_string('session_index_dir', SESSION_INDEX_DIR,
-#                     'Directory of session index file')
+flags.DEFINE_integer('max_sessions', MAX_SESSIONS,
+                     'Maximum number of sessions to load')
+flags.DEFINE_string('session_type', SESSION_TYPE,
+                    'Type of data session')
+flags.DEFINE_string('session_index_dir', SESSION_INDEX_DIR,
+                    'Directory of session index file')
 flags.DEFINE_string('data_dir', DATA_DIR, 'Directory of data file')
 flags.DEFINE_boolean('synthetic_data', SYNTHETIC_DATA,
                      'Is the model trained on synthetic data?')
@@ -136,9 +136,9 @@ def build_hyperparameter_dict(flags):
 
     d['model_type'] = flags.model_type
     d['model_dir'] = flags.model_dir
-    # d['max_sessions'] = flags.max_sessions
-    # d['session_type'] = flags.session_type
-    # d['session_index_dir'] = flags.session_index_dir
+    d['max_sessions'] = flags.max_sessions
+    d['session_type'] = flags.session_type
+    d['session_index_dir'] = flags.session_index_dir
     d['data_dir'] = flags.data_dir
     d['synthetic_data'] = flags.synthetic_data
     d['save_posterior'] = flags.save_posterior
@@ -195,6 +195,8 @@ class hps_dict_to_obj(dict):
 def load_data(hps):
     """ Loading real data from local folder
     """
+    train_data_modes = None
+    val_data_modes = None
     if hps.synthetic_data:
         data, goals = gen_data(
             n_trial=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
@@ -213,11 +215,24 @@ def load_data(hps):
         np.save(hps.model_dir + '/val_goals', val_goals)
     elif hps.data_dir is not None:
         goals = None
-        train_data, val_data = load_pk_data(hps)  # to be edited
+
+        if not os.path.exists(hps.model_dir):
+            os.makedirs(hps.model_dir)
+        if hps.session_type == 'recording':
+            print("Loading movement data from recording sessions...")
+            groups = get_session_names(hps, ('type',), ('recording',))
+        elif hps.session_type == 'injection':
+            print("Loading movement data from injection sessions...")
+            groups = get_session_names(hps, ('type', 'type'), ('saline',
+                                                               'muscimol'),
+                                       comb=np.any)
+        sys.stdout.flush()
+        groups = groups[-hps.max_sessions:]
+        train_data, train_data_modes, val_data, val_data_modes = load_pk_data(hps, groups)
     else:
         raise Exception('Data must be provided (either real or synthetic)')
-
-    return train_data, val_data
+        
+    return train_data, train_data_modes, val_data, val_data_modes
 
 
 def run_model(model_type, hps):
@@ -226,10 +241,10 @@ def run_model(model_type, hps):
     if not os.path.exists(hps.model_dir):
         os.makedirs(hps.model_dir)
 
-    train_data, val_data = load_data(hps)
+    train_data, train_data_modes, val_data, val_data_modes = load_data(hps)
     train_ntrials = len(train_data)
     val_ntrials = len(val_data)
-    val_data = np.array(val_data)
+    val_data = data_pad(val_data)
     print('Data loaded.')
 
     with tf.name_scope('params'):
@@ -347,7 +362,10 @@ def run_model(model_type, hps):
 
     # Calculate variational inference using Edward KLqp function
     if model_type == 'VI_KLqp':
-        batches = next(batch_generator(train_data, hps.B))
+        # batches = next(batch_generator(train_data, hps.B))
+        batches = next(batch_generator_pad(train_data, hps.B))
+        # batches = MultiDatasetTrialIndexIterator((train_data, train_data_modes),
+        #                                           randomize=True)
         n_batches = math.ceil(train_ntrials / hps.B)
         var_list = (p_G.getParams() + p_U.getParams() +
                     q_G.getParams() + q_U.getParams())
@@ -364,7 +382,6 @@ def run_model(model_type, hps):
 
         for i in range(hps.n_epochs):
             for batch in batches:
-                import pdb; pdb.set_trace()
                 info_dict = inference.update({Y_ph: batch})
                 inference.print_progress(info_dict)
 

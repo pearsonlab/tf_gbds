@@ -8,8 +8,6 @@ import pandas as pd
 from tensorflow.contrib.keras import layers as keras_layers
 from tensorflow.contrib.keras import constraints, models
 from matplotlib.colors import Normalize
-# import sys
-# sys.path.append(expanduser('~/code/gbds/code/'))
 from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
 
 
@@ -77,25 +75,26 @@ def smooth_trial(trial, sigma=4.0, pad_method='extrapolate'):
     return rtrial
 
 
-def get_session_names(file_loc, columns, values, comb=np.all):
+def get_session_names(hps, columns, values, comb=np.all):
     """Get session names from real data
     """
-    data_index = pd.read_csv(expanduser(file_loc), index_col=0)
+    data_index = pd.read_csv(expanduser(hps.session_index_dir), index_col=0)
     rows = comb([data_index[column] == value for column, value in zip(columns,
                                                                       values)],
                 axis=0)
+
     return data_index[rows].index.values.tolist()
 
 
-def load_pk_data(file_loc, session_names, train_split=0.85, get_spikes=False,
+def load_pk_data(hps, groups, train_split=0.85, get_spikes=False,
                  get_gaze=False, norm_x=True):
     """Load penaltykick data. norm_x flag converts range of x-dim from (0, 1)
     to (-1, 1)
     """
-    datafile = h5py.File(expanduser(file_loc))
+    datafile = h5py.File(expanduser(hps.data_dir))
 
     sessions = map(lambda sess_name: datafile.get(sess_name),
-                   session_names)
+                   groups)
 
     modes = {0: [0, 0, 0, 0],  # normal
              1: [1, 0, 0, 0],  # saline and DLPFC
@@ -546,6 +545,37 @@ def batch_generator(arrays, batch_size):
         yield batches
 
 
+def batch_generator_pad(arrays, batch_size):
+    """Minibatch generator over one dataset of shape
+    (nobservations, ndimensions)
+    """
+    size = len(arrays)
+    n_batch = math.ceil(size / batch_size)
+    np.random.shuffle(arrays)
+    start = 0
+    while True:
+        batches = []
+        for _ in range(n_batch):
+            stop = start + batch_size
+            diff = stop - size
+            if diff <= 0:
+                batch = arrays[start:stop]
+                start = stop
+            else:
+                batch = arrays[start:]
+            batch = data_pad(batch)
+            batches.append(batch)
+        yield batches
+
+
+def data_pad(array):
+    max_len = np.max([len(a) for a in array])
+    return np.array([np.pad(a, ((0, max_len-len(a)), (0, 0)),
+                            'edge') for a in array])
+    # return np.asarray([np.pad(a, ((0, max_len-len(a)), (0, 0)), 'constant',
+    #                           constant_values=0) for a in batch])
+
+
 class DatasetTrialIndexIterator(object):
     """Basic trial iterator
     """
@@ -576,7 +606,7 @@ class MultiDatasetTrialIndexIterator(object):
     def __iter__(self):
         n_batches = len(self.data[0])
         if self.randomize:
-            indices = range(n_batches)
+            indices = list(range(n_batches))
             np.random.shuffle(indices)
             for i in indices:
                 yield tuple(dset[i] for dset in self.data)
