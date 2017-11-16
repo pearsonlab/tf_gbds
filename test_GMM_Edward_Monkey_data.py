@@ -18,6 +18,7 @@ DATA_DIR = '/home/qiankuang/data/compiled_penalty_kick_wspikes_resplined.hdf5'
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
+SAVED_MODEL_DIR = '/home/qiankuang/data/model_gmm'
 
 P1_DIM = 1
 P2_DIM = 2
@@ -54,7 +55,8 @@ TRAIN_OPTIMIZER = 'Adam'
 LEARNING_RATE = 1e-3
 NUM_EPOCHS = 500
 BATCH_SIZE = 128
-NUM_SAMPLES = 30
+NUM_SAMPLES = 1
+NUM_POSTERIOR_SAMPLES = 30
 
 
 flags = tf.app.flags
@@ -73,9 +75,12 @@ flags.DEFINE_string('data_dir', DATA_DIR, 'Directory of data file')
 flags.DEFINE_boolean('synthetic_data', SYNTHETIC_DATA,
                      'Is the model trained on synthetic data?')
 flags.DEFINE_boolean('save_posterior', SAVE_POSTERIOR, 'Will posterior \
-                     distributions be retrieved after training?')
-flags.DEFINE_boolean('load_saved_model', LOAD_SAVED_MODEL, 'Whether restore \
-                     model from the checkpoint?')
+                     samples be retrieved after training?')
+flags.DEFINE_boolean('load_saved_model', LOAD_SAVED_MODEL, 'Is the model \
+                     restored from a checkpoint?')
+flags.DEFINE_string('saved_model_dir', SAVED_MODEL_DIR,
+                    'Directory where the model to be restored is saved')
+
 flags.DEFINE_integer('p1_dim', P1_DIM,
                      'Number of data dimensions corresponding to player 1')
 flags.DEFINE_integer('p2_dim', P2_DIM,
@@ -128,7 +133,9 @@ flags.DEFINE_float('learning_rate', LEARNING_RATE, 'Initial learning rate')
 flags.DEFINE_integer('num_epochs', NUM_EPOCHS,
                      'Number of iterations through the full training set')
 flags.DEFINE_integer('batch_size', BATCH_SIZE, 'Size of mini-batch')
-flags.DEFINE_integer('num_samples', NUM_SAMPLES,
+flags.DEFINE_integer('num_samples', NUM_SAMPLES, 'Number of posterior \
+                     samples for calculating stochastic gradients')
+flags.DEFINE_integer('num_posterior_samples', NUM_POSTERIOR_SAMPLES,
                      'Number of samples drawn from posterior distributions')
 
 FLAGS = flags.FLAGS
@@ -146,6 +153,7 @@ def build_hyperparameter_dict(flags):
     d['synthetic_data'] = flags.synthetic_data
     d['save_posterior'] = flags.save_posterior
     d['load_saved_model'] = flags.load_saved_model
+    d['saved_model_dir'] = flags.saved_model_dir
 
     d['p1_dim'] = flags.p1_dim
     d['p2_dim'] = flags.p2_dim
@@ -179,6 +187,7 @@ def build_hyperparameter_dict(flags):
     d['n_epochs'] = flags.num_epochs
     d['B'] = flags.batch_size
     d['n_samples'] = flags.num_samples
+    d['n_post_samples'] = flags.num_posterior_samples
 
     return d
 
@@ -220,8 +229,6 @@ def load_data(hps):
     elif hps.data_dir is not None:
         goals = None
 
-        if not os.path.exists(hps.model_dir):
-            os.makedirs(hps.model_dir)
         if hps.session_type == 'recording':
             print("Loading movement data from recording sessions...")
             groups = get_session_names(hps, ('type',), ('recording',))
@@ -351,11 +358,11 @@ def run_model(model_type, hps):
         with tf.name_scope('posterior'):
             with tf.name_scope('goal'):
                 q_G_mean = tf.squeeze(q_G.postX, -1, name='mean')
-                q_G_samp = tf.identity(q_G.sample(hps.n_samples),
+                q_G_samp = tf.identity(q_G.sample(hps.n_post_samples),
                                        name='samples')
             with tf.name_scope('control_signal'):
                 q_U_mean = tf.squeeze(q_U.postX, -1, name='mean')
-                q_U_samp = tf.identity(q_U.sample(hps.n_samples),
+                q_U_samp = tf.identity(q_U.sample(hps.n_post_samples),
                                        name='samples')
             with tf.name_scope('GMM_goalie'):
                 GMM_mu, GMM_lambda, GMM_w, _ = p_G.goalie.get_preds(
@@ -377,6 +384,7 @@ def run_model(model_type, hps):
             optimizer = tf.train.AdamOptimizer(hps.learning_rate)
         inference = ed.KLqp({p_G: q_G, p_U: q_U}, data={Y: Y_ph})
         inference.initialize(n_iter=hps.n_epochs * n_batches,
+                             n_samples=hps.n_samples,
                              # scale={Y: train_ntrials / hps.B},
                              var_list=var_list,
                              optimizer=optimizer,
@@ -385,7 +393,7 @@ def run_model(model_type, hps):
         tf.global_variables_initializer().run()
         saver = tf.train.Saver()
         if hps.load_saved_model:
-            saver.restore(sess, hps.model_dir + '/saved_model')
+            saver.restore(sess, hps.saved_model_dir + '/saved_model')
             print("Model restored.")
 
         for i in range(hps.n_epochs):
