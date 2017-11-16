@@ -5,6 +5,7 @@ import numpy as np
 import tf_gbds.GenerativeModel_GMM_Edward as G
 import tf_gbds.RecognitionModel_Edward as R
 import edward as ed
+import sys
 
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
@@ -16,6 +17,7 @@ SESSION_INDEX_DIR = '/home/qiankuang/data/session_index.csv'
 DATA_DIR = '/home/qiankuang/data/compiled_penalty_kick_wspikes_resplined.hdf5'
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
+LOAD_SAVED_MODEL = False
 
 P1_DIM = 1
 P2_DIM = 2
@@ -72,7 +74,8 @@ flags.DEFINE_boolean('synthetic_data', SYNTHETIC_DATA,
                      'Is the model trained on synthetic data?')
 flags.DEFINE_boolean('save_posterior', SAVE_POSTERIOR, 'Will posterior \
                      distributions be retrieved after training?')
-
+flags.DEFINE_boolean('load_saved_model', LOAD_SAVED_MODEL, 'Whether restore \
+                     model from the checkpoint?')
 flags.DEFINE_integer('p1_dim', P1_DIM,
                      'Number of data dimensions corresponding to player 1')
 flags.DEFINE_integer('p2_dim', P2_DIM,
@@ -142,6 +145,7 @@ def build_hyperparameter_dict(flags):
     d['data_dir'] = flags.data_dir
     d['synthetic_data'] = flags.synthetic_data
     d['save_posterior'] = flags.save_posterior
+    d['load_saved_model'] = flags.load_saved_model
 
     d['p1_dim'] = flags.p1_dim
     d['p2_dim'] = flags.p2_dim
@@ -379,6 +383,10 @@ def run_model(model_type, hps):
                              logdir=hps.model_dir + '/log')
         sess = ed.get_session()
         tf.global_variables_initializer().run()
+        saver = tf.train.Saver()
+        if hps.load_saved_model:
+            saver.restore(sess, hps.model_dir + '/saved_model')
+            print("Model restored.")
 
         for i in range(hps.n_epochs):
             for batch in batches:
@@ -391,7 +399,6 @@ def run_model(model_type, hps):
                 print('\n', 'Validation set loss after epoch %i: %.3f' %
                       (i + 1, val_loss / val_ntrials))
 
-        saver = tf.train.Saver()
         saver.save(sess, hps.model_dir + '/saved_model')
 
 
