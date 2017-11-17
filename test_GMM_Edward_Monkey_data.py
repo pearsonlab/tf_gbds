@@ -10,7 +10,7 @@ import sys
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
 
-MODEL_DIR = '/home/qiankuang/data/model_gmm'
+MODEL_DIR = '/home/qiankuang/data/model_gmm_copy2'
 MAX_SESSIONS = 10
 SESSION_TYPE = 'recording'
 SESSION_INDEX_DIR = '/home/qiankuang/data/session_index.csv'
@@ -18,7 +18,7 @@ DATA_DIR = '/home/qiankuang/data/compiled_penalty_kick_wspikes_resplined.hdf5'
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
-SAVED_MODEL_DIR = '/home/qiankuang/data/model_gmm'
+SAVED_MODEL_DIR = '/home/qiankuang/data/model_gmm_copy2'
 
 P1_DIM = 1
 P2_DIM = 2
@@ -57,7 +57,9 @@ NUM_EPOCHS = 500
 BATCH_SIZE = 128
 NUM_SAMPLES = 1
 NUM_POSTERIOR_SAMPLES = 30
-
+CHECKPOINT_NAME = "tf_gbds_monkey_checkpoint"
+MAX_CKPT_TO_KEEP = 5
+FREQUENCE_VAL_LOSS = 2
 
 flags = tf.app.flags
 
@@ -137,7 +139,12 @@ flags.DEFINE_integer('num_samples', NUM_SAMPLES, 'Number of posterior \
                      samples for calculating stochastic gradients')
 flags.DEFINE_integer('num_posterior_samples', NUM_POSTERIOR_SAMPLES,
                      'Number of samples drawn from posterior distributions')
+flags.DEFINE_integer('max_ckpt_to_keep', MAX_CKPT_TO_KEEP, 'maximum number of \
+                     checkpoint to save')
+flags.DEFINE_string('checkpoint_name', CHECKPOINT_NAME, 'name of checkpoint')
 
+flags.DEFINE_string('frequence_val_loss', FREQUENCE_VAL_LOSS, 'frequence of \
+                    saving validate loss')
 FLAGS = flags.FLAGS
 
 
@@ -188,7 +195,9 @@ def build_hyperparameter_dict(flags):
     d['B'] = flags.batch_size
     d['n_samples'] = flags.num_samples
     d['n_post_samples'] = flags.num_posterior_samples
-
+    d['max_ckpt_to_keep'] = flags.max_ckpt_to_keep
+    d['checkpoint_name'] = flags.checkpoint_name
+    d['frequence_val_loss'] = flags.frequence_val_loss
     return d
 
 
@@ -373,10 +382,7 @@ def run_model(model_type, hps):
 
     # Calculate variational inference using Edward KLqp function
     if model_type == 'VI_KLqp':
-        # batches = next(batch_generator(train_data, hps.B))
-        batches = next(batch_generator_pad(train_data, hps.B))
-        # batches = MultiDatasetTrialIndexIterator((train_data, train_data_modes),
-        #                                           randomize=True)
+
         n_batches = math.ceil(train_ntrials / hps.B)
         var_list = (p_G.getParams() + p_U.getParams() +
                     q_G.getParams() + q_U.getParams())
@@ -391,23 +397,36 @@ def run_model(model_type, hps):
                              logdir=hps.model_dir + '/log')
         sess = ed.get_session()
         tf.global_variables_initializer().run()
-        saver = tf.train.Saver()
+        lowest_ev_cost = np.Inf
+        seso_saver = tf.train.Saver(tf.global_variables(), max_to_keep=hps.max_ckpt_to_keep)
+        lve_saver = tf.train.Saver(tf.global_variables(), max_to_keep=hps.max_ckpt_to_keep)
+
         if hps.load_saved_model:
             saver.restore(sess, hps.saved_model_dir + '/saved_model')
             print("Model restored.")
 
         for i in range(hps.n_epochs):
+            batches = next(batch_generator_pad(train_data, hps.B))
+
             for batch in batches:
                 info_dict = inference.update({Y_ph: batch})
                 inference.print_progress(info_dict)
 
-            if (i + 1) % 10 == 0:
+            if (i + 1) % hps.frequence_val_loss == 0:
                 val_loss = sess.run(inference.loss,
                                     feed_dict={Y_ph: val_data})
                 print('\n', 'Validation set loss after epoch %i: %.3f' %
                       (i + 1, val_loss / val_ntrials))
+                seso_saver.save(sess, hps.model_dir + '/saved_model', global_step=i+1)
 
-        saver.save(sess, hps.model_dir + '/saved_model')
+                if val_loss < lowest_ev_cost:
+                    print("Saving check point...")
+                    lowest_ev_cost = val_loss
+                    checkpoint_path = os.path.join(hps.model_dir,
+                                         hps.checkpoint_name + '_lve.ckpt')
+                    lve_saver.save(sess, checkpoint_path, global_step=i+1,
+                              latest_filename='checkpoint_lve' )
+        seso_saver.save(sess, hps.model_dir + '/final_model')
 
 
 def main(_):
