@@ -19,6 +19,7 @@ SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
 SAVED_MODEL_DIR = '/home/qiankuang/data/model_gmm_copy2'
+DEVICE_TYPE = 'cpu'
 
 P1_DIM = 1
 P2_DIM = 2
@@ -57,9 +58,8 @@ NUM_EPOCHS = 500
 BATCH_SIZE = 128
 NUM_SAMPLES = 1
 NUM_POSTERIOR_SAMPLES = 30
-CHECKPOINT_NAME = "tf_gbds_monkey_checkpoint"
 MAX_CKPT_TO_KEEP = 5
-FREQUENCE_VAL_LOSS = 2
+FREQUENCE_VAL_LOSS = 5
 
 flags = tf.app.flags
 
@@ -82,6 +82,8 @@ flags.DEFINE_boolean('load_saved_model', LOAD_SAVED_MODEL, 'Is the model \
                      restored from a checkpoint?')
 flags.DEFINE_string('saved_model_dir', SAVED_MODEL_DIR,
                     'Directory where the model to be restored is saved')
+flags.DEFINE_string('device_type', DEVICE_TYPE, 'gpu or cpu to be selected as \
+                    the device type')
 
 flags.DEFINE_integer('p1_dim', P1_DIM,
                      'Number of data dimensions corresponding to player 1')
@@ -141,7 +143,6 @@ flags.DEFINE_integer('num_posterior_samples', NUM_POSTERIOR_SAMPLES,
                      'Number of samples drawn from posterior distributions')
 flags.DEFINE_integer('max_ckpt_to_keep', MAX_CKPT_TO_KEEP, 'maximum number of \
                      checkpoint to save')
-flags.DEFINE_string('checkpoint_name', CHECKPOINT_NAME, 'name of checkpoint')
 
 flags.DEFINE_string('frequence_val_loss', FREQUENCE_VAL_LOSS, 'frequence of \
                     saving validate loss')
@@ -161,7 +162,7 @@ def build_hyperparameter_dict(flags):
     d['save_posterior'] = flags.save_posterior
     d['load_saved_model'] = flags.load_saved_model
     d['saved_model_dir'] = flags.saved_model_dir
-
+    d['device_type'] = flags.device_type
     d['p1_dim'] = flags.p1_dim
     d['p2_dim'] = flags.p2_dim
 
@@ -196,7 +197,6 @@ def build_hyperparameter_dict(flags):
     d['n_samples'] = flags.num_samples
     d['n_post_samples'] = flags.num_posterior_samples
     d['max_ckpt_to_keep'] = flags.max_ckpt_to_keep
-    d['checkpoint_name'] = flags.checkpoint_name
     d['frequence_val_loss'] = flags.frequence_val_loss
     return d
 
@@ -248,10 +248,11 @@ def load_data(hps):
                                        comb=np.any)
         sys.stdout.flush()
         groups = groups[-hps.max_sessions:]
-        train_data, train_data_modes, val_data, val_data_modes = load_pk_data(hps, groups)
+        train_data, train_data_modes, val_data, val_data_modes = \
+            load_pk_data(hps, groups)
     else:
         raise Exception('Data must be provided (either real or synthetic)')
-        
+
     return train_data, train_data_modes, val_data, val_data_modes
 
 
@@ -398,11 +399,13 @@ def run_model(model_type, hps):
         sess = ed.get_session()
         tf.global_variables_initializer().run()
         lowest_ev_cost = np.Inf
-        seso_saver = tf.train.Saver(tf.global_variables(), max_to_keep=hps.max_ckpt_to_keep)
-        lve_saver = tf.train.Saver(tf.global_variables(), max_to_keep=hps.max_ckpt_to_keep)
+        seso_saver = tf.train.Saver(tf.global_variables(),
+                                    max_to_keep=hps.max_ckpt_to_keep)
+        lve_saver = tf.train.Saver(tf.global_variables(),
+                                   max_to_keep=hps.max_ckpt_to_keep)
 
         if hps.load_saved_model:
-            saver.restore(sess, hps.saved_model_dir + '/saved_model')
+            seso.saver.restore(sess, hps.saved_model_dir + '/saved_model')
             print("Model restored.")
 
         for i in range(hps.n_epochs):
@@ -412,20 +415,26 @@ def run_model(model_type, hps):
                 info_dict = inference.update({Y_ph: batch})
                 inference.print_progress(info_dict)
 
+            if i == 0:
+                seso_saver.save(sess, hps.model_dir + 'saved_model_epoch_one')
+
             if (i + 1) % hps.frequence_val_loss == 0:
                 val_loss = sess.run(inference.loss,
                                     feed_dict={Y_ph: val_data})
                 print('\n', 'Validation set loss after epoch %i: %.3f' %
                       (i + 1, val_loss / val_ntrials))
-                seso_saver.save(sess, hps.model_dir + '/saved_model', global_step=i+1)
+                seso_saver.save(sess, hps.model_dir + '/saved_model',
+                                write_meta_graph=False,
+                                latest_filename="checkpoint")
 
                 if val_loss < lowest_ev_cost:
                     print("Saving check point...")
                     lowest_ev_cost = val_loss
                     checkpoint_path = os.path.join(hps.model_dir,
-                                         hps.checkpoint_name + '_lve.ckpt')
+                                                   'saved_model_lve.ckpt')
                     lve_saver.save(sess, checkpoint_path, global_step=i+1,
-                              latest_filename='checkpoint_lve' )
+                                   write_meta_graph=False,
+                                   latest_filename='checkpoint_lve')
         seso_saver.save(sess, hps.model_dir + '/final_model')
 
 
@@ -435,7 +444,14 @@ def main(_):
     d = build_hyperparameter_dict(FLAGS)
     hps = hps_dict_to_obj(d)  # hyper-parameters
     model_type = FLAGS.model_type
-    run_model(model_type, hps)
+
+    if hps.device_type == 'cpu':
+
+        with tf.device(hps.device_type):
+            run_model(model_type, hps)
+
+    else:
+        run_model(model_type, hps)
 
 
 if __name__ == "__main__":
