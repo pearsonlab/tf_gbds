@@ -444,7 +444,7 @@ def init_PID_params(player, Dim):
                                        name='unc_Kd_' + player,
                                        dtype=tf.float32)
     PID_params['unc_eps'] = tf.Variable(
-        initial_value=-11.513 * np.ones((1, Dim)), name='unc_eps_' + player,
+        initial_value=-10 * np.ones((1, Dim)), name='unc_eps_' + player,
         dtype=tf.float32)
 
     return PID_params
@@ -467,7 +467,7 @@ def init_Dyn_params(player, RecognitionParams):
 
 
 def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
-             eps=1e-5, Kp=1, Ki=0, Kd=0,
+             eps=np.log1p(np.exp(-10.)), Kp=1, Ki=0, Kd=0,
              vel=1e-2 * np.ones((3))):
     """Generate fake data to test the accuracy of the model
     """

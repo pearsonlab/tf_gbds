@@ -6,6 +6,7 @@ import tf_gbds.GenerativeModel_GMM_Edward as G
 import tf_gbds.RecognitionModel_Edward as R
 import edward as ed
 import sys
+import time
 
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
@@ -59,7 +60,7 @@ BATCH_SIZE = 128
 NUM_SAMPLES = 1
 NUM_POSTERIOR_SAMPLES = 30
 MAX_CKPT_TO_KEEP = 5
-FREQUENCE_VAL_LOSS = 5
+FREQUENCY_VAL_LOSS = 5
 
 flags = tf.app.flags
 
@@ -143,8 +144,7 @@ flags.DEFINE_integer('num_posterior_samples', NUM_POSTERIOR_SAMPLES,
                      'Number of samples drawn from posterior distributions')
 flags.DEFINE_integer('max_ckpt_to_keep', MAX_CKPT_TO_KEEP, 'maximum number of \
                      checkpoint to save')
-
-flags.DEFINE_string('frequence_val_loss', FREQUENCE_VAL_LOSS, 'frequence of \
+flags.DEFINE_string('frequency_val_loss', FREQUENCY_VAL_LOSS, 'frequency of \
                     saving validate loss')
 FLAGS = flags.FLAGS
 
@@ -163,6 +163,7 @@ def build_hyperparameter_dict(flags):
     d['load_saved_model'] = flags.load_saved_model
     d['saved_model_dir'] = flags.saved_model_dir
     d['device_type'] = flags.device_type
+
     d['p1_dim'] = flags.p1_dim
     d['p2_dim'] = flags.p2_dim
 
@@ -197,7 +198,7 @@ def build_hyperparameter_dict(flags):
     d['n_samples'] = flags.num_samples
     d['n_post_samples'] = flags.num_posterior_samples
     d['max_ckpt_to_keep'] = flags.max_ckpt_to_keep
-    d['frequence_val_loss'] = flags.frequence_val_loss
+    d['frequency_val_loss'] = flags.frequency_val_loss
     return d
 
 
@@ -217,8 +218,6 @@ class hps_dict_to_obj(dict):
 def load_data(hps):
     """ Loading real data from local folder
     """
-    train_data_modes = None
-    val_data_modes = None
     if hps.synthetic_data:
         data, goals = gen_data(
             n_trial=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
@@ -235,6 +234,8 @@ def load_data(hps):
         np.save(hps.model_dir + '/train_data', train_data)
         np.save(hps.model_dir + '/val_data', val_data)
         np.save(hps.model_dir + '/val_goals', val_goals)
+        train_data_modes = None
+        val_data_modes = None
     elif hps.data_dir is not None:
         goals = None
 
@@ -256,7 +257,7 @@ def load_data(hps):
     return train_data, train_data_modes, val_data, val_data_modes
 
 
-def run_model(model_type, hps):
+def run_model(hps):
     """ Train GBDS model on real data
     """
     if not os.path.exists(hps.model_dir):
@@ -268,6 +269,7 @@ def run_model(model_type, hps):
     val_data = data_pad(val_data)
     print('Data loaded.')
 
+    time1 = time.time()
     with tf.name_scope('params'):
         with tf.name_scope('columns'):
             p1_cols = np.arange(hps.p1_dim)
@@ -382,8 +384,7 @@ def run_model(model_type, hps):
                     Y_ph, training=True, post_g=q_G.sample(1))
 
     # Calculate variational inference using Edward KLqp function
-    if model_type == 'VI_KLqp':
-
+    if hps.model_type == 'VI_KLqp':
         n_batches = math.ceil(train_ntrials / hps.B)
         var_list = (p_G.getParams() + p_U.getParams() +
                     q_G.getParams() + q_U.getParams())
@@ -408,6 +409,9 @@ def run_model(model_type, hps):
             seso.saver.restore(sess, hps.saved_model_dir + '/saved_model')
             print("Model restored.")
 
+        time2 = time.time()
+        print('Model setup took %.3f s.' % (time2 - time1))
+
         for i in range(hps.n_epochs):
             batches = next(batch_generator_pad(train_data, hps.B))
 
@@ -415,27 +419,25 @@ def run_model(model_type, hps):
                 info_dict = inference.update({Y_ph: batch})
                 inference.print_progress(info_dict)
 
-            if i == 0:
-                seso_saver.save(sess, hps.model_dir + 'saved_model_epoch_one')
-
-            if (i + 1) % hps.frequence_val_loss == 0:
+            if (i + 1) % hps.frequency_val_loss == 0:
+                seso_saver.save(sess, hps.model_dir + '/saved_model',
+                                global_step=(i + 1),
+                                latest_filename='checkpoint')
                 val_loss = sess.run(inference.loss,
                                     feed_dict={Y_ph: val_data})
                 print('\n', 'Validation set loss after epoch %i: %.3f' %
                       (i + 1, val_loss / val_ntrials))
-                seso_saver.save(sess, hps.model_dir + '/saved_model',
-                                write_meta_graph=False,
-                                latest_filename="checkpoint")
-
-                if val_loss < lowest_ev_cost:
+                if val_loss / val_ntrials < lowest_ev_cost:
                     print("Saving check point...")
-                    lowest_ev_cost = val_loss
-                    checkpoint_path = os.path.join(hps.model_dir,
-                                                   'saved_model_lve.ckpt')
-                    lve_saver.save(sess, checkpoint_path, global_step=i+1,
-                                   write_meta_graph=False,
+                    lowest_ev_cost = val_loss / val_ntrials
+                    lve_saver.save(sess, hps.model_dir + '/saved_model_lve',
+                                   global_step=(i + 1),
                                    latest_filename='checkpoint_lve')
+
         seso_saver.save(sess, hps.model_dir + '/final_model')
+
+        time3 = time.time()
+        print('Model training took %.3f s.' % (time3 - time2))
 
 
 def main(_):
@@ -443,15 +445,12 @@ def main(_):
     """
     d = build_hyperparameter_dict(FLAGS)
     hps = hps_dict_to_obj(d)  # hyper-parameters
-    model_type = FLAGS.model_type
 
     if hps.device_type == 'cpu':
-
-        with tf.device(hps.device_type):
-            run_model(model_type, hps)
-
-    else:
-        run_model(model_type, hps)
+        with tf.device('cpu:0'):
+            run_model(hps)
+    elif hps.device_type == 'gpu':
+        run_model(hps)
 
 
 if __name__ == "__main__":
