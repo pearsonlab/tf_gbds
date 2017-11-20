@@ -2,8 +2,8 @@ from tf_gbds.utils import *
 import os
 import tensorflow as tf
 import numpy as np
-import tf_gbds.GenerativeModel_GMM_Edward as G
-import tf_gbds.RecognitionModel_Edward as R
+import tf_gbds.GenerativeModel as G
+import tf_gbds.RecognitionModel as R
 import edward as ed
 import sys
 import time
