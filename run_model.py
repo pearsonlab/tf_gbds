@@ -1,4 +1,7 @@
-from tf_gbds.utils import *
+from tf_gbds.utils import (gen_data, get_session_names, load_pk_data, data_pad,
+                           get_max_velocities, get_rec_params_GBDS,
+                           init_Dyn_params, get_gen_params_GBDS_GMM,
+                           init_PID_params, batch_generator_pad)
 import os
 import tensorflow as tf
 import numpy as np
@@ -7,6 +10,7 @@ import tf_gbds.RecognitionModel as R
 import edward as ed
 import sys
 import time
+import math
 
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
@@ -332,7 +336,6 @@ def run_model(hps):
                                                    Dyn_params_u, name='q_U')
         # Generate real state based on control signal and velocility
         with tf.name_scope('obs'):
-            # Y_pred_t = Y_(t-1)+max_vel*tanh(u_t) ,where Y_pred_0 = Y_0
             if hps.clip:
                 Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1), (Y_ph[:, :-1] +
                                (tf.reshape(vel, [1, obs_dim]) *
