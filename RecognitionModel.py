@@ -9,6 +9,7 @@ import tf_gbds.lib.blk_tridiag_chol_tools as blk
 from edward.models import RandomVariable
 from tensorflow.contrib.distributions import Distribution
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
+from tf_gbds.utils import pad_extra_conds
 
 
 class SmoothingLDSTimeSeries(RandomVariable, Distribution):
@@ -25,9 +26,9 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
 
     """
 
-    def __init__(self, RecognitionParams, Input, xDim, yDim, Dyn_params,
-                 nrng=None, name="SmoothingLDSTimeSeries", value=None,
-                 dtype=tf.float32,
+    def __init__(self, RecognitionParams, Input, extra_conds, xDim, yDim,
+                 Dyn_params, nrng=None, name="SmoothingLDSTimeSeries",
+                 value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
         """Initialize a batch of SmoothingLDSTimeSeries random variables
@@ -63,6 +64,8 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
         self.Dyn_params = Dyn_params
         self.nrng = nrng
         self.Input = Input
+        self.extra_conds = extra_conds
+
         with tf.name_scope('dimension'):
             self.xDim = xDim
             self.yDim = yDim
@@ -70,6 +73,10 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
 
         with tf.name_scope('length'):
             self.Tt = tf.shape(Input)[1]
+
+        with tf.name_scope('pad_extra_conds'):
+            if self.extra_conds is not None:
+                self.Input = pad_extra_conds(self.Input, self.extra_conds)
 
         with tf.name_scope('Mu'):
             # This is the neural network that parameterizes the state mean, mu
@@ -80,7 +87,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
         with tf.name_scope('LambdaChol'):
             self.NN_Lambda = RecognitionParams['NN_Lambda']['network']
             self.lambda_net_out = self.NN_Lambda(self.Input)
-        # Lambda will automatically be of size [Batch_size x T x xDim x xDim]
+            # Lambda will automatically be of size [Batch_size x T x xDim x xDim]
             self.LambdaChol = tf.reshape(self.lambda_net_out,
                                          [self.B, self.Tt, xDim, xDim])
 
@@ -96,8 +103,10 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             value=value, name=name, dtype=dtype,
             reparameterization_type=reparameterization_type,
             validate_args=validate_args, allow_nan_stats=allow_nan_stats)
+
         self._kwargs['RecognitionParams'] = RecognitionParams
         self._kwargs['Input'] = Input
+        self._kwargs['extra_conds'] = extra_conds
         self._kwargs['xDim'] = xDim
         self._kwargs['yDim'] = yDim
         self._kwargs['nrng'] = nrng
@@ -253,8 +262,8 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
     """SmoothingLDSTimeSeries that uses past observations in addition to
     current to evaluate the latent.
     """
-    def __init__(self, RecognitionParams, Input, xDim, yDim, Dyn_params,
-                 nrng=None, name='SmoothingPastLDSTimeSeries',
+    def __init__(self, RecognitionParams, Input, extra_conds, xDim, yDim,
+                 Dyn_params, nrng=None, name='SmoothingPastLDSTimeSeries',
                  value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
@@ -305,8 +314,8 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
                 Input_ = tf.concat([Input_, lagged], -1, name='pad')
 
         super(SmoothingPastLDSTimeSeries, self).__init__(
-            RecognitionParams, Input_, xDim, yDim, Dyn_params, nrng, name,
-            value, dtype, reparameterization_type,
+            RecognitionParams, Input_, extra_conds, xDim, yDim, Dyn_params,
+            nrng, name, value, dtype, reparameterization_type,
             validate_args, allow_nan_stats)
 
         self.Input = Input

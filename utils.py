@@ -208,6 +208,129 @@ def load_pk_data(hps, groups, train_split=0.85, get_spikes=False,
     return rets
 
 
+def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
+             eps=np.log1p(np.exp(-10.)), Kp=1, Ki=0, Kd=0,
+             vel=1e-2 * np.ones((3))):
+    """Generate fake data to test the accuracy of the model
+    """
+    p = []
+    g = []
+
+    for _ in range(n_trial):
+        p_b = np.zeros((n_obs, 2), np.float32)
+        p_g = np.zeros((n_obs, 1), np.float32)
+        g_b = np.zeros((n_obs, 2), np.float32)
+        prev_error_b = 0
+        prev_error_g = 0
+        int_error_b = 0
+        int_error_g = 0
+
+        init_b_x = np.pi * (np.random.rand() * 2 - 1)
+        g_b_x_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
+                                       init_b_x))
+        init_b_y = np.pi * (np.random.rand() * 2 - 1)
+        g_b_y_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
+                                       init_b_y))
+        g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1),
+                            g_b_y_mu.reshape(n_obs, 1)])
+        g_b_lambda = np.array([16, 16], np.float32)
+        g_b[0] = [0.25 * (np.random.rand() * 2 - 1),
+                  0.25 * (np.random.rand() * 2 - 1)]
+
+        for t in range(n_obs - 1):
+            g_b[t + 1] = ((g_b[t] + g_b_lambda * g_b_mu[t + 1]) /
+                          (1 + g_b_lambda))
+            var = sigma ** 2 / (1 + g_b_lambda)
+            g_b[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
+
+            error_b = g_b[t + 1] - p_b[t]
+            int_error_b += error_b
+            der_error_b = error_b - prev_error_b
+            u_b = (Kp * error_b + Ki * int_error_b + Kd * der_error_b +
+                   eps * np.random.randn(2,))
+            prev_error_b = error_b
+            p_b[t + 1] = p_b[t] + vel[1:] * np.clip(u_b, -1, 1)
+
+            error_g = p_b[t + 1, 1] - p_g[t]
+            int_error_g += error_g
+            der_error_g = error_g - prev_error_g
+            u_g = (Kp * error_g + Ki * int_error_g + Kd * der_error_g +
+                   eps * np.random.randn())
+            prev_error_g = error_g
+            p_g[t + 1] = p_g[t] + vel[0] * np.clip(u_g, -1, 1)
+
+        p.append(np.hstack((p_g, p_b)))
+        g.append(g_b)
+
+    return p, g
+
+
+def load_data(hps):
+    """ Generate synthetic data set or load real data from local directory
+    """
+    train_data = []
+    val_data = []
+    if hps.synthetic_data:
+        data, goals = gen_data(
+            n_trial=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
+        np.random.seed(hps.seed)  # set seed for consistent train/val split
+        val_goals = []
+        for (trial_data, trial_goals) in zip(data, goals):
+            if np.random.rand() <= hps.train_ratio:
+                train_data.append(trial_data)
+            else:
+                val_data.append(trial_data)
+                val_goals.append(trial_goals)
+        np.save(hps.model_dir + "/train_data", train_data)
+        np.save(hps.model_dir + "/val_data", val_data)
+        np.save(hps.model_dir + "/val_goals", val_goals)
+        train_conds = None
+        val_conds = None
+        train_ctrls = None
+        val_ctrls = None
+    elif hps.data_dir is not None:
+        datafile = h5py.File(hps.data_dir, 'r')
+        trajs = np.array(datafile["trajectories"], np.float32)
+        if "conditions" in datafile:
+            conds = np.array(datafile["conditions"], np.float32)
+        else:
+            conds = None
+        if "control" in datafile:
+            ctrls = np.array(datafile["control"], np.float32)
+        else:
+            ctrls = None
+        datafile.close()
+        np.random.seed(hps.seed)  # set seed for consistent train/val split
+        train_ind = []
+        val_ind = []
+        np.random.seed(hps.seed)  # set seed for consistent train/val split
+        for i in range(len(trajs)):
+            if np.random.rand() <= hps.train_ratio:
+                train_ind.append(i)
+            else:
+                val_ind.append(i)
+        np.save(hps.model_dir + '/train_indices', train_ind)
+        np.save(hps.model_dir + '/val_indices', val_ind)
+        train_data = trajs[train_ind]
+        val_data = trajs[val_ind]
+        if conds is not None:
+            train_conds = conds[train_ind]
+            val_conds = conds[val_ind]
+        else:
+            train_conds = None
+            val_conds = None
+        if ctrls is not None:
+            train_ctrls = ctrls[train_ind]
+            val_ctrls = ctrls[val_ind]
+        else:
+            train_ctrls = None
+            val_ctrls = None
+    else:
+        raise Exception("Data must be provided (either real or synthetic)")
+
+    return train_data, train_conds, train_ctrls, val_data, val_conds, val_ctrls
+
+
 def get_max_velocities(y_data, y_val_data):
     """Get the maximium velocities from data
     """
@@ -341,22 +464,24 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
     return NN, PKbias_layers
 
 
-def get_rec_params_GBDS(obs_dim, lag, num_layers, hidden_dim, penalty_Q,
-                        PKLparams, name):
+def get_rec_params_GBDS(obs_dim, extra_dim, lag, num_layers, hidden_dim,
+                        penalty_Q, PKLparams, name):
     """Return a dictionary of timeseries-specific parameters for recognition
        model
     """
 
     with tf.name_scope('rec_mu_%s' % name):
         mu_net, PKbias_layers_mu = get_network('rec_mu_%s' % name,
-                                               obs_dim * (lag + 1),
+                                               (obs_dim * (lag + 1) +
+                                                extra_dim),
                                                obs_dim, hidden_dim,
                                                num_layers, PKLparams,
                                                batchnorm=False)
 
     with tf.name_scope('rec_lambda_%s' % name):
         lambda_net, PKbias_layers_lambda = get_network('rec_lambda_%s' % name,
-                                                       obs_dim * (lag + 1),
+                                                       (obs_dim * (lag + 1) +
+                                                        extra_dim),
                                                        obs_dim**2,
                                                        hidden_dim,
                                                        num_layers, PKLparams,
@@ -365,7 +490,8 @@ def get_rec_params_GBDS(obs_dim, lag, num_layers, hidden_dim, penalty_Q,
     with tf.name_scope('rec_lambdaX_%s' % name):
         lambdaX_net, PKbias_layers_lambdaX = get_network('rec_lambdaX_%s'
                                                          % name,
-                                                         obs_dim * (lag + 1),
+                                                         (obs_dim * (lag + 1) +
+                                                            extra_dim),
                                                          obs_dim**2,
                                                          hidden_dim,
                                                          num_layers, PKLparams,
@@ -389,7 +515,7 @@ def get_rec_params_GBDS(obs_dim, lag, num_layers, hidden_dim, penalty_Q,
     return rec_params
 
 
-def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
+def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
                             yCols_agent, nlayers_gen, hidden_dim_gen,
                             K, PKLparams, vel,
                             penalty_eps, penalty_sigma,
@@ -408,7 +534,7 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
             state_dim = obs_dim * 2
 
     with tf.name_scope('gen_gmm_%s' % name):
-        GMM_net, _ = get_network('gen_gmm_%s' % name, state_dim,
+        GMM_net, _ = get_network('gen_gmm_%s' % name, (state_dim + extra_dim),
                                  (obs_dim_agent * K * 2 + K),
                                  hidden_dim_gen, nlayers_gen, PKLparams)
 
@@ -435,16 +561,16 @@ def init_PID_params(player, Dim):
     """
     PID_params = {}
     PID_params['unc_Kp'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
-                                       name='unc_Kp_' + player,
+                                       name='unc_Kp_%s' % player,
                                        dtype=tf.float32)
     PID_params['unc_Ki'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
-                                       name='unc_Ki_' + player,
+                                       name='unc_Ki_%s' % player,
                                        dtype=tf.float32)
     PID_params['unc_Kd'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
-                                       name='unc_Kd_' + player,
+                                       name='unc_Kd_%s' % player,
                                        dtype=tf.float32)
     PID_params['unc_eps'] = tf.Variable(
-        initial_value=-10 * np.ones((1, Dim)), name='unc_eps_' + player,
+        initial_value=-10 * np.ones((1, Dim)), name='unc_eps_%s' % player,
         dtype=tf.float32)
 
     return PID_params
@@ -454,88 +580,33 @@ def init_Dyn_params(player, RecognitionParams):
     """Return a dictionary of dynamical parameters
     """
     Dyn_params = {}
-    Dyn_params['A'] = tf.Variable(RecognitionParams['A'], name='A_' + player,
-                                  dtype=tf.float32)
+    Dyn_params['A'] = tf.Variable(RecognitionParams['A'],
+                                  name='A_%s' % player, dtype=tf.float32)
     Dyn_params['QinvChol'] = tf.Variable(RecognitionParams['QinvChol'],
-                                         name='QinvChol_' + player,
+                                         name='QinvChol_%s' % player,
                                          dtype=tf.float32)
     Dyn_params['Q0invChol'] = tf.Variable(RecognitionParams['Q0invChol'],
-                                          name='Q0invChol_' + player,
+                                          name='Q0invChol_%s' % player,
                                           dtype=tf.float32)
 
     return Dyn_params
 
 
-def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
-             eps=np.log1p(np.exp(-10.)), Kp=1, Ki=0, Kd=0,
-             vel=1e-2 * np.ones((3))):
-    """Generate fake data to test the accuracy of the model
-    """
-    p = []
-    g = []
-
-    for _ in range(n_trial):
-        p_b = np.zeros((n_obs, 2), np.float32)
-        p_g = np.zeros((n_obs, 1), np.float32)
-        g_b = np.zeros((n_obs, 2), np.float32)
-        prev_error_b = 0
-        prev_error_g = 0
-        int_error_b = 0
-        int_error_g = 0
-
-        init_b_x = np.pi * (np.random.rand() * 2 - 1)
-        g_b_x_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-                                       init_b_x))
-        init_b_y = np.pi * (np.random.rand() * 2 - 1)
-        g_b_y_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-                                       init_b_y))
-        g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1), g_b_y_mu.reshape(n_obs,
-                                                                         1)])
-        g_b_lambda = np.array([16, 16], np.float32)
-        g_b[0] = [0.25 * (np.random.rand() * 2 - 1),
-                  0.25 * (np.random.rand() * 2 - 1)]
-
-        for t in range(n_obs - 1):
-            g_b[t + 1] = (g_b[t] + g_b_lambda * g_b_mu[t + 1]) / (1 +
-                                                                  g_b_lambda)
-            var = sigma ** 2 / (1 + g_b_lambda)
-            g_b[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
-
-            error_b = g_b[t + 1] - p_b[t]
-            int_error_b += error_b
-            der_error_b = error_b - prev_error_b
-            u_b = (Kp * error_b + Ki * int_error_b + Kd * der_error_b +
-                   eps * np.random.randn(2,))
-            prev_error_b = error_b
-            p_b[t + 1] = p_b[t] + vel[1:] * np.clip(u_b, -1, 1)
-
-            error_g = p_b[t + 1, 1] - p_g[t]
-            int_error_g += error_g
-            der_error_g = error_g - prev_error_g
-            u_g = (Kp * error_g + Ki * int_error_g + Kd * der_error_g +
-                   eps * np.random.randn())
-            prev_error_g = error_g
-            p_g[t + 1] = p_g[t] + vel[0] * np.clip(u_g, -1, 1)
-
-        p.append(np.hstack((p_g, p_b)))
-        g.append(g_b)
-
-    return p, g
-
-
-def batch_generator(arrays, batch_size):
+def batch_generator(arrays, batch_size, randomize=True):
     """Minibatch generator over one dataset of shape
-    (nobservations, ndimensions)
+    (#observations, #dimensions)
     """
-    size = len(arrays)
-    n_batch = math.ceil(size / batch_size)
-    np.random.shuffle(arrays)
+    n_trials = len(arrays)
+    n_batch = math.ceil(n_trials / batch_size)
+    if randomize:
+        np.random.shuffle(arrays)
+
     start = 0
     while True:
         batches = []
         for _ in range(n_batch):
             stop = start + batch_size
-            diff = stop - size
+            diff = stop - n_trials
             if diff <= 0:
                 batch = np.array(arrays[start:stop])
                 start = stop
@@ -545,35 +616,72 @@ def batch_generator(arrays, batch_size):
         yield batches
 
 
-def batch_generator_pad(arrays, batch_size):
-    """Minibatch generator over one dataset of shape
-    (nobservations, ndimensions)
-    """
-    size = len(arrays)
-    n_batch = math.ceil(size / batch_size)
-    np.random.shuffle(arrays)
+def batch_generator_pad(arrays, batch_size, extra_conds=None, ctrl_obs=None,
+                        randomize=True):
+    n_trials = len(arrays)
+    n_batch = math.ceil(n_trials / batch_size)
+    if randomize:
+        p = np.random.permutation(n_trials)
+        arrays = arrays[p]
+        if extra_conds is not None:
+            extra_conds = extra_conds[p]
+        if ctrl_obs is not None:
+            ctrl_obs = ctrl_obs[p]
+
     start = 0
     while True:
         batches = []
+        conds = []
+        ctrls = []
         for _ in range(n_batch):
             stop = start + batch_size
-            diff = stop - size
+            diff = stop - n_trials
             if diff <= 0:
                 batch = arrays[start:stop]
+                if extra_conds is not None:
+                    cond = np.array(extra_conds[start:stop])
+                if ctrl_obs is not None:
+                    ctrl = np.array(ctrl_obs[start:stop])
                 start = stop
             else:
                 batch = arrays[start:]
-            batch = data_pad(batch)
+                if extra_conds is not None:
+                    cond = np.array(extra_conds[start:])
+                if ctrl_obs is not None:
+                    ctrl = np.array(ctrl_obs[start:])
+            batch = pad_batch(batch)
             batches.append(batch)
-        yield batches
+            if extra_conds is not None:
+                conds.append(cond)
+            if ctrl_obs is not None:
+                ctrl = pad_batch(ctrl, mode='zero')
+                ctrls.append(ctrl)
+        yield batches, conds, ctrls
 
 
-def data_pad(array):
-    max_len = np.max([len(a) for a in array])
-    return np.array([np.pad(a, ((0, max_len-len(a)), (0, 0)),
-                            'edge') for a in array])
-    # return np.asarray([np.pad(a, ((0, max_len-len(a)), (0, 0)), 'constant',
-    #                           constant_values=0) for a in batch])
+def pad_batch(arrays, mode='edge'):
+    max_len = np.max([len(a) for a in arrays])
+    if mode == 'edge':
+        return np.array([np.pad(a, ((0, max_len - len(a)), (0, 0)),
+                                'edge') for a in arrays])
+    elif mode =='zero':
+        return np.array([np.pad(a, ((0, max_len-len(a)), (0, 0)), 'constant',
+                                constant_values=0) for a in arrays])
+
+
+def pad_extra_conds(data, extra_conds=None):
+    if extra_conds is not None:
+        if not isinstance(extra_conds, tf.Tensor):
+            extra_conds = tf.constant(extra_conds, dtype=tf.float32,
+                                      name='extra_conds')
+        extra_conds_repeat = tf.tile(
+            tf.expand_dims(extra_conds, 1), [1, tf.shape(data)[1], 1],
+            name='repeat_extra_conds')
+        padded_data = tf.concat([data, extra_conds_repeat], axis=-1,
+                                name='pad_extra_conds')
+        return padded_data
+    else:
+        raise Exception('Must provide extra conditions.')
 
 
 class DatasetTrialIndexIterator(object):
