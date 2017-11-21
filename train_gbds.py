@@ -60,7 +60,8 @@ def run_model(**kwargs):
                                                                       groups)
 
     yCols_goalie = [0]
-    yCols_ball = [1, 2]
+    #yCols_ball = [1, 2]
+    yCols_ball = [2]
 
     obs_dim_g = len(yCols_goalie)
     obs_dim_b = len(yCols_ball)

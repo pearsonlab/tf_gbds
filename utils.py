@@ -73,6 +73,123 @@ def smooth_trial(trial, sigma=4.0, pad_method='extrapolate'):
                                       pad_method=pad_method)
     return rtrial
 
+<<<<<<< 007323809df8ff732133a86a38f3a3d9fb2d6cbd
+=======
+def load_pkhuman_data_pickle(hps, train_split=0.85):
+    """
+    Load penaltykick data from human fMRI Huettel task. norm_x flag converts 
+    range of x-dim from (0, 1) to (-1, 1)
+    """
+    #datafile = h5py.File(expanduser(file_loc))
+    file_loc = hps.data_loc
+    cutBegin = hps.cut_Begin
+    norm_x = True
+    np.random.seed(hps.seed)  # set seed for consistent train/val split
+    with open(file_loc, 'rb') as pickle_file:
+        datafile = pickle.load(pickle_file, encoding='latin1') #encoding param to deal with python 2/3 pickle issues
+
+    #sessions = map(lambda sess_name: datafile.get(sess_name),
+    #               session_names)
+    nSubs = datafile.subj.nunique() #how many subjects are in this dataset?
+    s = np.arange(nSubs)
+    hotcode = pd.get_dummies(s)
+    modes = {} #dummies representing each subject
+    for i in s:
+        modes[int(datafile.subj.unique()[i])] = hotcode.loc[[i]]
+
+    y_data = []
+    y_data_modes = []
+    y_val_data = []
+    y_val_data_modes = []
+    y_data_res = []
+    y_val_data_res = []
+    y_data_JS = []
+    y_val_data_JS = []    
+    y_data_opp = []
+    y_val_data_opp = []
+
+    #y_data = [content[content.super_index = i] for i in set(content.super_index)]
+    for trial in set(datafile.super_index): #for each trial
+        info = datafile[datafile.super_index == trial] #all of the data corresponding to this trial
+        if np.random.rand() <= train_split:
+            curr_data = y_data
+            curr_modes = y_data_modes        
+            curr_res = y_data_res
+            curr_JS = y_data_JS  
+            curr_opp = y_data_opp              
+        else:
+            curr_data = y_val_data
+            curr_modes = y_val_data_modes
+            curr_res = y_val_data_res
+            curr_JS = y_val_data_JS
+            curr_opp = y_val_data_opp
+        #raw_trial = sess.get(trial).value[:3, :].T
+        raw_trial = info[['goalie','time','ball_alone']].values #grab the goalie y position, ball x position (same as time), and ball y position
+
+        #JS_raw = info[['barY_JS', 'ballY_JS']].values
+        is_win = (info['result'].iloc[0] == 'W')
+        is_human = (info['opponent'].iloc[0] == 'human')
+        curr_opp.append(is_human)
+        curr_res.append(is_win)
+
+        if is_human:
+            JS_raw = info[['barY_JS', 'ballY_JS']].values
+            #print JS_raw.shape
+        if not is_human: #if the goalie is a computer, we need to calculate the "joystick inputs"
+            barY_JS = np.hstack((0,np.diff(info['goalie'])/(info[['maxMove']].values[1:]).flatten()))
+            ballY_JS = info[['ballY_JS']].values.flatten()
+            tmp = pd.DataFrame({'barY_JS':barY_JS, 'ballY_JS':ballY_JS})
+            JS_raw = tmp[['barY_JS','ballY_JS']].values
+            #print barY_JS.shape, ballY_JS.shape
+            #JS_raw = info[['barY_JS', 'ballY_JS']].values
+
+        if norm_x:
+            raw_trial[:, 0] = (raw_trial[:, 0] / 768.) * 2 - 1
+            if is_win:
+                end_x = 920.0
+            else:
+                end_x = 896.0
+            raw_trial[:, 1] = np.linspace(128./1024., end_x/1024., len(raw_trial)) * 2 - 1
+            raw_trial[:, 2] = (raw_trial[:, 2] / 768.) * 2 - 1 #normalize the y-dimension as well
+        raw_trial = raw_trial[cutBegin:,:] #cut x timepoints, where x is the cutBegin arg. This handles the "zero activity" at the beginning
+        JS_raw = JS_raw[cutBegin:,:]
+        #JS = raw_trial[:,3:] #joystick data for goalie and ball
+        #trial = smooth_trial(raw_trial).astype(theano.config.floatX)
+        curr_data.append(np.array(raw_trial).astype('float32'))
+        curr_JS.append(np.array(JS_raw).astype('float32'))
+        curr_modes.append(np.array(modes[int(info.subj.iloc[0])]))
+        #curr_JS.append(np.array(raw_trial[:,3:]).astype('float32'))
+
+    #y_data = np.array(y_data)
+    #y_data_modes = np.array(y_data_modes).astype(theano.config.floatX)
+    y_data_modes = np.array(y_data_modes).astype('float32')
+    y_val_data = np.array(y_val_data)
+    #y_val_data_modes = np.array(y_val_data_modes).astype(theano.config.floatX)
+    y_val_data_modes = np.array(y_val_data_modes).astype('float32')
+    y_data_JS = np.array(y_data_JS)
+    y_val_data_JS = np.array(y_val_data_JS)
+    rets = [y_data, y_data_modes, y_data_res, y_data_JS, y_data_opp, y_val_data, y_val_data_modes, y_val_data_res, y_val_data_JS, y_val_data_opp]
+    return rets
+
+def load_PKhuman(hps):
+	'''
+	Reads in the human data from PenaltyKik.02 from an hdf5 file.
+	This is the standard format we will expect the data to be in.
+	'''
+	data = h5py.File('humanPK.h5','r')
+	trajectories = np.array(data.get('trajectories'))
+	states = np.array(data.get('states'))
+	conditions = np.array(data.get('conditions'))
+	outcomes = np.array(data.get('outcomes'))
+
+	trajectories_train, trajectories_test = train_test_split(trajectories, test_size=1-hps.train_ratio, random_state=1)
+	states_train, states_test = train_test_split(states, test_size=1-hps.train_ratio, random_state=1)
+	conditions_train, conditions_test = train_test_split(conditions, test_size=1-hps.train_ratio, random_state=1)
+	outcomes_train, outcomes_test = train_test_split(outcomes, test_size=1-hps.train_ratio, random_state=1)
+
+	return [trajectories_train, trajectories_test, states_train, states_test, conditions_train, conditions_test, outcomes_train, outcomes_test]
+
+>>>>>>> changes
 def get_session_names(file_loc, columns, values, comb=np.all):
     """Get session names from real data
     """
@@ -399,7 +516,7 @@ def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
     return p, g
 
 
-def batch_generator(arrays, batch_size):
+def batch_generator_pad(arrays, batch_size):
     """Minibatch generator over one dataset of shape
     (nobservations, ndimensions)
     """
@@ -413,12 +530,17 @@ def batch_generator(arrays, batch_size):
             stop = start + batch_size
             diff = stop - size
             if diff <= 0:
-                batch = np.array(arrays[start:stop])
+                batch = arrays[start:stop]
                 start = stop
             else:
-                batch = np.array(arrays[start:])
+                batch = arrays[start:]
+            batch = data_pad(batch)
             batches.append(batch)
         yield batches
+
+def data_pad(array):
+    max_len = np.max([len(a) for a in array])
+    return np.array([np.pad(a, ((0, max_len-len(a)), (0, 0)),'edge') for a in array])
 
 
 def batch_generator_pad(arrays, batch_size):

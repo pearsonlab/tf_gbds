@@ -18,6 +18,9 @@ CUT_BEGIN = 19
 DATA_DIR = ''
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
+LOAD_SAVED_MODEL = False
+SAVED_MODEL_DIR = '/home/krm58/Desktop/tf_gbds/model_gmm'
+DEVICE_TYPE = 'cpu'
 
 P1_DIM = 1
 P2_DIM = 1
@@ -63,6 +66,8 @@ flags.DEFINE_string('model_type', 'VI_KLqp',
                     'Type of model to build {VI_KLqp, HMM')
 flags.DEFINE_string('model_dir', MODEL_DIR,
                     'Directory where the model is saved')
+flags.DEFINE_string('device_type', DEVICE_TYPE, 'gpu or cpu to be selected as \
+                    the device type')
 flags.DEFINE_string('data_loc', DATA_LOC, 'Directory where the data is saved, to be loaded in')
 flags.DEFINE_integer('cutBegin',CUT_BEGIN, 'How timepoints from the beginning of each trial are we cutting to avoid the "starting zeros" problem?')
 # flags.DEFINE_integer('max_sessions', MAX_SESSIONS,
@@ -148,7 +153,7 @@ def build_hyperparameter_dict(flags):
     d['data_dir'] = flags.data_dir
     d['synthetic_data'] = flags.synthetic_data
     d['save_posterior'] = flags.save_posterior
-
+    d['device_type'] = flags.device_type
     d['p1_dim'] = flags.p1_dim
     d['p2_dim'] = flags.p2_dim
 
@@ -233,10 +238,11 @@ def run_model(model_type, hps):
         os.makedirs(hps.model_dir)
 
     #y_data, y_val_data = load_data(hps) #this is for the synthesized data Sam and Qian did
-    y_data, y_data_modes, y_data_res, y_data_JS, y_data_opp, y_val_data, y_val_data_modes, y_val_data_res, y_val_data_JS, y_val_data_opp = load_pkhuman_data(hps.data_loc,cutBegin=hps.cutBegin)
+    #y_data, y_data_modes, y_data_res, y_data_JS, y_data_opp, y_val_data, y_val_data_modes, y_val_data_res, y_val_data_JS, y_val_data_opp = load_pkhuman_data(hps)
+    y_data, y_val_data, states_train, states_test, conditions_train, conditions_test, outcomes_train, outcomes_test = load_PKhuman()
     train_ntrials = len(y_data)
     val_ntrials = len(y_val_data)
-    y_val_data = np.array(y_val_data)
+    #y_val_data = np.array(y_val_data)
     print('Data loaded.')
 
     with tf.name_scope('params'):
@@ -253,8 +259,9 @@ def run_model(model_type, hps):
         PKLparams = None
 
         vel = get_max_velocities(y_data, y_val_data)
-        train_ntrials = len(y_data)
-        val_ntrials = len(y_val_data)
+        # train_ntrials = len(y_data)
+        # val_ntrials = len(y_val_data)
+        #y_val_data = data_pad(y_val_data)
 
         # Initialize all of the parameters in the model
         with tf.name_scope('rec_control_params'):
@@ -357,9 +364,7 @@ def run_model(model_type, hps):
 
     # Calculate variational inference using Edward KLqp function
     if model_type == 'VI_KLqp':
-        batches = next(batch_generator(y_data, hps.B))
-        #batches = np.vstack([np.expand_dims(x, 0) for x in batches])
-        #batches = np.reshape(batches, [-1, 1])
+        batches = next(batch_generator_pad(list(y_data), hps.B))
         n_batches = math.ceil(train_ntrials / hps.B)
         var_list = (p_G.getParams() + p_U.getParams() +
                     q_G.getParams() + q_U.getParams())
@@ -374,20 +379,44 @@ def run_model(model_type, hps):
                              logdir=hps.model_dir + '/log')
         sess = ed.get_session()
         tf.global_variables_initializer().run()
+		lowest_ev_cost = np.Inf
+        seso_saver = tf.train.Saver(tf.global_variables(),
+                                    max_to_keep=hps.max_ckpt_to_keep)
+        lve_saver = tf.train.Saver(tf.global_variables(),
+                                   max_to_keep=hps.max_ckpt_to_keep)
+        if hps.load_saved_model:
+            seso.saver.restore(sess, hps.saved_model_dir + '/saved_model')
+            print("Model restored.")
 
         for i in range(hps.n_epochs):
+            #shape of batch should be (batch size, #time points, #dims of observation)
             for batch in batches:
                 info_dict = inference.update({Y_ph: batch})
                 inference.print_progress(info_dict)
+
+            if i == 0:
+                seso_saver.save(sess, hps.model_dir + 'saved_model_epoch_one')
 
             if (i + 1) % 10 == 0:
                 val_loss = sess.run(inference.loss,
                                     feed_dict={Y_ph: y_val_data})
                 print('\n', 'Validation set loss after epoch %i: %.3f' %
                       (i + 1, val_loss / val_ntrials))
+                seso_saver.save(sess, hps.model_dir + '/saved_model',
+                                write_meta_graph=False,
+                                latest_filename="checkpoint")
+                if val_loss < lowest_ev_cost:
+                    print("Saving check point...")
+                    lowest_ev_cost = val_loss
+                    checkpoint_path = os.path.join(hps.model_dir,
+                                                   'saved_model_lve.ckpt')
+                    lve_saver.save(sess, checkpoint_path, global_step=i+1,
+                                   write_meta_graph=False,
+                                   latest_filename='checkpoint_lve')
+        seso_saver.save(sess, hps.model_dir + '/final_model')
 
-        saver = tf.train.Saver()
-        saver.save(sess, hps.model_dir + '/saved_model')
+        #saver = tf.train.Saver()
+        #saver.save(sess, hps.model_dir + '/saved_model')
 
 
 def main(_):
@@ -396,7 +425,14 @@ def main(_):
     d = build_hyperparameter_dict(FLAGS)
     hps = hps_dict_to_obj(d)  # hyper-parameters
     model_type = FLAGS.model_type
-    run_model(model_type, hps)
+    
+    if hps.device_type == 'cpu':
+
+        with tf.device(hps.device_type):
+            run_model(model_type, hps)
+
+    else:
+        run_model(model_type, hps)
 
 
 if __name__ == "__main__":
