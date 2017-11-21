@@ -38,8 +38,7 @@ Run the following:
 ```sh
 export PYTHONPATH=$PYTHONPATH:/<b>path/to/your/directory</b>/tf_gbds/
 ```
-
-## where "path/to/your/directory" is replaced with the path to the tf_gbds repository. This allows the nested directories to access modules from their parent directory.
+where "path/to/your/directory" is replaced with the path to the tf_gbds repository. This allows the nested directories to access modules from their parent directory.
 
 ## Train an tf_gbds model
 
