@@ -26,7 +26,7 @@ LOAD_SAVED_MODEL = False
 SAVED_MODEL_DIR = '~/data/model_gmm_copy'
 
 P1_DIM = 1
-P2_DIM = 2
+P2_DIM = 2  
 
 REC_LAG = 10
 REC_NLAYERS = 3
@@ -68,7 +68,7 @@ FREQUENCY_VAL_LOSS = 5
 flags = tf.app.flags
 
 flags.DEFINE_string('model_type', 'VI_KLqp',
-                    'Type of model to build {VI_KLqp, HMM')
+                    'Type of model to build {VI_KLqp, HMM}')
 flags.DEFINE_string('model_dir', MODEL_DIR,
                     'Directory where the model is saved')
 flags.DEFINE_integer('max_sessions', MAX_SESSIONS,
@@ -87,7 +87,7 @@ flags.DEFINE_boolean('load_saved_model', LOAD_SAVED_MODEL, 'Is the model \
 flags.DEFINE_string('saved_model_dir', SAVED_MODEL_DIR,
                     'Directory where the model to be restored is saved')
 flags.DEFINE_string('device_type', 'CPU',
-                    'The device where the model is trained {CPU, GPU')
+                    'The device where the model is trained {CPU, GPU}')
 
 flags.DEFINE_integer('p1_dim', P1_DIM,
                      'Number of data dimensions corresponding to player 1')
