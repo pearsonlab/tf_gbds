@@ -1,5 +1,5 @@
 # tf-gbds
-TensorFlow rewrite version of [goal-based dynamical system model](https://github.com/pearsonlab/gbds)
+TensorFlow+Edward rewrite version of [goal-based dynamical system model](https://github.com/pearsonlab/gbds)
 
 Implementation of
 
@@ -12,11 +12,12 @@ Code for approximate time series posterior written by Evan Archer. Algorithm des
 
 ## Contents
 - Python Modules/Scripts
+1. `run_model.py` Train tf_gbds model. Run `python run_model.py --help` to see [options](#train-an-tf_gbds-model).
 1. `GenerativeModel.py` The customized Edward Random Variables which generate players' goal and control signal for each time point based on the trajectory of each trial.
 1. `RecognitionModel.py` The customized Edward Random Variables which implement
-the posterior goal and control signal from generative model and smoothing linear dynamical system.
-1. `run_model.py` Train tf_gbds model. Run `python run_model.py --help` to see options.
+the posterior goal and control signal usiing smoothing linear dynamical system.
 1. `utils.py` The utility functions needed for run_model.
+1. `lib/` The directory containing libraries needed for matrix computation.
 
 ## How to Preprocess Your Data
 Our model reads in data from an experiment as an hdf5 file. Only one variable is required for the model to train: `Trajectories`, which our code expects to be a matrix with the following shape: (nTrials, nTimepoints, nDimensions). So, in a variant of Penalty Kick with 9000 total trials, each trial consisting of 80 timepoints, and each timepoint consisting of 3 dimensions (goalie y-position, ball x-position, ball y-position--see Iqbal & Pearson, 2017), then the `trajectories` variable will have shape (9000, 80, 3). 
@@ -36,14 +37,14 @@ The code is written in Python 3.6.1. You will also need:
 ## Before you start
 Run the following:
 ```sh
-export PYTHONPATH=$PYTHONPATH:/<b>path/to/your/directory</b>/tf_gbds/
+export PYTHONPATH=$PYTHONPATH:/path/to/your/directory/tf_gbds/
 ```
 where "path/to/your/directory" is replaced with the path to the tf_gbds repository. This allows the nested directories to access modules from their parent directory.
 
 ## Train an tf_gbds model
 
 Once you prepare your dataset with the correct format, you can train the model!
-```sh
+```
 # Run tf_gbds
 $ python run_model.py --model_type='VI_KLqp' (Type of model to build {VI_KLqp, HMM}) \
 --model_dir='/path/you/save/your/model' (Directory where the model is saved) \
