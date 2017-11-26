@@ -45,7 +45,53 @@ where "path/to/your/directory" is replaced with the path to the tf_gbds reposito
 Once you prepare your dataset with the correct format, you can train the model! The following code runs the model with all of the default parameters:
 ```
 # Run tf_gbds
-$ python run_model.py --model_type='VI_KLqp'
+$ python run_model.py --model_type='VI_KLqp' (Type of model to build {VI_KLqp, HMM}) \
+--model_dir='/path/you/save/your/model' (Directory where the model is saved) \
+--max_sessions=10 (Maximum number of sessions to load) \
+--session_type='recording' (Type of data session) \
+--session_index_dir='/directory/you/save/session_index_file' (Directory of session index file) \
+--data_dir='/directory/you/load/your/data' (Directory of data file) \
+--synthetic_data=False (Is the model trained on synthetic data?) \
+--save_posterior=True (Will posterior samples be retrieved after training?) \
+--load_saved_model=False (Is the model restored from a checkpoint?)
+--saved_model_dir='/directory/you/save/restored_model' (Directory where the model to be restored is saved) \
+--device_type='cpu' (The device where the model is trained {CPU, GPU}) \
+
+--p1_dim=1 (Number of data dimensions corresponding to player 1) \
+--p2_dim=2 (Number of data dimensions corresponding to player 2) \
+
+--rec_lag=10 (Number of previous timepoints to include as input to recognition model) \
+--rec_nlayers=3 (Number of layers in recognition model neural networks) \
+--rec_hidden_dim=25 (Number of hidden units in each (dense) layer of recognition model neural networks) \
+
+--gen_nlayers=3 (Number of layers in generative model neural networks) \
+--gen_hidden_dim=25 (Number of hidden units in each (dense) layer of generative model neural networks) \
+--K=8 (Number of sub-strategies (components of GMM)) \
+
+--add_accel=False (Should acceleration be added to states?) \
+--clip=True (Is the control signal censored?) \
+--clip_range=1. (The range beyond which control signals are censored) \
+--clip_tol=1e-5 (The tolerance of signal censoring) \
+--eta=1e-6 (The scale of control signal noise) \
+--eps_init=1e-5 (Initial value of control signal variance) \
+--eps_trainable=False (Is epsilon trainable?) \
+--eps_penalty=None (Penalty on control signal variance) \
+--sigma_init=1e-5 (Initial value of goal state variance) \
+--sigma_trainable=False (Is sigma trainable?) \
+--sigma_penalty=None (Penalty on goal state variance) \
+--goal_bound=1.0 (Goal state boundaries) \
+--goal_bound_penalty=1e10 (Penalty for goal states escaping boundaries) \
+
+--seed=1234 (Random seed) \
+--train_ratio=0.85 (The proportion of data used for training) \
+--optimizer='Adam' (Training optimizer) \
+--learning_rate=1e-3 (Initial learning rate) \
+--num_epochs=500 (Number of iterations through the full training set) \
+--batch_size=128 (Size of mini-batch) \
+--num_samples=1 (Number of posterior samples for calculating stochastic gradients) \
+--num_posterior_samples=30 (Number of samples drawn from posterior distributions) \
+--max_ckpt_to_keep=5 (maximum number of checkpoint to save) \
+--frequency_val_loss=5 (frequency of saving validate loss) \
 ```
 ## Visualize a training model
 
