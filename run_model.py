@@ -1,9 +1,9 @@
-from tf_gbds.utils import *
+from utils import *
 import os
 import tensorflow as tf
 import numpy as np
-import tf_gbds.GenerativeModel as G
-import tf_gbds.RecognitionModel as R
+import GenerativeModel as G
+import RecognitionModel as R
 import edward as ed
 import sys
 import time
@@ -11,19 +11,21 @@ import time
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
 
-MODEL_DIR = '/home/qiankuang/data/model_gmm_copy2'
-MAX_SESSIONS = 10
-SESSION_TYPE = 'recording'
-SESSION_INDEX_DIR = '/home/qiankuang/data/session_index.csv'
-DATA_DIR = '/home/qiankuang/data/compiled_penalty_kick_wspikes_resplined.hdf5'
+MODEL_DIR = 'model_gmm'
+DATA_LOC = '/home/krm58/Desktop/penaltykick/nointerp__2017-May-04.16-52-55_df.pkl'
+CUT_BEGIN = 19
+# MAX_SESSIONS = 10
+# SESSION_TYPE = 'recording'
+# SESSION_INDEX_DIR = '/home/qiankuang/data/session_index.csv'
+#DATA_DIR = '/home/qiankuang/data/compiled_penalty_kick_wspikes_resplined.hdf5'
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
-SAVED_MODEL_DIR = '/home/qiankuang/data/model_gmm_copy2'
-DEVICE_TYPE = 'cpu'
+SAVED_MODEL_DIR = '/home/krm58/Desktop/tf_gbds/model_gmm'
+#DEVICE_TYPE = 'cpu'
 
 P1_DIM = 1
-P2_DIM = 2
+P2_DIM = 1
 
 REC_LAG = 10
 REC_NLAYERS = 3
@@ -68,12 +70,12 @@ flags.DEFINE_string('model_type', 'VI_KLqp',
                     'Type of model to build {VI_KLqp, HMM')
 flags.DEFINE_string('model_dir', MODEL_DIR,
                     'Directory where the model is saved')
-flags.DEFINE_integer('max_sessions', MAX_SESSIONS,
-                     'Maximum number of sessions to load')
-flags.DEFINE_string('session_type', SESSION_TYPE,
-                    'Type of data session')
-flags.DEFINE_string('session_index_dir', SESSION_INDEX_DIR,
-                    'Directory of session index file')
+# flags.DEFINE_integer('max_sessions', MAX_SESSIONS,
+#                      'Maximum number of sessions to load')
+# flags.DEFINE_string('session_type', SESSION_TYPE,
+#                     'Type of data session')
+# flags.DEFINE_string('session_index_dir', SESSION_INDEX_DIR,
+#                     'Directory of session index file')
 flags.DEFINE_string('data_dir', DATA_DIR, 'Directory of data file')
 flags.DEFINE_boolean('synthetic_data', SYNTHETIC_DATA,
                      'Is the model trained on synthetic data?')
@@ -83,8 +85,8 @@ flags.DEFINE_boolean('load_saved_model', LOAD_SAVED_MODEL, 'Is the model \
                      restored from a checkpoint?')
 flags.DEFINE_string('saved_model_dir', SAVED_MODEL_DIR,
                     'Directory where the model to be restored is saved')
-flags.DEFINE_string('device_type', DEVICE_TYPE, 'gpu or cpu to be selected as \
-                    the device type')
+flags.DEFINE_string('device_type', 'CPU',
+                    'The device where the model is trained {CPU, GPU}')
 
 flags.DEFINE_integer('p1_dim', P1_DIM,
                      'Number of data dimensions corresponding to player 1')
@@ -154,16 +156,17 @@ def build_hyperparameter_dict(flags):
 
     d['model_type'] = flags.model_type
     d['model_dir'] = flags.model_dir
-    d['max_sessions'] = flags.max_sessions
-    d['session_type'] = flags.session_type
-    d['session_index_dir'] = flags.session_index_dir
-    d['data_dir'] = flags.data_dir
+    d['data_loc'] = flags.data_loc
+    d['cutBegin'] = flags.cutBegin
+    # d['max_sessions'] = flags.max_sessions
+    # d['session_type'] = flags.session_type
+    # d['session_index_dir'] = flags.session_index_dir
+    #d['data_dir'] = flags.data_dir
     d['synthetic_data'] = flags.synthetic_data
     d['save_posterior'] = flags.save_posterior
     d['load_saved_model'] = flags.load_saved_model
     d['saved_model_dir'] = flags.saved_model_dir
     d['device_type'] = flags.device_type
-
     d['p1_dim'] = flags.p1_dim
     d['p2_dim'] = flags.p2_dim
 
@@ -215,46 +218,46 @@ class hps_dict_to_obj(dict):
         self[key] = value
 
 
-def load_data(hps):
-    """ Loading real data from local folder
-    """
-    if hps.synthetic_data:
-        data, goals = gen_data(
-            n_trial=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
-        np.random.seed(hps.seed)  # set seed for consistent train/val split
-        train_data = []
-        val_data = []
-        val_goals = []
-        for (trial_data, trial_goals) in zip(data, goals):
-            if np.random.rand() <= hps.train_ratio:
-                train_data.append(trial_data)
-            else:
-                val_data.append(trial_data)
-                val_goals.append(trial_goals)
-        np.save(hps.model_dir + '/train_data', train_data)
-        np.save(hps.model_dir + '/val_data', val_data)
-        np.save(hps.model_dir + '/val_goals', val_goals)
-        train_data_modes = None
-        val_data_modes = None
-    elif hps.data_dir is not None:
-        goals = None
+# def load_data(hps):
+#     """ Loading real data from local folder
+#     """
+#     if hps.synthetic_data:
+#         data, goals = gen_data(
+#             n_trial=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
+#         np.random.seed(hps.seed)  # set seed for consistent train/val split
+#         train_data = []
+#         val_data = []
+#         val_goals = []
+#         for (trial_data, trial_goals) in zip(data, goals):
+#             if np.random.rand() <= hps.train_ratio:
+#                 train_data.append(trial_data)
+#             else:
+#                 val_data.append(trial_data)
+#                 val_goals.append(trial_goals)
+#         np.save(hps.model_dir + '/train_data', train_data)
+#         np.save(hps.model_dir + '/val_data', val_data)
+#         np.save(hps.model_dir + '/val_goals', val_goals)
+#         train_data_modes = None
+#         val_data_modes = None
+#     elif hps.data_dir is not None:
+#         goals = None
 
-        if hps.session_type == 'recording':
-            print("Loading movement data from recording sessions...")
-            groups = get_session_names(hps, ('type',), ('recording',))
-        elif hps.session_type == 'injection':
-            print("Loading movement data from injection sessions...")
-            groups = get_session_names(hps, ('type', 'type'), ('saline',
-                                                               'muscimol'),
-                                       comb=np.any)
-        sys.stdout.flush()
-        groups = groups[-hps.max_sessions:]
-        train_data, train_data_modes, val_data, val_data_modes = \
-            load_pk_data(hps, groups)
-    else:
-        raise Exception('Data must be provided (either real or synthetic)')
+#         if hps.session_type == 'recording':
+#             print("Loading movement data from recording sessions...")
+#             groups = get_session_names(hps, ('type',), ('recording',))
+#         elif hps.session_type == 'injection':
+#             print("Loading movement data from injection sessions...")
+#             groups = get_session_names(hps, ('type', 'type'), ('saline',
+#                                                                'muscimol'),
+#                                        comb=np.any)
+#         sys.stdout.flush()
+#         groups = groups[-hps.max_sessions:]
+#         train_data, train_data_modes, val_data, val_data_modes = \
+#             load_pk_data(hps, groups)
+#     else:
+#         raise Exception('Data must be provided (either real or synthetic)')
 
-    return train_data, train_data_modes, val_data, val_data_modes
+#     return train_data, train_data_modes, val_data, val_data_modes
 
 
 def run_model(hps):
@@ -263,18 +266,25 @@ def run_model(hps):
     if not os.path.exists(hps.model_dir):
         os.makedirs(hps.model_dir)
 
-    train_data, train_data_modes, val_data, val_data_modes = load_data(hps)
-    train_ntrials = len(train_data)
-    val_ntrials = len(val_data)
-    val_data = data_pad(val_data)
+    (train_data, train_conds, train_ctrls, val_data,
+        val_conds, val_ctrls) = load_data(hps)
+    extra_conds_present = train_conds is not None
+    ctrl_obs_present = train_ctrls is not None
+
+    # train_ntrials = len(train_data)
+    # val_ntrials = len(val_data)
+    val_data = pad_batch(val_data, mode='edge')
+    if ctrl_obs_present:
+        val_ctrls = pad_batch(val_ctrls, mode='zero')
     print('Data loaded.')
 
-    time1 = time.time()
+    #time1 = time.time()
     with tf.name_scope('params'):
         with tf.name_scope('columns'):
             p1_cols = np.arange(hps.p1_dim)
-            p2_cols = hps.p1_dim + np.arange(hps.p2_dim)
-            total_dim = hps.p1_dim + hps.p2_dim
+            #p2_cols = hps.p1_dim + np.arange(hps.p2_dim)
+            p2_cols = [2] #[0] is goalie y, [1] is ball x, [2] is ball y. Ball x is not modeled here. 
+            obs_dim = 3
 
         # No CLI arguments for these bc no longer being used,
         # but left just in case
@@ -285,21 +295,26 @@ def run_model(hps):
         train_ntrials = len(train_data)
         val_ntrials = len(val_data)
 
+        if extra_conds_present:
+            extra_dim = train_conds.shape[-1]
+        else:
+            extra_dim = 0
+
         # Initialize all of the parameters in the model
         with tf.name_scope('rec_control_params'):
             rec_params_u = get_rec_params_GBDS(
-                total_dim, hps.rec_lag, hps.rec_nlayers, hps.rec_hidden_dim,
+                obs_dim, extra_dim, hps.rec_lag, hps.rec_nlayers, hps.rec_hidden_dim,
                 penalty_Q, PKLparams, name='U')
             Dyn_params_u = init_Dyn_params('U', rec_params_u)
         with tf.name_scope('rec_goal_params'):
             rec_params_g = get_rec_params_GBDS(
-                total_dim, hps.rec_lag, hps.rec_nlayers, hps.rec_hidden_dim,
+                obs_dim, extra_dim, hps.rec_lag, hps.rec_nlayers, hps.rec_hidden_dim,
                 penalty_Q, PKLparams, name='G')
             Dyn_params_g = init_Dyn_params('G', rec_params_g)
 
         with tf.name_scope('gen_goalie_params'):
             gen_params_goalie = get_gen_params_GBDS_GMM(
-                hps.p1_dim, total_dim, hps.add_accel, p1_cols, hps.gen_nlayers,
+                hps.p1_dim, obs_dim, extra_dim, hps.add_accel, p1_cols, hps.gen_nlayers,
                 hps.gen_hidden_dim, hps.K, PKLparams, vel,
                 hps.eps_penalty, hps.sigma_penalty,
                 hps.goal_bound, hps.goal_bound_penalty,
@@ -307,7 +322,7 @@ def run_model(hps):
             PID_params_goalie = init_PID_params('Goalie', hps.p1_dim)
         with tf.name_scope('gen_ball_params'):
             gen_params_ball = get_gen_params_GBDS_GMM(
-                hps.p2_dim, total_dim, hps.add_accel, p2_cols, hps.gen_nlayers,
+                hps.p2_dim, obs_dim, extra_dim, hps.add_accel, p2_cols, hps.gen_nlayers,
                 hps.gen_hidden_dim, hps.K, PKLparams, vel,
                 hps.eps_penalty, hps.sigma_penalty,
                 hps.goal_bound, hps.goal_bound_penalty,
@@ -316,37 +331,66 @@ def run_model(hps):
 
     with tf.name_scope('model_setup'):
         # Creat the placeholder to input data
-        Y_ph = tf.placeholder(tf.float32, shape=(None, None, total_dim),
+        Y_ph = tf.placeholder(tf.float32, shape=(None, None, obs_dim),
                               name='data')
+        extra_conds_ph = tf.placeholder(tf.float32, shape=(None, extra_dim),
+                                        name='extra_conds')
+        ctrl_obs_ph = tf.placeholder(tf.float32, shape=(None, None, obs_dim),
+                                     name='ctrl_obs')
         # Generate real goal and control signal
         with tf.name_scope('gen_g'):
-            p_G = G.GBDS_g_all(gen_params_goalie, gen_params_ball, total_dim,
-                               Y_ph, value=tf.zeros_like(Y_ph))
+            if extra_conds_present:
+                p_G = G.GBDS_g_all(gen_params_goalie, gen_params_ball, obs_dim,
+                                   Y_ph, extra_conds_ph, name='p_G',
+                                   value=tf.zeros_like(Y_ph))
+            else:
+                p_G = G.GBDS_g_all(gen_params_goalie, gen_params_ball, obs_dim,
+                                   Y_ph, None, name='p_G',
+                                   value=tf.zeros_like(Y_ph))
         with tf.name_scope('gen_u'):
-            p_U = G.GBDS_u_all(gen_params_goalie, gen_params_ball, p_G, Y_ph,
-                               total_dim, PID_params_goalie, PID_params_ball,
-                               value=tf.zeros_like(Y_ph))
+            if ctrl_obs_present:
+                p_U = G.GBDS_u_all(gen_params_goalie, gen_params_ball, p_G,
+                                   Y_ph, ctrl_obs_ph, obs_dim,
+                                   PID_params_goalie, PID_params_ball,
+                                   name='p_U', value=tf.zeros_like(Y_ph))
+            else:
+                p_U = G.GBDS_u_all(gen_params_goalie, gen_params_ball, p_G,
+                                   Y_ph, None, obs_dim,
+                                   PID_params_goalie, PID_params_ball,
+                                   name='p_U', value=tf.zeros_like(Y_ph))
         # Generate posterior goal and control signal
-        with tf.name_scope('rec_g'):
-            q_G = R.SmoothingPastLDSTimeSeries(rec_params_g, Y_ph, total_dim,
-                                               total_dim, Dyn_params_g,
-                                               train_ntrials)
-        with tf.name_scope('rec_u'):
-            q_U = R.SmoothingPastLDSTimeSeries(rec_params_u, Y_ph, total_dim,
-                                               total_dim, Dyn_params_u,
-                                               train_ntrials)
+        if extra_conds_present:
+            with tf.name_scope('rec_g'):
+                q_G = R.SmoothingPastLDSTimeSeries(rec_params_g, Y_ph,
+                                                   extra_conds_ph,
+                                                   obs_dim, obs_dim,
+                                                   Dyn_params_g, name='q_G')
+            with tf.name_scope('rec_u'):
+                q_U = R.SmoothingPastLDSTimeSeries(rec_params_u, Y_ph,
+                                                   extra_conds_ph,
+                                                   obs_dim, obs_dim,
+                                                   Dyn_params_u, name='q_U')
+        else:
+            with tf.name_scope('rec_g'):
+                q_G = R.SmoothingPastLDSTimeSeries(rec_params_g, Y_ph, None,
+                                                   obs_dim, obs_dim,
+                                                   Dyn_params_g, name='q_G')
+            with tf.name_scope('rec_u'):
+                q_U = R.SmoothingPastLDSTimeSeries(rec_params_u, Y_ph, None,
+                                                   obs_dim, obs_dim,
+                                                   Dyn_params_u, name='q_U')
         # Generate real state based on control signal and velocility
         with tf.name_scope('obs'):
             # Y_pred_t = Y_(t-1)+max_vel*tanh(u_t) ,where Y_pred_0 = Y_0
             if hps.clip:
                 Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1), (Y_ph[:, :-1] +
-                               (tf.reshape(vel, [1, total_dim]) *
+                               (tf.reshape(vel, [1, obs_dim]) *
                                 tf.clip_by_value(p_U[:, 1:], -hps.clip_range,
                                                  hps.clip_range)))], 1,
                               name='Y')
             else:
                 Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1), (Y_ph[:, :-1] +
-                               (tf.reshape(vel, [1, total_dim]) *
+                               (tf.reshape(vel, [1, obs_dim]) *
                                 p_U[:, 1:]))], 1,
                               name='Y')
 
@@ -409,22 +453,57 @@ def run_model(hps):
             seso.saver.restore(sess, hps.saved_model_dir + '/saved_model')
             print("Model restored.")
 
-        time2 = time.time()
-        print('Model setup took %.3f s.' % (time2 - time1))
+        # time2 = time.time()
+        # print('Model setup took %.3f s.' % (time2 - time1))
 
         for i in range(hps.n_epochs):
-            batches = next(batch_generator_pad(train_data, hps.B))
+            if hps.synthetic_data:
+                batches = next(batch_generator(train_data, hps.B))
+            else:
+                batches, conds, ctrls = next(batch_generator_pad(
+                    train_data, hps.B, train_conds, train_ctrls))
 
-            for batch in batches:
-                info_dict = inference.update({Y_ph: batch})
-                inference.print_progress(info_dict)
+            if extra_conds_present and ctrl_obs_present:
+                for batch, cond, ctrl in zip(batches, conds, ctrls):
+                    info_dict = inference.update(
+                        {Y_ph: batch, extra_conds_ph: cond,
+                         ctrl_obs_ph: ctrl})
+                    inference.print_progress(info_dict)
+            elif extra_conds_present:
+                for batch, cond in zip(batches, conds):
+                    info_dict = inference.update(
+                        {Y_ph: batch, extra_conds_ph: cond})
+                    inference.print_progress(info_dict)
+            elif ctrl_obs_present:
+                for batch, ctrl in zip(batches, ctrls):
+                    info_dict = inference.update(
+                        {Y_ph: batch, ctrl_obs_ph: ctrl})
+                    inference.print_progress(info_dict)
+            else:
+                for batch in batches:
+                    info_dict = inference.update({Y_ph: batch})
+                    inference.print_progress(info_dict)
 
             if (i + 1) % hps.frequency_val_loss == 0:
                 seso_saver.save(sess, hps.model_dir + '/saved_model',
                                 global_step=(i + 1),
                                 latest_filename='checkpoint')
-                val_loss = sess.run(inference.loss,
-                                    feed_dict={Y_ph: val_data})
+                if extra_conds_present and ctrl_obs_present:
+                    val_loss = sess.run(
+                        inference.loss,
+                        feed_dict={Y_ph: val_data, extra_conds_ph: val_conds,
+                                   ctrl_obs_ph: val_ctrls})
+                elif extra_conds_present:
+                    val_loss = sess.run(
+                        inference.loss,
+                        feed_dict={Y_ph: val_data, extra_conds_ph: val_conds})
+                elif ctrl_obs_present:
+                    val_loss = sess.run(
+                        inference.loss,
+                        feed_dict={Y_ph: val_data, ctrl_obs_ph: val_ctrls})
+                else:
+                    val_loss = sess.run(
+                        inference.loss, feed_dict={Y_ph: val_data})
                 print('\n', 'Validation set loss after epoch %i: %.3f' %
                       (i + 1, val_loss / val_ntrials))
                 if val_loss / val_ntrials < lowest_ev_cost:
@@ -436,8 +515,8 @@ def run_model(hps):
 
         seso_saver.save(sess, hps.model_dir + '/final_model')
 
-        time3 = time.time()
-        print('Model training took %.3f s.' % (time3 - time2))
+        # time3 = time.time()
+        # print('Model training took %.3f s.' % (time3 - time2))
 
 
 def main(_):
@@ -446,11 +525,13 @@ def main(_):
     d = build_hyperparameter_dict(FLAGS)
     hps = hps_dict_to_obj(d)  # hyper-parameters
 
-    if hps.device_type == 'cpu':
+    if hps.device_type == 'CPU':
         with tf.device('cpu:0'):
             run_model(hps)
-    elif hps.device_type == 'gpu':
+    elif hps.device_type == 'GPU':
         run_model(hps)
+    else:
+      raise Exception('Device type not recognized.')
 
 
 if __name__ == "__main__":

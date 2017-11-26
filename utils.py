@@ -8,7 +8,7 @@ import pandas as pd
 from tensorflow.contrib.keras import layers as keras_layers
 from tensorflow.contrib.keras import constraints, models
 from matplotlib.colors import Normalize
-from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
+from layers import PKBiasLayer, PKRowBiasLayer
 
 class set_cbar_zero(Normalize):
     """set_cbar_zero(midpoint = float)       default: midpoint = 0.
@@ -73,131 +73,193 @@ def smooth_trial(trial, sigma=4.0, pad_method='extrapolate'):
                                       pad_method=pad_method)
     return rtrial
 
-<<<<<<< 007323809df8ff732133a86a38f3a3d9fb2d6cbd
-=======
-def load_pkhuman_data_pickle(hps, train_split=0.85):
+# def load_pkhuman_data_pickle(hps, train_split=0.85):
+#     """
+#     Load penaltykick data from human fMRI Huettel task. norm_x flag converts 
+#     range of x-dim from (0, 1) to (-1, 1)
+#     """
+#     #datafile = h5py.File(expanduser(file_loc))
+#     file_loc = hps.data_loc
+#     cutBegin = hps.cut_Begin
+#     norm_x = True
+#     np.random.seed(hps.seed)  # set seed for consistent train/val split
+#     with open(file_loc, 'rb') as pickle_file:
+#         datafile = pickle.load(pickle_file, encoding='latin1') #encoding param to deal with python 2/3 pickle issues
+
+#     #sessions = map(lambda sess_name: datafile.get(sess_name),
+#     #               session_names)
+#     nSubs = datafile.subj.nunique() #how many subjects are in this dataset?
+#     s = np.arange(nSubs)
+#     hotcode = pd.get_dummies(s)
+#     modes = {} #dummies representing each subject
+#     for i in s:
+#         modes[int(datafile.subj.unique()[i])] = hotcode.loc[[i]]
+
+#     y_data = []
+#     y_data_modes = []
+#     y_val_data = []
+#     y_val_data_modes = []
+#     y_data_res = []
+#     y_val_data_res = []
+#     y_data_JS = []
+#     y_val_data_JS = []    
+#     y_data_opp = []
+#     y_val_data_opp = []
+
+#     #y_data = [content[content.super_index = i] for i in set(content.super_index)]
+#     for trial in set(datafile.super_index): #for each trial
+#         info = datafile[datafile.super_index == trial] #all of the data corresponding to this trial
+#         if np.random.rand() <= train_split:
+#             curr_data = y_data
+#             curr_modes = y_data_modes        
+#             curr_res = y_data_res
+#             curr_JS = y_data_JS  
+#             curr_opp = y_data_opp              
+#         else:
+#             curr_data = y_val_data
+#             curr_modes = y_val_data_modes
+#             curr_res = y_val_data_res
+#             curr_JS = y_val_data_JS
+#             curr_opp = y_val_data_opp
+#         #raw_trial = sess.get(trial).value[:3, :].T
+#         raw_trial = info[['goalie','time','ball_alone']].values #grab the goalie y position, ball x position (same as time), and ball y position
+
+#         #JS_raw = info[['barY_JS', 'ballY_JS']].values
+#         is_win = (info['result'].iloc[0] == 'W')
+#         is_human = (info['opponent'].iloc[0] == 'human')
+#         curr_opp.append(is_human)
+#         curr_res.append(is_win)
+
+#         if is_human:
+#             JS_raw = info[['barY_JS', 'ballY_JS']].values
+#             #print JS_raw.shape
+#         if not is_human: #if the goalie is a computer, we need to calculate the "joystick inputs"
+#             barY_JS = np.hstack((0,np.diff(info['goalie'])/(info[['maxMove']].values[1:]).flatten()))
+#             ballY_JS = info[['ballY_JS']].values.flatten()
+#             tmp = pd.DataFrame({'barY_JS':barY_JS, 'ballY_JS':ballY_JS})
+#             JS_raw = tmp[['barY_JS','ballY_JS']].values
+#             #print barY_JS.shape, ballY_JS.shape
+#             #JS_raw = info[['barY_JS', 'ballY_JS']].values
+
+#         if norm_x:
+#             raw_trial[:, 0] = (raw_trial[:, 0] / 768.) * 2 - 1
+#             if is_win:
+#                 end_x = 920.0
+#             else:
+#                 end_x = 896.0
+#             raw_trial[:, 1] = np.linspace(128./1024., end_x/1024., len(raw_trial)) * 2 - 1
+#             raw_trial[:, 2] = (raw_trial[:, 2] / 768.) * 2 - 1 #normalize the y-dimension as well
+#         raw_trial = raw_trial[cutBegin:,:] #cut x timepoints, where x is the cutBegin arg. This handles the "zero activity" at the beginning
+#         JS_raw = JS_raw[cutBegin:,:]
+#         #JS = raw_trial[:,3:] #joystick data for goalie and ball
+#         #trial = smooth_trial(raw_trial).astype(theano.config.floatX)
+#         curr_data.append(np.array(raw_trial).astype('float32'))
+#         curr_JS.append(np.array(JS_raw).astype('float32'))
+#         curr_modes.append(np.array(modes[int(info.subj.iloc[0])]))
+#         #curr_JS.append(np.array(raw_trial[:,3:]).astype('float32'))
+
+#     #y_data = np.array(y_data)
+#     #y_data_modes = np.array(y_data_modes).astype(theano.config.floatX)
+#     y_data_modes = np.array(y_data_modes).astype('float32')
+#     y_val_data = np.array(y_val_data)
+#     #y_val_data_modes = np.array(y_val_data_modes).astype(theano.config.floatX)
+#     y_val_data_modes = np.array(y_val_data_modes).astype('float32')
+#     y_data_JS = np.array(y_data_JS)
+#     y_val_data_JS = np.array(y_val_data_JS)
+#     rets = [y_data, y_data_modes, y_data_res, y_data_JS, y_data_opp, y_val_data, y_val_data_modes, y_val_data_res, y_val_data_JS, y_val_data_opp]
+#     return rets
+
+# def load_PKhuman_hdf5(hps):
+# 	'''
+# 	Reads in the human data from PenaltyKik.02 from an hdf5 file.
+# 	This is the standard format we will expect the data to be in.
+# 	'''
+# 	data = h5py.File('humanPK.h5','r')
+# 	trajectories = np.array(data.get('trajectories'))
+# 	states = np.array(data.get('states'))
+# 	conditions = np.array(data.get('conditions'))
+# 	outcomes = np.array(data.get('outcomes'))
+
+# 	trajectories_train, trajectories_test = train_test_split(trajectories, test_size=1-hps.train_ratio, random_state=1)
+# 	states_train, states_test = train_test_split(states, test_size=1-hps.train_ratio, random_state=1)
+# 	conditions_train, conditions_test = train_test_split(conditions, test_size=1-hps.train_ratio, random_state=1)
+# 	outcomes_train, outcomes_test = train_test_split(outcomes, test_size=1-hps.train_ratio, random_state=1)
+
+# 	return [trajectories_train, trajectories_test, states_train, states_test, conditions_train, conditions_test, outcomes_train, outcomes_test]
+
+# def get_session_names(file_loc, columns, values, comb=np.all):
+#     """Get session names from real data
+#     """
+#     data_index = pd.read_csv(expanduser(file_loc), index_col=0)
+#     rows = comb([data_index[column] == value for column, value in zip(columns,
+#                                                                       values)],
+#                 axis=0)
+#     return data_index[rows].index.values.tolist()
+
+def load_data(hps):
+    """ Generate synthetic data set or load real data from local directory
     """
-    Load penaltykick data from human fMRI Huettel task. norm_x flag converts 
-    range of x-dim from (0, 1) to (-1, 1)
-    """
-    #datafile = h5py.File(expanduser(file_loc))
-    file_loc = hps.data_loc
-    cutBegin = hps.cut_Begin
-    norm_x = True
-    np.random.seed(hps.seed)  # set seed for consistent train/val split
-    with open(file_loc, 'rb') as pickle_file:
-        datafile = pickle.load(pickle_file, encoding='latin1') #encoding param to deal with python 2/3 pickle issues
-
-    #sessions = map(lambda sess_name: datafile.get(sess_name),
-    #               session_names)
-    nSubs = datafile.subj.nunique() #how many subjects are in this dataset?
-    s = np.arange(nSubs)
-    hotcode = pd.get_dummies(s)
-    modes = {} #dummies representing each subject
-    for i in s:
-        modes[int(datafile.subj.unique()[i])] = hotcode.loc[[i]]
-
-    y_data = []
-    y_data_modes = []
-    y_val_data = []
-    y_val_data_modes = []
-    y_data_res = []
-    y_val_data_res = []
-    y_data_JS = []
-    y_val_data_JS = []    
-    y_data_opp = []
-    y_val_data_opp = []
-
-    #y_data = [content[content.super_index = i] for i in set(content.super_index)]
-    for trial in set(datafile.super_index): #for each trial
-        info = datafile[datafile.super_index == trial] #all of the data corresponding to this trial
-        if np.random.rand() <= train_split:
-            curr_data = y_data
-            curr_modes = y_data_modes        
-            curr_res = y_data_res
-            curr_JS = y_data_JS  
-            curr_opp = y_data_opp              
-        else:
-            curr_data = y_val_data
-            curr_modes = y_val_data_modes
-            curr_res = y_val_data_res
-            curr_JS = y_val_data_JS
-            curr_opp = y_val_data_opp
-        #raw_trial = sess.get(trial).value[:3, :].T
-        raw_trial = info[['goalie','time','ball_alone']].values #grab the goalie y position, ball x position (same as time), and ball y position
-
-        #JS_raw = info[['barY_JS', 'ballY_JS']].values
-        is_win = (info['result'].iloc[0] == 'W')
-        is_human = (info['opponent'].iloc[0] == 'human')
-        curr_opp.append(is_human)
-        curr_res.append(is_win)
-
-        if is_human:
-            JS_raw = info[['barY_JS', 'ballY_JS']].values
-            #print JS_raw.shape
-        if not is_human: #if the goalie is a computer, we need to calculate the "joystick inputs"
-            barY_JS = np.hstack((0,np.diff(info['goalie'])/(info[['maxMove']].values[1:]).flatten()))
-            ballY_JS = info[['ballY_JS']].values.flatten()
-            tmp = pd.DataFrame({'barY_JS':barY_JS, 'ballY_JS':ballY_JS})
-            JS_raw = tmp[['barY_JS','ballY_JS']].values
-            #print barY_JS.shape, ballY_JS.shape
-            #JS_raw = info[['barY_JS', 'ballY_JS']].values
-
-        if norm_x:
-            raw_trial[:, 0] = (raw_trial[:, 0] / 768.) * 2 - 1
-            if is_win:
-                end_x = 920.0
+    train_data = []
+    val_data = []
+    if hps.synthetic_data:
+        data, goals = gen_data(
+            n_trial=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
+        np.random.seed(hps.seed)  # set seed for consistent train/val split
+        val_goals = []
+        for (trial_data, trial_goals) in zip(data, goals):
+            if np.random.rand() <= hps.train_ratio:
+                train_data.append(trial_data)
             else:
-                end_x = 896.0
-            raw_trial[:, 1] = np.linspace(128./1024., end_x/1024., len(raw_trial)) * 2 - 1
-            raw_trial[:, 2] = (raw_trial[:, 2] / 768.) * 2 - 1 #normalize the y-dimension as well
-        raw_trial = raw_trial[cutBegin:,:] #cut x timepoints, where x is the cutBegin arg. This handles the "zero activity" at the beginning
-        JS_raw = JS_raw[cutBegin:,:]
-        #JS = raw_trial[:,3:] #joystick data for goalie and ball
-        #trial = smooth_trial(raw_trial).astype(theano.config.floatX)
-        curr_data.append(np.array(raw_trial).astype('float32'))
-        curr_JS.append(np.array(JS_raw).astype('float32'))
-        curr_modes.append(np.array(modes[int(info.subj.iloc[0])]))
-        #curr_JS.append(np.array(raw_trial[:,3:]).astype('float32'))
+                val_data.append(trial_data)
+                val_goals.append(trial_goals)
+        np.save(hps.model_dir + "/train_data", train_data)
+        np.save(hps.model_dir + "/val_data", val_data)
+        np.save(hps.model_dir + "/val_goals", val_goals)
+        train_conds = None
+        val_conds = None
+        train_ctrls = None
+        val_ctrls = None
+    elif hps.data_dir is not None:
+        datafile = h5py.File(hps.data_dir, 'r')
+        trajs = np.array(datafile["trajectories"], np.float32)
+        if "conditions" in datafile:
+            conds = np.array(datafile["conditions"], np.float32)
+        else:
+            conds = None
+        if "control" in datafile:
+            ctrls = np.array(datafile["control"], np.float32)
+        else:
+            ctrls = None
+        datafile.close()
+        np.random.seed(hps.seed)  # set seed for consistent train/val split
+        train_ind = []
+        val_ind = []
+        np.random.seed(hps.seed)  # set seed for consistent train/val split
+        for i in range(len(trajs)):
+            if np.random.rand() <= hps.train_ratio:
+                train_ind.append(i)
+            else:
+                val_ind.append(i)
+        np.save(hps.model_dir + '/train_indices', train_ind)
+        np.save(hps.model_dir + '/val_indices', val_ind)
+        train_data = trajs[train_ind]
+        val_data = trajs[val_ind]
+        if conds is not None:
+            train_conds = conds[train_ind]
+            val_conds = conds[val_ind]
+        else:
+            train_conds = None
+            val_conds = None
+        if ctrls is not None:
+            train_ctrls = ctrls[train_ind]
+            val_ctrls = ctrls[val_ind]
+        else:
+            train_ctrls = None
+            val_ctrls = None
+    else:
+        raise Exception("Data must be provided (either real or synthetic)")
 
-    #y_data = np.array(y_data)
-    #y_data_modes = np.array(y_data_modes).astype(theano.config.floatX)
-    y_data_modes = np.array(y_data_modes).astype('float32')
-    y_val_data = np.array(y_val_data)
-    #y_val_data_modes = np.array(y_val_data_modes).astype(theano.config.floatX)
-    y_val_data_modes = np.array(y_val_data_modes).astype('float32')
-    y_data_JS = np.array(y_data_JS)
-    y_val_data_JS = np.array(y_val_data_JS)
-    rets = [y_data, y_data_modes, y_data_res, y_data_JS, y_data_opp, y_val_data, y_val_data_modes, y_val_data_res, y_val_data_JS, y_val_data_opp]
-    return rets
-
-def load_PKhuman(hps):
-	'''
-	Reads in the human data from PenaltyKik.02 from an hdf5 file.
-	This is the standard format we will expect the data to be in.
-	'''
-	data = h5py.File('humanPK.h5','r')
-	trajectories = np.array(data.get('trajectories'))
-	states = np.array(data.get('states'))
-	conditions = np.array(data.get('conditions'))
-	outcomes = np.array(data.get('outcomes'))
-
-	trajectories_train, trajectories_test = train_test_split(trajectories, test_size=1-hps.train_ratio, random_state=1)
-	states_train, states_test = train_test_split(states, test_size=1-hps.train_ratio, random_state=1)
-	conditions_train, conditions_test = train_test_split(conditions, test_size=1-hps.train_ratio, random_state=1)
-	outcomes_train, outcomes_test = train_test_split(outcomes, test_size=1-hps.train_ratio, random_state=1)
-
-	return [trajectories_train, trajectories_test, states_train, states_test, conditions_train, conditions_test, outcomes_train, outcomes_test]
-
->>>>>>> changes
-def get_session_names(file_loc, columns, values, comb=np.all):
-    """Get session names from real data
-    """
-    data_index = pd.read_csv(expanduser(file_loc), index_col=0)
-    rows = comb([data_index[column] == value for column, value in zip(columns,
-                                                                      values)],
-                axis=0)
-    return data_index[rows].index.values.tolist()
+    return train_data, train_conds, train_ctrls, val_data, val_conds, val_ctrls
 
 def get_max_velocities(y_data, y_val_data):
     """Get the maximium velocities from data
@@ -334,7 +396,7 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
     return NN, PKbias_layers
 
 
-def get_rec_params_GBDS(obs_dim, lag, num_layers, hidden_dim, penalty_Q,
+def get_rec_params_GBDS(obs_dim, extra_dim, lag, num_layers, hidden_dim, penalty_Q,
                         PKLparams, name):
     """Return a dictionary of timeseries-specific parameters for recognition
        model
@@ -342,14 +404,14 @@ def get_rec_params_GBDS(obs_dim, lag, num_layers, hidden_dim, penalty_Q,
 
     with tf.name_scope('rec_mu_%s' % name):
         mu_net, PKbias_layers_mu = get_network('rec_mu_%s' % name,
-                                               obs_dim * (lag + 1),
+                                               (obs_dim * (lag + 1) + extra_dim),
                                                obs_dim, hidden_dim,
                                                num_layers, PKLparams,
                                                batchnorm=False)
 
     with tf.name_scope('rec_lambda_%s' % name):
         lambda_net, PKbias_layers_lambda = get_network('rec_lambda_%s' % name,
-                                                       obs_dim * (lag + 1),
+                                                       (obs_dim * (lag + 1) + extra_dim),
                                                        obs_dim**2,
                                                        hidden_dim,
                                                        num_layers, PKLparams,
@@ -358,7 +420,7 @@ def get_rec_params_GBDS(obs_dim, lag, num_layers, hidden_dim, penalty_Q,
     with tf.name_scope('rec_lambdaX_%s' % name):
         lambdaX_net, PKbias_layers_lambdaX = get_network('rec_lambdaX_%s'
                                                          % name,
-                                                         obs_dim * (lag + 1),
+                                                         (obs_dim * (lag + 1)+extra_dim),
                                                          obs_dim**2,
                                                          hidden_dim,
                                                          num_layers, PKLparams,
@@ -382,7 +444,7 @@ def get_rec_params_GBDS(obs_dim, lag, num_layers, hidden_dim, penalty_Q,
     return rec_params
 
 
-def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
+def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
                             yCols_agent, nlayers_gen, hidden_dim_gen,
                             K, PKLparams, vel,
                             penalty_eps, penalty_sigma,
@@ -401,7 +463,7 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, add_accel,
             state_dim = obs_dim * 2
 
     with tf.name_scope('gen_gmm_%s' % name):
-        GMM_net, _ = get_network('gen_gmm_%s' % name, state_dim,
+        GMM_net, _ = get_network('gen_gmm_%s' % name, (state_dim + extra_dim),
                                  (obs_dim_agent * K * 2 + K),
                                  hidden_dim_gen, nlayers_gen, PKLparams)
 
@@ -459,119 +521,96 @@ def init_Dyn_params(player, RecognitionParams):
     return Dyn_params
 
 
-def gen_data(n_trial, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
-             eps=np.log1p(np.exp(-10.)), Kp=1, Ki=0, Kd=0,
-             vel=1e-2 * np.ones((3))):
-    """Generate fake data to test the accuracy of the model
-    """
-    p = []
-    g = []
-
-    for _ in range(n_trial):
-        p_b = np.zeros((n_obs, 2), np.float32)
-        p_g = np.zeros((n_obs, 1), np.float32)
-        g_b = np.zeros((n_obs, 2), np.float32)
-        prev_error_b = 0
-        prev_error_g = 0
-        int_error_b = 0
-        int_error_g = 0
-
-        init_b_x = np.pi * (np.random.rand() * 2 - 1)
-        g_b_x_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-                                       init_b_x))
-        init_b_y = np.pi * (np.random.rand() * 2 - 1)
-        g_b_y_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-                                       init_b_y))
-        g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1), g_b_y_mu.reshape(n_obs,
-                                                                         1)])
-        g_b_lambda = np.array([16, 16], np.float32)
-        g_b[0] = [0.25 * (np.random.rand() * 2 - 1),
-                  0.25 * (np.random.rand() * 2 - 1)]
-
-        for t in range(n_obs - 1):
-            g_b[t + 1] = (g_b[t] + g_b_lambda * g_b_mu[t + 1]) / (1 +
-                                                                  g_b_lambda)
-            var = sigma ** 2 / (1 + g_b_lambda)
-            g_b[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
-
-            error_b = g_b[t + 1] - p_b[t]
-            int_error_b += error_b
-            der_error_b = error_b - prev_error_b
-            u_b = (Kp * error_b + Ki * int_error_b + Kd * der_error_b +
-                   eps * np.random.randn(2,))
-            prev_error_b = error_b
-            p_b[t + 1] = p_b[t] + vel[1:] * np.clip(u_b, -1, 1)
-
-            error_g = p_b[t + 1, 1] - p_g[t]
-            int_error_g += error_g
-            der_error_g = error_g - prev_error_g
-            u_g = (Kp * error_g + Ki * int_error_g + Kd * der_error_g +
-                   eps * np.random.randn())
-            prev_error_g = error_g
-            p_g[t + 1] = p_g[t] + vel[0] * np.clip(u_g, -1, 1)
-
-        p.append(np.hstack((p_g, p_b)))
-        g.append(g_b)
-
-    return p, g
-
-
-def batch_generator_pad(arrays, batch_size):
+def batch_generator(arrays, batch_size, randomize=True):
     """Minibatch generator over one dataset of shape
-    (nobservations, ndimensions)
+    (#observations, #dimensions)
     """
-    size = len(arrays)
-    n_batch = math.ceil(size / batch_size)
-    np.random.shuffle(arrays)
+    n_trials = len(arrays)
+    n_batch = math.ceil(n_trials / batch_size)
+    if randomize:
+        np.random.shuffle(arrays)
+
     start = 0
     while True:
         batches = []
         for _ in range(n_batch):
             stop = start + batch_size
-            diff = stop - size
+            diff = stop - n_trials
             if diff <= 0:
-                batch = arrays[start:stop]
+                batch = np.array(arrays[start:stop])
                 start = stop
             else:
-                batch = arrays[start:]
-            batch = data_pad(batch)
+                batch = np.array(arrays[start:])
             batches.append(batch)
         yield batches
 
-def data_pad(array):
-    max_len = np.max([len(a) for a in array])
-    return np.array([np.pad(a, ((0, max_len-len(a)), (0, 0)),'edge') for a in array])
 
+def batch_generator_pad(arrays, batch_size, extra_conds=None, ctrl_obs=None,
+                        randomize=True):
+    n_trials = len(arrays)
+    n_batch = math.ceil(n_trials / batch_size)
+    if randomize:
+        p = np.random.permutation(n_trials)
+        arrays = arrays[p]
+        if extra_conds is not None:
+            extra_conds = extra_conds[p]
+        if ctrl_obs is not None:
+            ctrl_obs = ctrl_obs[p]
 
-def batch_generator_pad(arrays, batch_size):
-    """Minibatch generator over one dataset of shape
-    (nobservations, ndimensions)
-    """
-    size = len(arrays)
-    n_batch = math.ceil(size / batch_size)
-    np.random.shuffle(arrays)
     start = 0
     while True:
         batches = []
+        conds = []
+        ctrls = []
         for _ in range(n_batch):
             stop = start + batch_size
-            diff = stop - size
+            diff = stop - n_trials
             if diff <= 0:
                 batch = arrays[start:stop]
+                if extra_conds is not None:
+                    cond = np.array(extra_conds[start:stop])
+                if ctrl_obs is not None:
+                    ctrl = np.array(ctrl_obs[start:stop])
                 start = stop
             else:
                 batch = arrays[start:]
-            batch = data_pad(batch)
+                if extra_conds is not None:
+                    cond = np.array(extra_conds[start:])
+                if ctrl_obs is not None:
+                    ctrl = np.array(ctrl_obs[start:])
+            batch = pad_batch(batch)
             batches.append(batch)
-        yield batches
+            if extra_conds is not None:
+                conds.append(cond)
+            if ctrl_obs is not None:
+                ctrl = pad_batch(ctrl, mode='zero')
+                ctrls.append(ctrl)
+        yield batches, conds, ctrls
 
 
-def data_pad(array):
-    max_len = np.max([len(a) for a in array])
-    return np.array([np.pad(a, ((0, max_len-len(a)), (0, 0)),
-                            'edge') for a in array])
-    # return np.asarray([np.pad(a, ((0, max_len-len(a)), (0, 0)), 'constant',
-    #                           constant_values=0) for a in batch])
+def pad_batch(arrays, mode='edge'):
+    max_len = np.max([len(a) for a in arrays])
+    if mode == 'edge':
+        return np.array([np.pad(a, ((0, max_len - len(a)), (0, 0)),
+                                'edge') for a in arrays])
+    elif mode =='zero':
+        return np.array([np.pad(a, ((0, max_len-len(a)), (0, 0)), 'constant',
+                                constant_values=0) for a in arrays])
+
+
+def pad_extra_conds(data, extra_conds=None):
+    if extra_conds is not None:
+        if not isinstance(extra_conds, tf.Tensor):
+            extra_conds = tf.constant(extra_conds, dtype=tf.float32,
+                                      name='extra_conds')
+        extra_conds_repeat = tf.tile(
+            tf.expand_dims(extra_conds, 1), [1, tf.shape(data)[1], 1],
+            name='repeat_extra_conds')
+        padded_data = tf.concat([data, extra_conds_repeat], axis=-1,
+                                name='pad_extra_conds')
+        return padded_data
+    else:
+        raise Exception('Must provide extra conditions.')
 
 
 class DatasetTrialIndexIterator(object):
