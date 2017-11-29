@@ -9,8 +9,6 @@ from tensorflow.contrib.keras import layers as keras_layers
 from tensorflow.contrib.keras import constraints, models
 from matplotlib.colors import Normalize
 from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
-import edward as ed
-import six
 
 class set_cbar_zero(Normalize):
     """set_cbar_zero(midpoint = float)       default: midpoint = 0.
@@ -539,6 +537,9 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
                                  (obs_dim_agent * K * 2 + K),
                                  hidden_dim_gen, nlayers_gen, PKLparams)
 
+    with tf.name_scope('initial_distribution_%s' % name):
+        g0_params = init_GMM_params(name, K)
+
     gen_params = dict(all_vel=vel,
                       vel=vel[yCols_agent],
                       yCols=yCols_agent,  # which columns belong to the agent
@@ -551,6 +552,7 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
                       clip_tol=clip_tol,
                       eta=eta,
                       get_states=get_states,
+                      g0_params=g0_params,
                       GMM_net=GMM_net,
                       GMM_k=K)
 
@@ -577,20 +579,36 @@ def init_PID_params(player, Dim):
     return PID_params
 
 
-def init_Dyn_params(player, RecognitionParams):
+def init_Dyn_params(var, RecognitionParams):
     """Return a dictionary of dynamical parameters
     """
     Dyn_params = {}
     Dyn_params['A'] = tf.Variable(RecognitionParams['A'],
-                                  name='A_%s' % player, dtype=tf.float32)
+                                  name='A_%s' % var, dtype=tf.float32)
     Dyn_params['QinvChol'] = tf.Variable(RecognitionParams['QinvChol'],
-                                         name='QinvChol_%s' % player,
+                                         name='QinvChol_%s' % var,
                                          dtype=tf.float32)
     Dyn_params['Q0invChol'] = tf.Variable(RecognitionParams['Q0invChol'],
-                                          name='Q0invChol_%s' % player,
+                                          name='Q0invChol_%s' % var,
                                           dtype=tf.float32)
 
     return Dyn_params
+
+
+def init_GMM_params(player, K):
+    GMM_params = {}
+    GMM_params['K'] = K
+    GMM_params['locs'] = tf.Variable(tf.random_normal([K]),
+                                     dtype=tf.float32,
+                                     name='g0_locs_%s' % player)
+    GMM_params['unc_scales'] = tf.Variable(tf.random_normal([K]),
+                                           dtype=tf.float32,
+                                           name='g0_scales_%s' % player)
+    GMM_params['unc_weights'] = tf.Variable(tf.random_normal([K]),
+                                            dtype=tf.float32,
+                                            name='g0_weights_%s' % player)
+
+    return GMM_params
 
 
 def batch_generator(arrays, batch_size, randomize=True):

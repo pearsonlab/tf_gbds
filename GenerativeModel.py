@@ -3,7 +3,7 @@ import numpy as np
 from edward.models import RandomVariable
 from tensorflow.contrib.distributions import Distribution, Normal
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
-from tf_gbds.utils import pad_extra_conds
+from tf_gbds.utils import init_GMM, pad_extra_conds
 
 
 def logsumexp(x, axis=None):
@@ -520,6 +520,9 @@ class GBDS_g(RandomVariable, Distribution):
             # function that calculates states from positions
             self.get_states = GenerativeParams['get_states']
 
+        with tf.name_scope('g0'):
+            self.g0_cat, self.go_comp = init_GMM(GenerativeParams['g0_params'])
+
         with tf.name_scope('GMM_NN'):
             self.GMM_k = GenerativeParams['GMM_k']  # number of GMM components
             # GMM neural networks
@@ -659,7 +662,7 @@ class GBDS_g(RandomVariable, Distribution):
                          0.5 * tf.log(2 * np.pi) -
                          tf.log(tf.reshape(self.sigma, [1, 1, 1, -1])))
             LogDensity += tf.reduce_sum(logsumexp(
-              tf.reduce_sum(gmm_term, axis=-1), axis=-1), axis=[-2, -1])
+                tf.reduce_sum(gmm_term, axis=-1), axis=-1), axis=[-2, -1])
 
         with tf.name_scope('goal_and_control_penalty'):
             if self.pen_g is not None:
