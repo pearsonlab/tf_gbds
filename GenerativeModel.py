@@ -554,7 +554,7 @@ class GBDS_g(RandomVariable, Distribution):
         with tf.name_scope('goal_state_noise'):
             # noise coefficient on goal states
             self.unc_sigma = tf.Variable(
-                initial_value=-5 * np.ones((1, self.yDim)), name='unc_sigma',
+                initial_value=-10 * np.ones((1, self.yDim)), name='unc_sigma',
                 dtype=tf.float32)
             self.sigma = tf.nn.softplus(self.unc_sigma, name='sigma')
 
