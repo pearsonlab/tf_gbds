@@ -521,7 +521,12 @@ class GBDS_g(RandomVariable, Distribution):
             self.get_states = GenerativeParams['get_states']
 
         with tf.name_scope('g0'):
-            self.g0_cat, self.go_comp = init_GMM(GenerativeParams['g0_params'])
+            self.g0_params = GenerativeParams['g0_params']
+            self.g0_mu = self.g0_params['mu']
+            self.g0_lambda = tf.nn.softplus(self.g0_params['unc_lambda'],
+                                            name='softplus_g0_lambda')
+            self.g0_w = tf.nn.softmax(self.g0_params['unc_w'],
+                                      name='softmax_g0_w')
 
         with tf.name_scope('GMM_NN'):
             self.GMM_k = GenerativeParams['GMM_k']  # number of GMM components
@@ -592,27 +597,44 @@ class GBDS_g(RandomVariable, Distribution):
 
         with tf.name_scope('get_GMM_params'):
             with tf.name_scope('mu'):
+                mu_0 = tf.tile(
+                    tf.expand_dims(tf.expand_dims(self.g0_mu, 0), 0),
+                    [self.B, 1, 1, 1], name='repeat_mu0')
                 all_mu = tf.reshape(
                     self.GMM_net(states)[:, :, :(self.yDim * self.GMM_k)],
                     [self.B, -1, self.GMM_k, self.yDim], name='reshape_mu')
+                all_mu = tf.concat([mu_0, all_mu], 1, name='all_mu')
 
             with tf.name_scope('lambda'):
+                lambda_0 = tf.tile(
+                    tf.expand_dims(tf.expand_dims(self.g0_lambda, 0), 0),
+                    [self.B, 1, 1, 1], name='repeat_lambda0')
                 all_lambda = tf.nn.softplus(tf.reshape(
                     self.GMM_net(states)[:, :, (self.yDim *
                                                 self.GMM_k):(2 * self.yDim *
                                                              self.GMM_k)],
                     [self.B, -1, self.GMM_k, self.yDim],
                     name='reshape_lambda'), name='softplus_lambda')
+                all_lambda = tf.concat([lambda_0, all_lambda], 1,
+                                       name='all_lambda')
 
             with tf.name_scope('w'):
+                w_0 = tf.tile(
+                    tf.expand_dims(tf.expand_dims(self.g0_w, 0), 0),
+                    [self.B, 1, 1], name='repeat_w0')
                 all_w = tf.nn.softmax(tf.reshape(
                     self.GMM_net(states)[:, :, (2 * self.yDim * self.GMM_k):],
                     [self.B, -1, self.GMM_k],
                     name='reshape_w'), dim=-1, name='softmax_w')
+                all_w = tf.concat([w_0, all_w], 1, name='all_w')
 
         with tf.name_scope('next_g'):
                 # Draw next goals based on force
             if post_g is not None:  # Calculate next goals from posterior
+                k_0 = tf.multinomial(
+                    tf.tile(tf.expand_dims(tf.log(self.g0_w), 0), [self.B, 1]),
+                    1, name='k_0')
+                
                 next_g = ((tf.reshape(post_g[:, :-1],
                                       [self.B, -1, 1, self.yDim]) +
                            all_mu * all_lambda) / (1 + all_lambda))

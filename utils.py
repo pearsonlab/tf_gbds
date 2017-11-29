@@ -538,7 +538,7 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
                                  hidden_dim_gen, nlayers_gen, PKLparams)
 
     with tf.name_scope('initial_distribution_%s' % name):
-        g0_params = init_GMM_params(name, K)
+        g0_params = init_GMM_params(name, obs_dim_agent, K)
 
     gen_params = dict(all_vel=vel,
                       vel=vel[yCols_agent],
@@ -595,18 +595,17 @@ def init_Dyn_params(var, RecognitionParams):
     return Dyn_params
 
 
-def init_GMM_params(player, K):
+def init_GMM_params(player, Dim, K):
     GMM_params = {}
     GMM_params['K'] = K
-    GMM_params['locs'] = tf.Variable(tf.random_normal([K]),
-                                     dtype=tf.float32,
-                                     name='g0_locs_%s' % player)
-    GMM_params['unc_scales'] = tf.Variable(tf.random_normal([K]),
+    GMM_params['mu'] = tf.Variable(tf.random_normal([K, Dim]),
+                                   dtype=tf.float32,
+                                   name='g0_mu_%s' % player)
+    GMM_params['unc_lambda'] = tf.Variable(tf.random_normal([K, Dim]),
                                            dtype=tf.float32,
-                                           name='g0_scales_%s' % player)
-    GMM_params['unc_weights'] = tf.Variable(tf.random_normal([K]),
-                                            dtype=tf.float32,
-                                            name='g0_weights_%s' % player)
+                                           name='g0_unc_lambda_%s' % player)
+    GMM_params['unc_w'] = tf.Variable(tf.ones([K]), dtype=tf.float32,
+                                      name='g0_unc_w_%s' % player)
 
     return GMM_params
 
