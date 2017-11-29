@@ -785,29 +785,3 @@ class MultiDatasetMiniBatchIterator(object):
             curr_rows = rows[beg:end]
             yield tuple(dset[curr_rows, :] for dset in self.data)
 
-class KLqp_new(ed.KLqp):
-    def __init__(self, latent_vars=None, data=None):
-        super(KLqp_new, self).__init__(latent_vars=latent_vars, data=data)
-
-    def update(self, options=None, run_metadata=None, feed_dict=None):
-        if feed_dict is None:
-          feed_dict = {}
-
-        for key, value in six.iteritems(self.data):
-          if isinstance(key, tf.Tensor) and "Placeholder" in key.op.type:
-            feed_dict[key] = value
-
-        sess = ed.get_session()
-        _, t, loss = sess.run([self.train, self.increment_t, self.loss],
-                              options=options, run_metadata=run_metadata, feed_dict=feed_dict)
-
-        if self.debug:
-          sess.run(self.op_check, feed_dict)
-
-        if self.logging and self.n_print != 0:
-          if t == 1 or t % self.n_print == 0:
-            summary = sess.run(self.summarize, feed_dict)
-            self.train_writer.add_summary(summary, t)
-
-        return {'t': t, 'loss': loss}
-

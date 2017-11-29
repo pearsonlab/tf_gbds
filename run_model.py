@@ -1,7 +1,8 @@
-from tf_gbds.utils import (gen_data, get_session_names, load_data, pad_batch, batch_generator,
-                           get_max_velocities, get_rec_params_GBDS,
-                           init_Dyn_params, get_gen_params_GBDS_GMM,
-                           init_PID_params, batch_generator_pad, KLqp_new)
+from tf_gbds.utils import (gen_data, get_session_names, load_data, pad_batch,
+                           batch_generator, get_max_velocities,
+                           get_rec_params_GBDS, init_Dyn_params,
+                           get_gen_params_GBDS_GMM, init_PID_params,
+                           batch_generator_pad)
 import os
 import tensorflow as tf
 import numpy as np
@@ -391,7 +392,7 @@ def run_model(hps):
         if hps.opt == 'Adam':
             optimizer = tf.train.AdamOptimizer(hps.learning_rate)
 
-        inference = KLqp_new({p_G: q_G, p_U: q_U}, data={Y: Y_ph})
+        inference = ed.KLqp({p_G: q_G, p_U: q_U}, data={Y: Y_ph})
         inference.initialize(n_iter=hps.n_epochs * n_batches,
                              n_samples=hps.n_samples,
                              # scale={Y: train_ntrials / hps.B},
@@ -412,8 +413,6 @@ def run_model(hps):
 
         # time2 = time.time()
         # print('Model setup took %.3f s.' % (time2 - time1))
-        options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        run_metadata = tf.RunMetadata()
 
         for i in range(hps.n_epochs):
             if hps.synthetic_data:
@@ -423,23 +422,23 @@ def run_model(hps):
                     train_data, hps.B, train_conds, train_ctrls))
             if extra_conds_present and ctrl_obs_present:
                 for batch, cond, ctrl in zip(batches, conds, ctrls):
-                    info_dict = inference.update(options=options, run_metadata=run_metadata,
+                    info_dict = inference.update(
                         feed_dict={Y_ph: batch, extra_conds_ph: cond,
                          ctrl_obs_ph: ctrl})
                     inference.print_progress(info_dict)
             elif extra_conds_present:
                 for batch, cond in zip(batches, conds):
-                    info_dict = inference.update(options=options, run_metadata=run_metadata,
+                    info_dict = inference.update(
                         feed_dict={Y_ph: batch, extra_conds_ph: cond})
                     inference.print_progress(info_dict)
             elif ctrl_obs_present:
                 for batch, ctrl in zip(batches, ctrls):
-                    info_dict = inference.update(options=options, run_metadata=run_metadata,
+                    info_dict = inference.update(
                         feed_dict={Y_ph: batch, ctrl_obs_ph: ctrl})
                     inference.print_progress(info_dict)
             else:
                 for batch in batches:
-                    info_dict = inference.update(options=options, run_metadata=run_metadata, feed_dict={Y_ph: batch})
+                    info_dict = inference.update(feed_dict={Y_ph: batch})
                     inference.print_progress(info_dict)
 
             if (i + 1) % hps.frequency_val_loss == 0:
@@ -471,10 +470,6 @@ def run_model(hps):
                                    global_step=(i + 1),
                                    latest_filename='checkpoint_lve')
 
-            fetched_timeline = timeline.Timeline(run_metadata.step_stats)
-            chrome_trace = fetched_timeline.generate_chrome_trace_format()
-            with open('timeline_01_step_%d.json' % i, 'w') as f:
-                f.write(chrome_trace)
         seso_saver.save(sess, hps.model_dir + '/final_model')
 
 
