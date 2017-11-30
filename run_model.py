@@ -7,13 +7,16 @@ import RecognitionModel as R
 import edward as ed
 import sys
 import time
+from tensorflow.python.client import timeline
 
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
 
-MODEL_DIR = 'model_gmm'
-DATA_LOC = '/home/krm58/Desktop/penaltykick/nointerp__2017-May-04.16-52-55_df.pkl'
-CUT_BEGIN = 19
+MODEL_DIR = 'model_gmm_human'
+PROFILE_DIR = 'model_profile'
+#DATA_LOC = '/home/krm58/Desktop/penaltykick/nointerp__2017-May-04.16-52-55_df.pkl'
+DATA_DIR = '/home/krm58/Desktop/tf_gbds/humanPK.h5'
+#CUT_BEGIN = 19
 # MAX_SESSIONS = 10
 # SESSION_TYPE = 'recording'
 # SESSION_INDEX_DIR = '/home/qiankuang/data/session_index.csv'
@@ -21,7 +24,7 @@ CUT_BEGIN = 19
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
-SAVED_MODEL_DIR = '/home/krm58/Desktop/tf_gbds/model_gmm'
+SAVED_MODEL_DIR = '/home/krm58/Desktop/tf_gbds/model_gmm_human'
 #DEVICE_TYPE = 'cpu'
 
 P1_DIM = 1
@@ -63,6 +66,7 @@ NUM_SAMPLES = 1
 NUM_POSTERIOR_SAMPLES = 30
 MAX_CKPT_TO_KEEP = 5
 FREQUENCY_VAL_LOSS = 5
+ADD_CONDS = True
 
 flags = tf.app.flags
 
@@ -148,6 +152,8 @@ flags.DEFINE_integer('max_ckpt_to_keep', MAX_CKPT_TO_KEEP, 'maximum number of \
                      checkpoint to save')
 flags.DEFINE_string('frequency_val_loss', FREQUENCY_VAL_LOSS, 'frequency of \
                     saving validate loss')
+flags.DEFINE_boolean('add_conds', ADD_CONDS, 'does the user want to add extra_conditions?')
+flags.DEFINE_string('profile_dir', PROFILE_DIR, 'Where do you want to save the json profiles')
 FLAGS = flags.FLAGS
 
 
@@ -156,12 +162,12 @@ def build_hyperparameter_dict(flags):
 
     d['model_type'] = flags.model_type
     d['model_dir'] = flags.model_dir
-    d['data_loc'] = flags.data_loc
-    d['cutBegin'] = flags.cutBegin
+    #d['data_loc'] = flags.data_loc
+    #d['cutBegin'] = flags.cutBegin
     # d['max_sessions'] = flags.max_sessions
     # d['session_type'] = flags.session_type
     # d['session_index_dir'] = flags.session_index_dir
-    #d['data_dir'] = flags.data_dir
+    d['data_dir'] = flags.data_dir
     d['synthetic_data'] = flags.synthetic_data
     d['save_posterior'] = flags.save_posterior
     d['load_saved_model'] = flags.load_saved_model
@@ -202,6 +208,8 @@ def build_hyperparameter_dict(flags):
     d['n_post_samples'] = flags.num_posterior_samples
     d['max_ckpt_to_keep'] = flags.max_ckpt_to_keep
     d['frequency_val_loss'] = flags.frequency_val_loss
+    d['add_conds'] = flags.add_conds
+    d['profile_dir'] = flags.profile_dir
     return d
 
 
@@ -434,7 +442,11 @@ def run_model(hps):
                     q_G.getParams() + q_U.getParams())
         if hps.opt == 'Adam':
             optimizer = tf.train.AdamOptimizer(hps.learning_rate)
-        inference = ed.KLqp({p_G: q_G, p_U: q_U}, data={Y: Y_ph})
+        inference = KLqp_new({p_G: q_G, p_U: q_U}, data={Y: Y_ph})
+        # if hps.load_saved_model:
+        #     start_epoch = 515 #make this not hardcoded later
+        # else:
+        #     start_epoch = 0
         inference.initialize(n_iter=hps.n_epochs * n_batches,
                              n_samples=hps.n_samples,
                              # scale={Y: train_ntrials / hps.B},
@@ -449,12 +461,19 @@ def run_model(hps):
         lve_saver = tf.train.Saver(tf.global_variables(),
                                    max_to_keep=hps.max_ckpt_to_keep)
 
+        
         if hps.load_saved_model:
-            seso.saver.restore(sess, hps.saved_model_dir + '/saved_model')
+            seso_saver.restore(sess, hps.saved_model_dir + '/saved_model-515')
+            # seso_saver = tf.train.import_meta_graph(hps.saved_model_dir + '/saved_model-515.meta')
+            # seso_saver.restore(sess, tf.train.latest_checkpoint(hps.saved_model_dir))
+            #start_epoch = 515 #make this not hardcoded later
             print("Model restored.")
-
+        
         # time2 = time.time()
         # print('Model setup took %.3f s.' % (time2 - time1))
+
+        options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+        run_metadata = tf.RunMetadata()
 
         for i in range(hps.n_epochs):
             if hps.synthetic_data:
@@ -465,23 +484,23 @@ def run_model(hps):
 
             if extra_conds_present and ctrl_obs_present:
                 for batch, cond, ctrl in zip(batches, conds, ctrls):
-                    info_dict = inference.update(
-                        {Y_ph: batch, extra_conds_ph: cond,
+                    info_dict = inference.update(options=options, run_metadata=run_metadata,
+                        feed_dict={Y_ph: batch, extra_conds_ph: cond,
                          ctrl_obs_ph: ctrl})
                     inference.print_progress(info_dict)
             elif extra_conds_present:
                 for batch, cond in zip(batches, conds):
-                    info_dict = inference.update(
-                        {Y_ph: batch, extra_conds_ph: cond})
+                    info_dict = inference.update(options=options, run_metadata=run_metadata,
+                        feed_dict={Y_ph: batch, extra_conds_ph: cond})
                     inference.print_progress(info_dict)
             elif ctrl_obs_present:
                 for batch, ctrl in zip(batches, ctrls):
-                    info_dict = inference.update(
-                        {Y_ph: batch, ctrl_obs_ph: ctrl})
+                    info_dict = inference.update(options=options, run_metadata=run_metadata,
+                        feed_dict={Y_ph: batch, ctrl_obs_ph: ctrl})
                     inference.print_progress(info_dict)
             else:
                 for batch in batches:
-                    info_dict = inference.update({Y_ph: batch})
+                    info_dict = inference.update(options=options, run_metadata=run_metadata, feed_dict={Y_ph: batch})
                     inference.print_progress(info_dict)
 
             if (i + 1) % hps.frequency_val_loss == 0:
@@ -513,6 +532,10 @@ def run_model(hps):
                                    global_step=(i + 1),
                                    latest_filename='checkpoint_lve')
 
+            fetched_timeline = timeline.Timeline(run_metadata.step_stats)
+            chrome_trace = fetched_timeline.generate_chrome_trace_format()
+            with open(hps.profile_dir + '/timeline_01_step_%d.json' % i, 'w') as f:
+                f.write(chrome_trace)
         seso_saver.save(sess, hps.model_dir + '/final_model')
 
         # time3 = time.time()
