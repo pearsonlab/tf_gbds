@@ -521,12 +521,14 @@ class GBDS_g(RandomVariable, Distribution):
             self.get_states = GenerativeParams['get_states']
 
         with tf.name_scope('g0'):
-            self.g0_params = GenerativeParams['g0_params']
-            self.g0_mu = self.g0_params['mu']
-            self.g0_lambda = tf.nn.softplus(self.g0_params['unc_lambda'],
+            self.g0_mu = GenerativeParams['g0_params']['mu']
+            self.g0_unc_lambda = GenerativeParams['g0_params']['unc_lambda']
+            self.g0_lambda = tf.nn.softplus(self.g0_unc_lambda,
                                             name='softplus_g0_lambda')
-            self.g0_w = tf.nn.softmax(self.g0_params['unc_w'],
+            self.g0_unc_w = GenerativeParams['g0_params']['unc_w']
+            self.g0_w = tf.nn.softmax(self.g0_unc_w,
                                       name='softmax_g0_w')
+            self.g0_params = [self.g0_mu, self.g0_unc_lambda, self.g0_unc_w]
 
         with tf.name_scope('GMM_NN'):
             self.GMM_k = GenerativeParams['GMM_k']  # number of GMM components
@@ -702,5 +704,5 @@ class GBDS_g(RandomVariable, Distribution):
     def getParams(self):
         """Return the learnable parameters of the model
         """
-        rets = self.GMM_net.variables
+        rets = self.GMM_net.variables + self.g0_params
         return rets
