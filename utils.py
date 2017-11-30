@@ -9,7 +9,8 @@ from tensorflow.contrib.keras import layers as keras_layers
 from tensorflow.contrib.keras import constraints, models
 from matplotlib.colors import Normalize
 from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
-
+import edward as ed
+import six
 
 class set_cbar_zero(Normalize):
     """set_cbar_zero(midpoint = float)       default: midpoint = 0.
@@ -783,3 +784,4 @@ class MultiDatasetMiniBatchIterator(object):
         for beg, end in zip(beg_indices, end_indices):
             curr_rows = rows[beg:end]
             yield tuple(dset[curr_rows, :] for dset in self.data)
+

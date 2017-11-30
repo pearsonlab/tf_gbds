@@ -11,6 +11,7 @@ import edward as ed
 import sys
 import time
 import math
+from tensorflow.python.client import timeline
 
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
@@ -23,7 +24,7 @@ LOAD_SAVED_MODEL = False
 SAVED_MODEL_DIR = 'model_gmm_copy'
 
 P1_DIM = 1
-P2_DIM = 2
+P2_DIM = 2  
 
 REC_LAG = 10
 REC_NLAYERS = 3
@@ -65,7 +66,7 @@ FREQUENCY_VAL_LOSS = 5
 flags = tf.app.flags
 
 flags.DEFINE_string('model_type', 'VI_KLqp',
-                    'Type of model to build {VI_KLqp, HMM')
+                    'Type of model to build {VI_KLqp, HMM}')
 flags.DEFINE_string('model_dir', MODEL_DIR,
                     'Directory where the model is saved')
 flags.DEFINE_string('data_dir', DATA_DIR, 'Directory of data file')
@@ -78,7 +79,7 @@ flags.DEFINE_boolean('load_saved_model', LOAD_SAVED_MODEL, 'Is the model \
 flags.DEFINE_string('saved_model_dir', SAVED_MODEL_DIR,
                     'Directory where the model to be restored is saved')
 flags.DEFINE_string('device_type', 'CPU',
-                    'The device where the model is trained {CPU, GPU')
+                    'The device where the model is trained {CPU, GPU}')
 
 flags.DEFINE_integer('p1_dim', P1_DIM,
                      'Number of data dimensions corresponding to player 1')
@@ -410,22 +411,22 @@ def run_model(hps):
             if extra_conds_present and ctrl_obs_present:
                 for batch, cond, ctrl in zip(batches, conds, ctrls):
                     info_dict = inference.update(
-                        {Y_ph: batch, extra_conds_ph: cond,
+                        feed_dict={Y_ph: batch, extra_conds_ph: cond,
                          ctrl_obs_ph: ctrl})
                     inference.print_progress(info_dict)
             elif extra_conds_present:
                 for batch, cond in zip(batches, conds):
                     info_dict = inference.update(
-                        {Y_ph: batch, extra_conds_ph: cond})
+                        feed_dict={Y_ph: batch, extra_conds_ph: cond})
                     inference.print_progress(info_dict)
             elif ctrl_obs_present:
                 for batch, ctrl in zip(batches, ctrls):
                     info_dict = inference.update(
-                        {Y_ph: batch, ctrl_obs_ph: ctrl})
+                        feed_dict={Y_ph: batch, ctrl_obs_ph: ctrl})
                     inference.print_progress(info_dict)
             else:
                 for batch in batches:
-                    info_dict = inference.update({Y_ph: batch})
+                    info_dict = inference.update(feed_dict={Y_ph: batch})
                     inference.print_progress(info_dict)
 
             if (i + 1) % hps.frequency_val_loss == 0:
@@ -461,6 +462,7 @@ def run_model(hps):
                                    latest_filename='checkpoint_lve')
 
         seso_saver.save(sess, hps.model_dir + '/final_model')
+
 
         # time3 = time.time()
         # print('Model training took %.3f s.' % (time3 - time2))
