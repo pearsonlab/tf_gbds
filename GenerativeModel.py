@@ -3,7 +3,7 @@ import numpy as np
 from edward.models import RandomVariable
 from tensorflow.contrib.distributions import Distribution, Normal
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
-from tf_gbds.utils import init_GMM, pad_extra_conds
+from tf_gbds.utils import pad_extra_conds
 
 
 def logsumexp(x, axis=None):
@@ -598,7 +598,7 @@ class GBDS_g(RandomVariable, Distribution):
         with tf.name_scope('get_GMM_params'):
             with tf.name_scope('mu'):
                 mu_0 = tf.tile(
-                    tf.expand_dims(tf.expand_dims(self.g0_mu, 0), 0),
+                    tf.reshape(self.g0_mu, [1, 1, self.GMM_k, self.yDim]),
                     [self.B, 1, 1, 1], name='repeat_mu0')
                 all_mu = tf.reshape(
                     self.GMM_net(states)[:, :, :(self.yDim * self.GMM_k)],
@@ -607,7 +607,7 @@ class GBDS_g(RandomVariable, Distribution):
 
             with tf.name_scope('lambda'):
                 lambda_0 = tf.tile(
-                    tf.expand_dims(tf.expand_dims(self.g0_lambda, 0), 0),
+                    tf.reshape(self.g0_lambda, [1, 1, self.GMM_k, self.yDim]),
                     [self.B, 1, 1, 1], name='repeat_lambda0')
                 all_lambda = tf.nn.softplus(tf.reshape(
                     self.GMM_net(states)[:, :, (self.yDim *
@@ -619,9 +619,8 @@ class GBDS_g(RandomVariable, Distribution):
                                        name='all_lambda')
 
             with tf.name_scope('w'):
-                w_0 = tf.tile(
-                    tf.expand_dims(tf.expand_dims(self.g0_w, 0), 0),
-                    [self.B, 1, 1], name='repeat_w0')
+                w_0 = tf.tile(tf.reshape(self.g0_w, [1, 1, self.GMM_k]),
+                              [self.B, 1, 1], name='repeat_w0')
                 all_w = tf.nn.softmax(tf.reshape(
                     self.GMM_net(states)[:, :, (2 * self.yDim * self.GMM_k):],
                     [self.B, -1, self.GMM_k],
@@ -631,13 +630,15 @@ class GBDS_g(RandomVariable, Distribution):
         with tf.name_scope('next_g'):
                 # Draw next goals based on force
             if post_g is not None:  # Calculate next goals from posterior
-                k_0 = tf.multinomial(
-                    tf.tile(tf.expand_dims(tf.log(self.g0_w), 0), [self.B, 1]),
-                    1, name='k_0')
-                
-                next_g = ((tf.reshape(post_g[:, :-1],
-                                      [self.B, -1, 1, self.yDim]) +
-                           all_mu * all_lambda) / (1 + all_lambda))
+                k_0 = tf.squeeze(tf.multinomial(
+                    tf.tile(tf.expand_dims(tf.log(self.g0_w), 0),
+                            [self.B, 1]), 1), name='k_0')
+                g_0 = (tf.gather(self.g0_mu, k_0, axis=0) +
+                       tf.random_normal([self.B, self.yDim]) /
+                       tf.sqrt(tf.gather(self.g0_lambda, k_0, axis=0)))
+                next_g = ((tf.expand_dims(
+                    tf.concat([tf.expand_dims(g_0, 1), post_g[:, :-1]], 1),
+                    2) + all_mu * all_lambda) / (1 + all_lambda))
 
         return (all_mu, all_lambda, all_w, next_g)
 
@@ -673,10 +674,9 @@ class GBDS_g(RandomVariable, Distribution):
 
         LogDensity = 0.0
         with tf.name_scope('goal_state_loss'):
-            w_brdcst = tf.reshape(all_w, [self.B, -1, self.GMM_k, 1],
-                                  name='reshape_w')
-            gmm_res_g = (tf.reshape(value[:, 1:], [self.B, -1, 1, self.yDim],
-                                    name='reshape_sample') - g_pred)
+            w_brdcst = tf.expand_dims(all_w, -1, name='reshape_w')
+            gmm_res_g = (tf.expand_dims(value, 2, name='reshape_sample') -
+                         g_pred)
             gmm_term = (tf.log(w_brdcst + 1e-8) - ((1 + all_lambda) /
                         (2 * tf.reshape(self.sigma, [1, -1]) ** 2)) *
                         gmm_res_g ** 2)
