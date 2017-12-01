@@ -1,8 +1,8 @@
-from tf_gbds.utils import (gen_data, get_session_names, load_data, pad_batch,
-                           batch_generator, get_max_velocities,
+from tf_gbds.utils import (load_data, get_max_velocities,
                            get_rec_params_GBDS, init_Dyn_params,
                            get_gen_params_GBDS_GMM, init_PID_params,
-                           batch_generator_pad, KLqp_new)
+                           batch_generator, batch_generator_pad, pad_batch, 
+                           KLqp_new)
 import os
 import tensorflow as tf
 import numpy as np
@@ -17,15 +17,12 @@ from tensorflow.python.client import timeline
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
 
-MODEL_DIR = '~/data/model_gmm'
-MAX_SESSIONS = 10
-SESSION_TYPE = 'recording'
-SESSION_INDEX_DIR = '~/data/session_index.csv'
-DATA_DIR = '~/data/compiled_penalty_kick_wspikes_resplined.hdf5'
+MODEL_DIR = 'model_gmm'
+DATA_DIR = ''
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
-SAVED_MODEL_DIR = '~/data/model_gmm_copy'
+SAVED_MODEL_DIR = 'model_gmm_copy'
 
 P1_DIM = 1
 P2_DIM = 2  
@@ -74,12 +71,6 @@ flags.DEFINE_string('model_type', 'VI_KLqp',
                     'Type of model to build {VI_KLqp, HMM}')
 flags.DEFINE_string('model_dir', MODEL_DIR,
                     'Directory where the model is saved')
-flags.DEFINE_integer('max_sessions', MAX_SESSIONS,
-                     'Maximum number of sessions to load')
-flags.DEFINE_string('session_type', SESSION_TYPE,
-                    'Type of data session')
-flags.DEFINE_string('session_index_dir', SESSION_INDEX_DIR,
-                    'Directory of session index file')
 flags.DEFINE_string('data_dir', DATA_DIR, 'Directory of data file')
 flags.DEFINE_boolean('synthetic_data', SYNTHETIC_DATA,
                      'Is the model trained on synthetic data?')
@@ -163,9 +154,6 @@ def build_hyperparameter_dict(flags):
 
     d['model_type'] = flags.model_type
     d['model_dir'] = flags.model_dir
-    d['max_sessions'] = flags.max_sessions
-    d['session_type'] = flags.session_type
-    d['session_index_dir'] = flags.session_index_dir
     d['data_dir'] = flags.data_dir
     d['synthetic_data'] = flags.synthetic_data
     d['save_posterior'] = flags.save_posterior
@@ -384,10 +372,12 @@ def run_model(hps):
                                        name='samples')
             with tf.name_scope('GMM_goalie'):
                 GMM_mu, GMM_lambda, GMM_w, _ = p_G.goalie.get_preds(
-                    Y_ph, training=True, post_g=q_G.sample(1))
+                    Y_ph, training=True,
+                    post_g=tf.gather(q_G.sample(), p1_cols, axis=-1))
             with tf.name_scope('GMM_ball'):
                 GMM_mu, GMM_lambda, GMM_w, _ = p_G.ball.get_preds(
-                    Y_ph, training=True, post_g=q_G.sample(1))
+                    Y_ph, training=True,
+                    post_g=tf.gather(q_G.sample(), p2_cols, axis=-1))
 
     # Calculate variational inference using Edward KLqp function
     if hps.model_type == 'VI_KLqp':
@@ -434,6 +424,7 @@ def run_model(hps):
             else:
                 batches, conds, ctrls = next(batch_generator_pad(
                     train_data, hps.B, train_conds, train_ctrls))
+
             if extra_conds_present and ctrl_obs_present:
                 for batch, cond, ctrl in zip(batches, conds, ctrls):
                     info_dict = inference.update(
@@ -459,6 +450,7 @@ def run_model(hps):
                 seso_saver.save(sess, hps.model_dir + '/saved_model',
                                 global_step=(i + 1),
                                 latest_filename='checkpoint')
+
                 if extra_conds_present and ctrl_obs_present:
                     val_loss = sess.run(
                         inference.loss,
@@ -475,8 +467,10 @@ def run_model(hps):
                 else:
                     val_loss = sess.run(
                         inference.loss, feed_dict={Y_ph: val_data})
+
                 print('\n', 'Validation set loss after epoch %i: %.3f' %
                       (i + 1, val_loss / val_ntrials))
+
                 if val_loss / val_ntrials < lowest_ev_cost:
                     print('Saving check point...')
                     lowest_ev_cost = val_loss / val_ntrials
