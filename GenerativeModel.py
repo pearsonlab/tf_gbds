@@ -632,17 +632,22 @@ class GBDS_g(RandomVariable, Distribution):
         with tf.name_scope('next_g'):
                 # Draw next goals based on force
             if post_g is not None:  # Calculate next goals from posterior
-                k_0 = tf.squeeze(tf.multinomial(
-                    tf.tile(tf.expand_dims(tf.log(self.g0_w), 0),
-                            [self.B, 1]), 1), name='k_0')
-                g_0 = (tf.gather(self.g0_mu, k_0, axis=0) +
-                       tf.random_normal([self.B, self.yDim]) /
-                       tf.sqrt(tf.gather(self.g0_lambda, k_0, axis=0)))
                 next_g = ((tf.expand_dims(
-                    tf.concat([tf.expand_dims(g_0, 1), post_g[:, :-1]], 1),
-                    2) + all_mu * all_lambda) / (1 + all_lambda))
+                    tf.concat([tf.expand_dims(self.sample_g0(), 1),
+                               post_g[:, :-1]], 1), 2) + all_mu * all_lambda) /
+                (1 + all_lambda))
 
         return (all_mu, all_lambda, all_w, next_g)
+
+    def sample_g0(self):
+        k_0 = tf.squeeze(tf.multinomial(
+            tf.tile(tf.expand_dims(tf.log(self.g0_w), 0),
+                    [self.B, 1]), 1), name='k_0')
+        g_0 = (tf.gather(self.g0_mu, k_0, axis=0) +
+               tf.random_normal([self.B, self.yDim]) /
+               tf.sqrt(tf.gather(self.g0_lambda, k_0, axis=0)))
+
+        return g_0
 
     def sample_GMM(self, mu, lmbda, w):
         """Sample from GMM based on highest weight component
@@ -650,7 +655,7 @@ class GBDS_g(RandomVariable, Distribution):
 
         def select_components(acc, inputs):
             sub_mu, sub_lambda, w = inputs
-            z = tf.range(self.K, name='classes')
+            z = tf.range(self.GMM_k, name='classes')
             p = tf.multinomial(tf.log(w), 1, name='draw')
             component = z[tf.cast(p[0, 0], tf.int32)]
 

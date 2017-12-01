@@ -8,6 +8,8 @@ import pandas as pd
 from tensorflow.contrib.keras import layers as keras_layers
 from tensorflow.contrib.keras import constraints, models
 from matplotlib.colors import Normalize
+import edward as ed
+import six
 from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
 
 class set_cbar_zero(Normalize):
@@ -72,139 +74,6 @@ def smooth_trial(trial, sigma=4.0, pad_method='extrapolate'):
         rtrial[:, i] = gauss_convolve(rtrial[:, i], sigma,
                                       pad_method=pad_method)
     return rtrial
-
-
-# def get_session_names(hps, columns, values, comb=np.all):
-#     """Get session names from real data
-#     """
-#     data_index = pd.read_csv(expanduser(hps.session_index_dir), index_col=0)
-#     rows = comb([data_index[column] == value for column, value in zip(columns,
-#                                                                       values)],
-#                 axis=0)
-
-#     return data_index[rows].index.values.tolist()
-
-
-# def load_pk_data(hps, groups, train_split=0.85, get_spikes=False,
-#                  get_gaze=False, norm_x=True):
-#     """Load penaltykick data. norm_x flag converts range of x-dim from (0, 1)
-#     to (-1, 1)
-#     """
-#     datafile = h5py.File(expanduser(hps.data_dir))
-
-#     sessions = map(lambda sess_name: datafile.get(sess_name),
-#                    groups)
-
-#     modes = {0: [0, 0, 0, 0],  # normal
-#              1: [1, 0, 0, 0],  # saline and DLPFC
-#              2: [0, 1, 0, 0],  # saline and DMPFC
-#              3: [1, 0, 1, 0],  # muscimol and DLPFC
-#              4: [0, 1, 0, 1]}  # muscimol and DMPFC
-
-#     y_data = []
-#     y_data_modes = []
-#     y_val_data = []
-#     y_val_data_modes = []
-#     if get_spikes:
-#         y_data_spikes = []
-#         y_data_signals = []
-#         y_val_data_spikes = []
-#         y_val_data_signals = []
-#         signal_range = (0, 0)  # current signals
-#     if get_gaze:
-#         y_data_gaze = []
-#         y_val_data_gaze = []
-#     for sess in sessions:
-#         new_session = True  # assign new set of signals for each new session
-#         for key in sess.keys():
-#             info = sess.get(key).attrs
-#             if (info['Complete'] and info['GameMode'] == 1
-#                     and not info['ReplayOldBarData']):
-#                 if get_spikes:  # if looking for trials with spike data
-#                     if not info['Spikes']:  # if trial does not have spike
-#                                             # data
-#                         continue  # skip
-#                 if get_gaze:  # if looking for trials with gaze data
-#                     if not info['Gaze']:  # if trial does not have gaze data
-#                         continue  # skip
-#                 if sess.get(key).value[1, :].max() <= 1.0:
-#                     if np.random.rand() <= train_split:
-#                         curr_data = y_data
-#                         curr_modes = y_data_modes
-#                         if get_spikes:
-#                             curr_spikes = y_data_spikes
-#                             curr_signals = y_data_signals
-#                         if get_gaze:
-#                             curr_gaze = y_data_gaze
-#                     else:
-#                         curr_data = y_val_data
-#                         curr_modes = y_val_data_modes
-#                         if get_spikes:
-#                             curr_spikes = y_val_data_spikes
-#                             curr_signals = y_val_data_signals
-#                         if get_gaze:
-#                             curr_gaze = y_val_data_gaze
-#                     raw_trial = sess.get(key).value[:3, :].T
-#                     if norm_x:
-#                         raw_trial[:, 1] = raw_trial[:, 1] * 2 - 1
-#                     trial = (smooth_trial(raw_trial)
-#                              .astype(np.float32))
-#                     curr_data.append(trial)
-
-#                     if get_spikes:
-#                         spike_entry = datafile.get('spikes' + sess.name +
-#                                                    '/' + key)
-#                         curr_spikes.append(spike_entry.value.T.astype('int32'))
-#                         if new_session:
-#                             # number of signals for session
-#                             ns = len(spike_entry.attrs['Signals'])
-#                             signal_range = (signal_range[1],
-#                                             signal_range[1] + ns)
-#                             new_session = False
-#                         if ns != len(spike_entry.attrs['Signals']):
-#                             # if signal added in middle of session
-#                             ns = len(spike_entry.attrs['Signals'])
-#                             signal_range = (signal_range[0],
-#                                             signal_range[0] + ns)
-#                         curr_signals.append(np.arange(*signal_range,
-#                                                       dtype='int32'))
-
-#                     if get_gaze:
-#                         gaze_entry = datafile.get('gaze' + sess.name + '/' +
-#                                                   key)
-#                         curr_gaze.append(gaze_entry.value.T
-#                                          .astype(np.float32))
-
-#                     if info['Ses_Type'] == 3 and info['Pre_Post'] == 2:
-#                         # post-saline injection
-#                         if info['Region'] == 1:  # DLPFC
-#                             curr_modes.append(modes[1])
-#                         elif info['Region'] == 2:  # DMPFC
-#                             curr_modes.append(modes[2])
-#                     elif info['Ses_Type'] == 2 and info['Pre_Post'] == 2:
-#                         # post-muscimol injection
-#                         if info['Region'] == 1:  # DLPFC
-#                             curr_modes.append(modes[3])
-#                         elif info['Region'] == 2:  # DMPFC
-#                             curr_modes.append(modes[4])
-#                     else:  # pre-injection or a recording trial
-#                         curr_modes.append(modes[0])
-
-#     y_data = np.array(y_data)
-#     y_data_modes = np.array(y_data_modes).astype('int32')
-#     y_val_data = np.array(y_val_data)
-#     y_val_data_modes = np.array(y_val_data_modes).astype('int32')
-#     rets = [y_data, y_data_modes, y_val_data, y_val_data_modes]
-#     if get_spikes:
-#         y_data_spikes = np.array(y_data_spikes)
-#         y_val_data_spikes = np.array(y_val_data_spikes)
-#         rets += [y_data_spikes, y_data_signals, y_val_data_spikes,
-#                  y_val_data_signals]
-#     if get_gaze:
-#         y_data_gaze = np.array(y_data_gaze)
-#         y_val_data_gaze = np.array(y_val_data_gaze)
-#         rets += [y_data_gaze, y_val_data_gaze]
-#     return rets
 
 
 def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
@@ -802,9 +671,10 @@ class MultiDatasetMiniBatchIterator(object):
             curr_rows = rows[beg:end]
             yield tuple(dset[curr_rows, :] for dset in self.data)
 
-class KLqp_new(ed.KLqp):
-    def __init__(self, options=None, run_metadata=None, latent_vars=None, data=None):
-        super(KLqp_new, self).__init__(latent_vars=latent_vars, data=data)
+class KLqp_profile(ed.KLqp):
+    def __init__(self, options=None, run_metadata=None, latent_vars=None,
+                 data=None):
+        super(KLqp_profile, self).__init__(latent_vars=latent_vars, data=data)
         self.options=options
         self.run_metadata=run_metadata
 
@@ -818,7 +688,9 @@ class KLqp_new(ed.KLqp):
 
         sess = ed.get_session()
         _, t, loss = sess.run([self.train, self.increment_t, self.loss],
-                              options = self.options, run_metadata = self.run_metadata, feed_dict=feed_dict)
+                              options = self.options,
+                              run_metadata = self.run_metadata,
+                              feed_dict=feed_dict)
 
         if self.debug:
           sess.run(self.op_check, feed_dict)
@@ -829,5 +701,3 @@ class KLqp_new(ed.KLqp):
             self.train_writer.add_summary(summary, t)
 
         return {'t': t, 'loss': loss}
-
-

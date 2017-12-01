@@ -2,7 +2,7 @@ from tf_gbds.utils import (load_data, get_max_velocities,
                            get_rec_params_GBDS, init_Dyn_params,
                            get_gen_params_GBDS_GMM, init_PID_params,
                            batch_generator, batch_generator_pad, pad_batch, 
-                           KLqp_new)
+                           KLqp_profile)
 import os
 import tensorflow as tf
 import numpy as np
@@ -23,6 +23,7 @@ SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
 SAVED_MODEL_DIR = 'model_gmm_copy'
+PROFILE = False
 
 P1_DIM = 1
 P2_DIM = 2  
@@ -63,7 +64,6 @@ NUM_SAMPLES = 1
 NUM_POSTERIOR_SAMPLES = 30
 MAX_CKPT_TO_KEEP = 5
 FREQUENCY_VAL_LOSS = 5
-PROFILE = False
 
 flags = tf.app.flags
 
@@ -80,6 +80,8 @@ flags.DEFINE_boolean('load_saved_model', LOAD_SAVED_MODEL, 'Is the model \
                      restored from a checkpoint?')
 flags.DEFINE_string('saved_model_dir', SAVED_MODEL_DIR,
                     'Directory where the model to be restored is saved')
+flags.DEFINE_boolean('profile', PROFILE, 'Is the model being profiled? \
+                     Use absolute path for hps.model_dir if profiling')
 flags.DEFINE_string('device_type', 'CPU',
                     'The device where the model is trained {CPU, GPU}')
 
@@ -143,9 +145,7 @@ flags.DEFINE_integer('max_ckpt_to_keep', MAX_CKPT_TO_KEEP, 'maximum number of \
                      checkpoint to save')
 flags.DEFINE_integer('frequency_val_loss', FREQUENCY_VAL_LOSS, 'frequency of \
                      saving validate loss')
-flags.DEFINE_boolean('profile', PROFILE, 'Will the profile be generated? \
-                     Use absolute path for the hps.model_dir \
-                     if hps.profile is true')
+
 FLAGS = flags.FLAGS
 
 
@@ -159,6 +159,7 @@ def build_hyperparameter_dict(flags):
     d['save_posterior'] = flags.save_posterior
     d['load_saved_model'] = flags.load_saved_model
     d['saved_model_dir'] = flags.saved_model_dir
+    d['profile'] = flags.profile
     d['device_type'] = flags.device_type
 
     d['p1_dim'] = flags.p1_dim
@@ -196,7 +197,7 @@ def build_hyperparameter_dict(flags):
     d['n_post_samples'] = flags.num_posterior_samples
     d['max_ckpt_to_keep'] = flags.max_ckpt_to_keep
     d['frequency_val_loss'] = flags.frequency_val_loss
-    d['profile'] = flags.profile
+
     return d
 
 
@@ -390,7 +391,8 @@ def run_model(hps):
         if hps.profile:
             options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
             run_metadata = tf.RunMetadata()
-            inference = KLqp_new(options, run_metadata, {p_G: q_G, p_U: q_U}, data={Y: Y_ph})
+            inference = KLqp_profile(options, run_metadata,
+                                     {p_G: q_G, p_U: q_U}, data={Y: Y_ph})
 
         else:
             inference = ed.KLqp({p_G: q_G, p_U: q_U}, data={Y: Y_ph})
@@ -408,8 +410,6 @@ def run_model(hps):
                                     max_to_keep=hps.max_ckpt_to_keep)
         lve_saver = tf.train.Saver(tf.global_variables(),
                                    max_to_keep=hps.max_ckpt_to_keep)
-
-
 
         if hps.load_saved_model:
             seso.saver.restore(sess, hps.saved_model_dir + '/saved_model')
@@ -479,15 +479,15 @@ def run_model(hps):
                                    latest_filename='checkpoint_lve')
 
         if hps.profile:
-
             fetched_timeline = timeline.Timeline(run_metadata.step_stats)
             chrome_trace = fetched_timeline.generate_chrome_trace_format()
-            # use absolute path for the hps.model_dir if hps.profile is true
-            with open(hps.model_dir + '/JSONfile/timeline_01_step_%d.json' % i, 'w') as f:
+            # use absolute path for hps.model_dir
+            with open(hps.model_dir + '/timeline_01_step_%d.json' %
+                      (i + 1), 'w') as f:
                 f.write(chrome_trace)
+                f.close()
 
         seso_saver.save(sess, hps.model_dir + '/final_model')
-
 
         # time3 = time.time()
         # print('Model training took %.3f s.' % (time3 - time2))
