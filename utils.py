@@ -468,6 +468,8 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
         GMM_net, _ = get_network('gen_gmm_%s' % name, (state_dim + extra_dim),
                                  (obs_dim_agent * K * 2 + K),
                                  hidden_dim_gen, nlayers_gen, PKLparams)
+    with tf.name_scope('initial_distribution_%s' % name):
+        g0_params = init_GMM_params(name, obs_dim_agent, K)
 
     gen_params = dict(all_vel=vel,
                       vel=vel[yCols_agent],
@@ -481,6 +483,7 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
                       clip_tol=clip_tol,
                       eta=eta,
                       get_states=get_states,
+                      g0_params=g0_params,
                       GMM_net=GMM_net,
                       GMM_k=K)
 
@@ -521,7 +524,20 @@ def init_Dyn_params(player, RecognitionParams):
                                           dtype=tf.float32)
 
     return Dyn_params
+    
+def init_GMM_params(player, Dim, K):
+    GMM_params = {}
+    GMM_params['K'] = K
+    GMM_params['mu'] = tf.Variable(tf.random_normal([K, Dim]),
+                                   dtype=tf.float32,
+                                   name='g0_mu_%s' % player)
+    GMM_params['unc_lambda'] = tf.Variable(tf.random_normal([K, Dim]),
+                                           dtype=tf.float32,
+                                           name='g0_unc_lambda_%s' % player)
+    GMM_params['unc_w'] = tf.Variable(tf.ones([K]), dtype=tf.float32,
+                                      name='g0_unc_w_%s' % player)
 
+    return GMM_params
 
 def batch_generator(arrays, batch_size, randomize=True):
     """Minibatch generator over one dataset of shape
@@ -614,6 +630,11 @@ def pad_extra_conds(data, extra_conds=None):
     else:
         raise Exception('Must provide extra conditions.')
 
+def add_summary(summary_op, inference, session, feed_dict, step):
+    if inference.n_print != 0:
+        if step == 1 or step % inference.n_print == 0:
+            summary = session.run(summary_op, feed_dict=feed_dict)
+            inference.train_writer.add_summary(summary, step)
 
 class DatasetTrialIndexIterator(object):
     """Basic trial iterator
@@ -715,11 +736,14 @@ class MultiDatasetMiniBatchIterator(object):
             curr_rows = rows[beg:end]
             yield tuple(dset[curr_rows, :] for dset in self.data)
 
-class KLqp_new(ed.KLqp):
-    def __init__(self, latent_vars=None, data=None):
-        super(KLqp_new, self).__init__(latent_vars=latent_vars, data=data)
+class KLqp_profile(ed.KLqp):
+    def __init__(self, options=None, run_metadata=None, latent_vars=None,
+                 data=None):
+        super(KLqp_profile, self).__init__(latent_vars=latent_vars, data=data)
+        self.options=options
+        self.run_metadata=run_metadata
 
-    def update(self, options=None, run_metadata=None, feed_dict=None):
+    def update(self, feed_dict=None):
         if feed_dict is None:
           feed_dict = {}
 
@@ -729,7 +753,9 @@ class KLqp_new(ed.KLqp):
 
         sess = ed.get_session()
         _, t, loss = sess.run([self.train, self.increment_t, self.loss],
-                              options=options, run_metadata=run_metadata, feed_dict=feed_dict)
+                              options = self.options,
+                              run_metadata = self.run_metadata,
+                              feed_dict=feed_dict)
 
         if self.debug:
           sess.run(self.op_check, feed_dict)

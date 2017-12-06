@@ -13,19 +13,12 @@ from tensorflow.python.client import timeline
 
 
 MODEL_DIR = 'model_gmm_human'
-PROFILE_DIR = 'model_profile'
-#DATA_LOC = '/home/krm58/Desktop/penaltykick/nointerp__2017-May-04.16-52-55_df.pkl'
 DATA_DIR = '/home/krm58/Desktop/tf_gbds/humanPK.h5'
-#CUT_BEGIN = 19
-# MAX_SESSIONS = 10
-# SESSION_TYPE = 'recording'
-# SESSION_INDEX_DIR = '/home/qiankuang/data/session_index.csv'
-#DATA_DIR = '/home/qiankuang/data/compiled_penalty_kick_wspikes_resplined.hdf5'
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
 SAVED_MODEL_DIR = '/home/krm58/Desktop/tf_gbds/model_gmm_human'
-#DEVICE_TYPE = 'cpu'
+PROFILE = False
 
 P1_DIM = 1
 P2_DIM = 1
@@ -65,6 +58,7 @@ BATCH_SIZE = 128
 NUM_SAMPLES = 1
 NUM_POSTERIOR_SAMPLES = 30
 MAX_CKPT_TO_KEEP = 5
+FREQUENCY_SAVING_CKPT = 5
 FREQUENCY_VAL_LOSS = 5
 ADD_CONDS = True
 
@@ -74,12 +68,6 @@ flags.DEFINE_string('model_type', 'VI_KLqp',
                     'Type of model to build {VI_KLqp, HMM')
 flags.DEFINE_string('model_dir', MODEL_DIR,
                     'Directory where the model is saved')
-# flags.DEFINE_integer('max_sessions', MAX_SESSIONS,
-#                      'Maximum number of sessions to load')
-# flags.DEFINE_string('session_type', SESSION_TYPE,
-#                     'Type of data session')
-# flags.DEFINE_string('session_index_dir', SESSION_INDEX_DIR,
-#                     'Directory of session index file')
 flags.DEFINE_string('data_dir', DATA_DIR, 'Directory of data file')
 flags.DEFINE_boolean('synthetic_data', SYNTHETIC_DATA,
                      'Is the model trained on synthetic data?')
@@ -148,12 +136,15 @@ flags.DEFINE_integer('num_samples', NUM_SAMPLES, 'Number of posterior \
                      samples for calculating stochastic gradients')
 flags.DEFINE_integer('num_posterior_samples', NUM_POSTERIOR_SAMPLES,
                      'Number of samples drawn from posterior distributions')
-flags.DEFINE_integer('max_ckpt_to_keep', MAX_CKPT_TO_KEEP, 'maximum number of \
-                     checkpoint to save')
+flags.DEFINE_integer('max_ckpt_to_keep', MAX_CKPT_TO_KEEP,
+                     'maximum number of checkpoint to keep in the directory')
+flags.DEFINE_integer('frequency_saving_ckpt', FREQUENCY_SAVING_CKPT,
+                     'frequency of saving checkpoint')
 flags.DEFINE_string('frequency_val_loss', FREQUENCY_VAL_LOSS, 'frequency of \
-                    saving validate loss')
+                    computing validation loss')
 flags.DEFINE_boolean('add_conds', ADD_CONDS, 'does the user want to add extra_conditions?')
-flags.DEFINE_string('profile_dir', PROFILE_DIR, 'Where do you want to save the json profiles')
+flags.DEFINE_boolean('profile', PROFILE, 'Is the model being profiled? \
+                     Use absolute path for hps.model_dir if profiling')
 FLAGS = flags.FLAGS
 
 
@@ -162,16 +153,12 @@ def build_hyperparameter_dict(flags):
 
     d['model_type'] = flags.model_type
     d['model_dir'] = flags.model_dir
-    #d['data_loc'] = flags.data_loc
-    #d['cutBegin'] = flags.cutBegin
-    # d['max_sessions'] = flags.max_sessions
-    # d['session_type'] = flags.session_type
-    # d['session_index_dir'] = flags.session_index_dir
     d['data_dir'] = flags.data_dir
     d['synthetic_data'] = flags.synthetic_data
     d['save_posterior'] = flags.save_posterior
     d['load_saved_model'] = flags.load_saved_model
     d['saved_model_dir'] = flags.saved_model_dir
+    d['profile'] = flags.profile
     d['device_type'] = flags.device_type
     d['p1_dim'] = flags.p1_dim
     d['p2_dim'] = flags.p2_dim
@@ -207,9 +194,9 @@ def build_hyperparameter_dict(flags):
     d['n_samples'] = flags.num_samples
     d['n_post_samples'] = flags.num_posterior_samples
     d['max_ckpt_to_keep'] = flags.max_ckpt_to_keep
+    d['frequency_saving_ckpt'] = flags.frequency_saving_ckpt
     d['frequency_val_loss'] = flags.frequency_val_loss
     d['add_conds'] = flags.add_conds
-    d['profile_dir'] = flags.profile_dir
     return d
 
 
@@ -225,49 +212,6 @@ class hps_dict_to_obj(dict):
     def __setattr__(self, key, value):
         self[key] = value
 
-
-# def load_data(hps):
-#     """ Loading real data from local folder
-#     """
-#     if hps.synthetic_data:
-#         data, goals = gen_data(
-#             n_trial=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
-#         np.random.seed(hps.seed)  # set seed for consistent train/val split
-#         train_data = []
-#         val_data = []
-#         val_goals = []
-#         for (trial_data, trial_goals) in zip(data, goals):
-#             if np.random.rand() <= hps.train_ratio:
-#                 train_data.append(trial_data)
-#             else:
-#                 val_data.append(trial_data)
-#                 val_goals.append(trial_goals)
-#         np.save(hps.model_dir + '/train_data', train_data)
-#         np.save(hps.model_dir + '/val_data', val_data)
-#         np.save(hps.model_dir + '/val_goals', val_goals)
-#         train_data_modes = None
-#         val_data_modes = None
-#     elif hps.data_dir is not None:
-#         goals = None
-
-#         if hps.session_type == 'recording':
-#             print("Loading movement data from recording sessions...")
-#             groups = get_session_names(hps, ('type',), ('recording',))
-#         elif hps.session_type == 'injection':
-#             print("Loading movement data from injection sessions...")
-#             groups = get_session_names(hps, ('type', 'type'), ('saline',
-#                                                                'muscimol'),
-#                                        comb=np.any)
-#         sys.stdout.flush()
-#         groups = groups[-hps.max_sessions:]
-#         train_data, train_data_modes, val_data, val_data_modes = \
-#             load_pk_data(hps, groups)
-#     else:
-#         raise Exception('Data must be provided (either real or synthetic)')
-
-#     return train_data, train_data_modes, val_data, val_data_modes
-
-
 def run_model(hps):
     """ Train GBDS model on real data
     """
@@ -279,8 +223,6 @@ def run_model(hps):
     extra_conds_present = train_conds is not None
     ctrl_obs_present = train_ctrls is not None
 
-    # train_ntrials = len(train_data)
-    # val_ntrials = len(val_data)
     val_data = pad_batch(val_data, mode='edge')
     if ctrl_obs_present:
         val_ctrls = pad_batch(val_ctrls, mode='zero')
@@ -418,6 +360,42 @@ def run_model(hps):
     print('Hidden Dims (VILDS recognition): %i' % hps.rec_hidden_dim)
     print('Input lag (VILDS recognition): %i' % hps.rec_lag)
 
+    PID_summary_key = tf.get_default_graph().unique_name('PID_params_summary')
+ 
+    Kp_goalie = tf.summary.scalar('PID_params/goalie/Kp',
+                                  p_U.goalie.Kp[0, 0],
+                                  collections=PID_summary_key)
+    Ki_goalie = tf.summary.scalar('PID_params/goalie/Ki',
+                                  p_U.goalie.Ki[0, 0],
+                                  collections=PID_summary_key)
+    Kd_goalie = tf.summary.scalar('PID_params/goalie/Kd',
+                                  p_U.goalie.Kd[0, 0],
+                                  collections=PID_summary_key)
+    Kp_ball_y = tf.summary.scalar('PID_params/ball_y/Kp',
+                                  p_U.ball.Kp[0, 0],
+                                  collections=PID_summary_key)
+    Ki_ball_y = tf.summary.scalar('PID_params/ball_y/Ki',
+                                  p_U.ball.Ki[0, 0],
+                                  collections=PID_summary_key)
+    Kd_ball_y = tf.summary.scalar('PID_params/ball_y/Kd',
+                                  p_U.ball.Kd[0, 0],
+                                  collections=PID_summary_key)
+    # Kp_ball_y = tf.summary.scalar('PID_params/ball_y/Kp',
+    #                               p_U.ball.Kp[1, 0],
+    #                               collections=PID_summary_key)
+    # Ki_ball_y = tf.summary.scalar('PID_params/ball_y/Ki',
+    #                               p_U.ball.Ki[1, 0],
+    #                               collections=PID_summary_key)
+    # Kd_ball_y = tf.summary.scalar('PID_params/ball_y/Kd',
+    #                               p_U.ball.Kd[1, 0],
+    #                               collections=PID_summary_key)
+
+    PID_summary = tf.summary.merge([Kp_goalie, Ki_goalie, Kd_goalie,
+                                    # Kp_ball_x, Ki_ball_x, Kd_ball_x,
+                                    Kp_ball_y, Ki_ball_y, Kd_ball_y],
+                                    collections=PID_summary_key,
+                                    name='PID_params_summary')
+
     if hps.save_posterior:
         with tf.name_scope('posterior'):
             with tf.name_scope('goal'):
@@ -430,10 +408,12 @@ def run_model(hps):
                                        name='samples')
             with tf.name_scope('GMM_goalie'):
                 GMM_mu, GMM_lambda, GMM_w, _ = p_G.goalie.get_preds(
-                    Y_ph, training=True, post_g=q_G.sample(1))
+                    Y_ph, training=True,
+                    post_g=tf.gather(q_G.sample(), p1_cols, axis=-1))
             with tf.name_scope('GMM_ball'):
                 GMM_mu, GMM_lambda, GMM_w, _ = p_G.ball.get_preds(
-                    Y_ph, training=True, post_g=q_G.sample(1))
+                    Y_ph, training=True,
+                    post_g=tf.gather(q_G.sample(), p2_cols, axis=-1))
 
     # Calculate variational inference using Edward KLqp function
     if hps.model_type == 'VI_KLqp':
@@ -442,11 +422,15 @@ def run_model(hps):
                     q_G.getParams() + q_U.getParams())
         if hps.opt == 'Adam':
             optimizer = tf.train.AdamOptimizer(hps.learning_rate)
-        inference = KLqp_new({p_G: q_G, p_U: q_U}, data={Y: Y_ph})
-        # if hps.load_saved_model:
-        #     start_epoch = 515 #make this not hardcoded later
-        # else:
-        #     start_epoch = 0
+        if hps.profile:
+            options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+            run_metadata = tf.RunMetadata()
+            inference = KLqp_profile(options, run_metadata,
+                                     {p_G: q_G, p_U: q_U}, data={Y: Y_ph})
+
+        else:
+            inference = ed.KLqp({p_G: q_G, p_U: q_U}, data={Y: Y_ph})
+        
         inference.initialize(n_iter=hps.n_epochs * n_batches,
                              n_samples=hps.n_samples,
                              # scale={Y: train_ntrials / hps.B},
@@ -459,21 +443,15 @@ def run_model(hps):
         seso_saver = tf.train.Saver(tf.global_variables(),
                                     max_to_keep=hps.max_ckpt_to_keep)
         lve_saver = tf.train.Saver(tf.global_variables(),
-                                   max_to_keep=hps.max_ckpt_to_keep)
+                                   max_to_keep=2)
 
         
         if hps.load_saved_model:
-            seso_saver.restore(sess, hps.saved_model_dir + '/saved_model-515')
-            # seso_saver = tf.train.import_meta_graph(hps.saved_model_dir + '/saved_model-515.meta')
-            # seso_saver.restore(sess, tf.train.latest_checkpoint(hps.saved_model_dir))
-            #start_epoch = 515 #make this not hardcoded later
+            seso_saver.restore(sess, hps.saved_model_dir + '/saved_model')
             print("Model restored.")
         
         # time2 = time.time()
         # print('Model setup took %.3f s.' % (time2 - time1))
-
-        options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        run_metadata = tf.RunMetadata()
 
         for i in range(hps.n_epochs):
             if hps.synthetic_data:
@@ -484,29 +462,39 @@ def run_model(hps):
 
             if extra_conds_present and ctrl_obs_present:
                 for batch, cond, ctrl in zip(batches, conds, ctrls):
-                    info_dict = inference.update(options=options, run_metadata=run_metadata,
-                        feed_dict={Y_ph: batch, extra_conds_ph: cond,
-                         ctrl_obs_ph: ctrl})
+                    feed_dict = {Y_ph: batch, extra_conds_ph: cond,
+                                 ctrl_obs_ph: ctrl}
+                    info_dict = inference.update(feed_dict=feed_dict)
+                    add_summary(PID_summary, inference, sess, feed_dict,
+                                info_dict['t'])
                     inference.print_progress(info_dict)
             elif extra_conds_present:
                 for batch, cond in zip(batches, conds):
-                    info_dict = inference.update(options=options, run_metadata=run_metadata,
-                        feed_dict={Y_ph: batch, extra_conds_ph: cond})
+                    feed_dict = {Y_ph: batch, extra_conds_ph: cond}
+                    info_dict = inference.update(feed_dict=feed_dict)
+                    add_summary(PID_summary, inference, sess, feed_dict,
+                                info_dict['t'])
                     inference.print_progress(info_dict)
             elif ctrl_obs_present:
                 for batch, ctrl in zip(batches, ctrls):
-                    info_dict = inference.update(options=options, run_metadata=run_metadata,
-                        feed_dict={Y_ph: batch, ctrl_obs_ph: ctrl})
+                    feed_dict = {Y_ph: batch, ctrl_obs_ph: ctrl}
+                    info_dict = inference.update(feed_dict=feed_dict)
+                    add_summary(PID_summary, inference, sess, feed_dict,
+                                info_dict['t'])
                     inference.print_progress(info_dict)
             else:
                 for batch in batches:
-                    info_dict = inference.update(options=options, run_metadata=run_metadata, feed_dict={Y_ph: batch})
+                    feed_dict = {Y_ph: batch}
+                    info_dict = inference.update(feed_dict=feed_dict)
+                    add_summary(PID_summary, inference, sess, feed_dict,
+                                info_dict['t'])
                     inference.print_progress(info_dict)
 
-            if (i + 1) % hps.frequency_val_loss == 0:
+            if (i + 1) % hps.frequency_saving_ckpt == 0:
                 seso_saver.save(sess, hps.model_dir + '/saved_model',
                                 global_step=(i + 1),
                                 latest_filename='checkpoint')
+            if (i + 1) % hps.frequency_val_loss == 0:
                 if extra_conds_present and ctrl_obs_present:
                     val_loss = sess.run(
                         inference.loss,
@@ -523,19 +511,23 @@ def run_model(hps):
                 else:
                     val_loss = sess.run(
                         inference.loss, feed_dict={Y_ph: val_data})
-                print('\n', 'Validation set loss after epoch %i: %.3f' %
+                print('\n', 'Validation loss after epoch %i: %.3f' %
                       (i + 1, val_loss / val_ntrials))
                 if val_loss / val_ntrials < lowest_ev_cost:
-                    print("Saving check point...")
+                    print('Saving model with lowest validation loss...')
                     lowest_ev_cost = val_loss / val_ntrials
                     lve_saver.save(sess, hps.model_dir + '/saved_model_lve',
                                    global_step=(i + 1),
-                                   latest_filename='checkpoint_lve')
+                                   latest_filename='checkpoint_lve', write_meta_graph=False)
 
-            fetched_timeline = timeline.Timeline(run_metadata.step_stats)
-            chrome_trace = fetched_timeline.generate_chrome_trace_format()
-            with open(hps.profile_dir + '/timeline_01_step_%d.json' % i, 'w') as f:
-                f.write(chrome_trace)
+            if hps.profile:
+                fetched_timeline = timeline.Timeline(run_metadata.step_stats)
+                chrome_trace = fetched_timeline.generate_chrome_trace_format()
+                # use absolute path for hps.model_dir
+                with open(hps.model_dir + '/timeline_01_step_%d.json' %
+                          (i + 1), 'w') as f:
+                    f.write(chrome_trace)
+                    f.close()
         seso_saver.save(sess, hps.model_dir + '/final_model')
 
         # time3 = time.time()
