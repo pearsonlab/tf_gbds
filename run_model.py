@@ -1,8 +1,8 @@
 from tf_gbds.utils import (load_data, get_max_velocities,
                            get_rec_params_GBDS, init_Dyn_params,
                            get_gen_params_GBDS_GMM, init_PID_params,
-                           batch_generator, batch_generator_pad, pad_batch, 
-                           KLqp_profile)
+                           batch_generator, batch_generator_pad, pad_batch,
+                           KLqp_profile, add_summary)
 import os
 import tensorflow as tf
 import numpy as np
@@ -63,6 +63,7 @@ BATCH_SIZE = 128
 NUM_SAMPLES = 1
 NUM_POSTERIOR_SAMPLES = 30
 MAX_CKPT_TO_KEEP = 5
+FREQUENCY_SAVING_CKPT = 5
 FREQUENCY_VAL_LOSS = 5
 
 flags = tf.app.flags
@@ -141,10 +142,12 @@ flags.DEFINE_integer('num_samples', NUM_SAMPLES, 'Number of posterior \
                      samples for calculating stochastic gradients')
 flags.DEFINE_integer('num_posterior_samples', NUM_POSTERIOR_SAMPLES,
                      'Number of samples drawn from posterior distributions')
-flags.DEFINE_integer('max_ckpt_to_keep', MAX_CKPT_TO_KEEP, 'maximum number of \
-                     checkpoint to save')
+flags.DEFINE_integer('max_ckpt_to_keep', MAX_CKPT_TO_KEEP,
+                     'maximum number of checkpoint to keep in the directory')
+flags.DEFINE_integer('frequency_saving_ckpt', FREQUENCY_SAVING_CKPT,
+                     'frequency of saving checkpoint')
 flags.DEFINE_integer('frequency_val_loss', FREQUENCY_VAL_LOSS, 'frequency of \
-                     saving validate loss')
+                     computing validation loss')
 
 FLAGS = flags.FLAGS
 
@@ -196,6 +199,7 @@ def build_hyperparameter_dict(flags):
     d['n_samples'] = flags.num_samples
     d['n_post_samples'] = flags.num_posterior_samples
     d['max_ckpt_to_keep'] = flags.max_ckpt_to_keep
+    d['frequency_saving_ckpt'] = flags.frequency_saving_ckpt
     d['frequency_val_loss'] = flags.frequency_val_loss
 
     return d
@@ -361,6 +365,42 @@ def run_model(hps):
     print('Hidden Dims (VILDS recognition): %i' % hps.rec_hidden_dim)
     print('Input lag (VILDS recognition): %i' % hps.rec_lag)
 
+    PID_summary_key = tf.get_default_graph().unique_name('PID_params_summary')
+
+    Kp_goalie = tf.summary.scalar('PID_params/goalie/Kp',
+                                  p_U.goalie.Kp[0, 0],
+                                  collections=PID_summary_key)
+    Ki_goalie = tf.summary.scalar('PID_params/goalie/Ki',
+                                  p_U.goalie.Ki[0, 0],
+                                  collections=PID_summary_key)
+    Kd_goalie = tf.summary.scalar('PID_params/goalie/Kd',
+                                  p_U.goalie.Kd[0, 0],
+                                  collections=PID_summary_key)
+    Kp_ball_x = tf.summary.scalar('PID_params/ball_x/Kp',
+                                  p_U.ball.Kp[0, 0],
+                                  collections=PID_summary_key)
+    Ki_ball_x = tf.summary.scalar('PID_params/ball_x/Ki',
+                                  p_U.ball.Ki[0, 0],
+                                  collections=PID_summary_key)
+    Kd_ball_x = tf.summary.scalar('PID_params/ball_x/Kd',
+                                  p_U.ball.Kd[0, 0],
+                                  collections=PID_summary_key)
+    Kp_ball_y = tf.summary.scalar('PID_params/ball_y/Kp',
+                                  p_U.ball.Kp[1, 0],
+                                  collections=PID_summary_key)
+    Ki_ball_y = tf.summary.scalar('PID_params/ball_y/Ki',
+                                  p_U.ball.Ki[1, 0],
+                                  collections=PID_summary_key)
+    Kd_ball_y = tf.summary.scalar('PID_params/ball_y/Kd',
+                                  p_U.ball.Kd[1, 0],
+                                  collections=PID_summary_key)
+
+    PID_summary = tf.summary.merge([Kp_goalie, Ki_goalie, Kd_goalie,
+                                    Kp_ball_x, Ki_ball_x, Kd_ball_x,
+                                    Kp_ball_y, Ki_ball_y, Kd_ball_y],
+                                    collections=PID_summary_key,
+                                    name='PID_params_summary')
+
     if hps.save_posterior:
         with tf.name_scope('posterior'):
             with tf.name_scope('goal'):
@@ -393,7 +433,6 @@ def run_model(hps):
             run_metadata = tf.RunMetadata()
             inference = KLqp_profile(options, run_metadata,
                                      {p_G: q_G, p_U: q_U}, data={Y: Y_ph})
-
         else:
             inference = ed.KLqp({p_G: q_G, p_U: q_U}, data={Y: Y_ph})
 
@@ -403,13 +442,15 @@ def run_model(hps):
                              var_list=var_list,
                              optimizer=optimizer,
                              logdir=hps.model_dir + '/log')
+
         sess = ed.get_session()
         tf.global_variables_initializer().run()
+
         lowest_ev_cost = np.Inf
         seso_saver = tf.train.Saver(tf.global_variables(),
                                     max_to_keep=hps.max_ckpt_to_keep)
         lve_saver = tf.train.Saver(tf.global_variables(),
-                                   max_to_keep=hps.max_ckpt_to_keep)
+                                   max_to_keep=2)
 
         if hps.load_saved_model:
             seso.saver.restore(sess, hps.saved_model_dir + '/saved_model')
@@ -427,30 +468,40 @@ def run_model(hps):
 
             if extra_conds_present and ctrl_obs_present:
                 for batch, cond, ctrl in zip(batches, conds, ctrls):
-                    info_dict = inference.update(
-                        feed_dict={Y_ph: batch, extra_conds_ph: cond,
-                         ctrl_obs_ph: ctrl})
+                    feed_dict = {Y_ph: batch, extra_conds_ph: cond,
+                                 ctrl_obs_ph: ctrl}
+                    info_dict = inference.update(feed_dict=feed_dict)
+                    add_summary(PID_summary, inference, sess, feed_dict,
+                                info_dict['t'])
                     inference.print_progress(info_dict)
             elif extra_conds_present:
                 for batch, cond in zip(batches, conds):
-                    info_dict = inference.update(
-                        feed_dict={Y_ph: batch, extra_conds_ph: cond})
+                    feed_dict = {Y_ph: batch, extra_conds_ph: cond}
+                    info_dict = inference.update(feed_dict=feed_dict)
+                    add_summary(PID_summary, inference, sess, feed_dict,
+                                info_dict['t'])
                     inference.print_progress(info_dict)
             elif ctrl_obs_present:
                 for batch, ctrl in zip(batches, ctrls):
-                    info_dict = inference.update(
-                        feed_dict={Y_ph: batch, ctrl_obs_ph: ctrl})
+                    feed_dict = {Y_ph: batch, ctrl_obs_ph: ctrl}
+                    info_dict = inference.update(feed_dict=feed_dict)
+                    add_summary(PID_summary, inference, sess, feed_dict,
+                                info_dict['t'])
                     inference.print_progress(info_dict)
             else:
                 for batch in batches:
-                    info_dict = inference.update(feed_dict={Y_ph: batch})
+                    feed_dict = {Y_ph: batch}
+                    info_dict = inference.update(feed_dict=feed_dict)
+                    add_summary(PID_summary, inference, sess, feed_dict,
+                                info_dict['t'])
                     inference.print_progress(info_dict)
 
-            if (i + 1) % hps.frequency_val_loss == 0:
+            if (i + 1) % hps.frequency_saving_ckpt == 0:
                 seso_saver.save(sess, hps.model_dir + '/saved_model',
                                 global_step=(i + 1),
                                 latest_filename='checkpoint')
 
+            if (i + 1) % hps.frequency_val_loss == 0:
                 if extra_conds_present and ctrl_obs_present:
                     val_loss = sess.run(
                         inference.loss,
@@ -468,15 +519,16 @@ def run_model(hps):
                     val_loss = sess.run(
                         inference.loss, feed_dict={Y_ph: val_data})
 
-                print('\n', 'Validation set loss after epoch %i: %.3f' %
+                print('\n', 'Validation loss after epoch %i: %.3f' %
                       (i + 1, val_loss / val_ntrials))
 
                 if val_loss / val_ntrials < lowest_ev_cost:
-                    print('Saving check point...')
+                    print('Saving model with lowest validation loss...')
                     lowest_ev_cost = val_loss / val_ntrials
                     lve_saver.save(sess, hps.model_dir + '/saved_model_lve',
                                    global_step=(i + 1),
-                                   latest_filename='checkpoint_lve')
+                                   latest_filename='checkpoint_lve',
+                                   write_meta_graph=False)
 
         if hps.profile:
             fetched_timeline = timeline.Timeline(run_metadata.step_stats)

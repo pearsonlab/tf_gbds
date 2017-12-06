@@ -3,6 +3,7 @@ import numpy as np
 from edward.models import RandomVariable
 from tensorflow.contrib.distributions import Distribution, Normal
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
+from tensorflow.python.ops.distributions.special_math import log_ndtr
 from tf_gbds.utils import pad_extra_conds
 
 
@@ -172,8 +173,10 @@ class GBDS_u_all(RandomVariable, Distribution):
         g_goalie = tf.gather(self.g, self.yCols_goalie, axis=-1)
 
         if self.ctrl_obs is not None:
-            ctrl_ball = tf.gather(self.ctrl_obs, self.yCols_ball, axis=-1)
-            ctrl_goalie = tf.gather(self.ctrl_obs, self.yCols_goalie, axis=-1)
+            ctrl_ball = tf.gather(self.ctrl_obs, self.yCols_ball, axis=-1,
+                                  name='ctrl_obs_ball')
+            ctrl_goalie = tf.gather(self.ctrl_obs, self.yCols_goalie, axis=-1,
+                                    name='ctrl_obs_goalie')
         else:
             ctrl_ball = None
             ctrl_goalie = None
@@ -300,7 +303,11 @@ class GBDS_u(RandomVariable, Distribution):
             if ctrl_obs is not None:
                 self.ctrl_obs = ctrl_obs
             else:
-                self.ctrl_obs = None
+                self.ctrl_obs = tf.pad(
+                    ((tf.gather(self.y, self.yCols, axis=-1)[:, 1:] -
+                      tf.gather(self.y, self.yCols, axis=-1)[:, :-1]) /
+                     tf.reshape(self.vel, [1, self.yDim])),
+                    [[0, 0], [1, 0], [0, 0]], name='ctrl_obs')
         with tf.name_scope('control_signal_censoring'):
             # clipping signal
             if self.clip:
@@ -378,60 +385,67 @@ class GBDS_u(RandomVariable, Distribution):
 
         return (Upred, Ypred)
 
-    def clip_loss(self, acc, inputs):
-        """upsilon (derived from time series of y) is a censored version of
-        a noisy control signal: \hat{u} ~ N(u, \eta^2).
-        log p(upsilon|u, g) = log p(upsilon|u) + log(u|g)
-        log p(upsilon|u) breaks down into three cases,
-        namely left-clipped (upsilon_t = -1), right-clipped (upsilon_t = 1),
-        and non-clipped (-1 < upsilon_t < 1). For the first two cases,
-        Normal CDF is used instead of PDF due to censoring.
-        The log density term is computed for each and then add up.
-        """
-        (U_obs, value) = inputs
-        left_clip_ind = tf.where(tf.less_equal(
-            U_obs, (-self.clip_range + self.clip_tol)),
-            name='left_clip_indices')
-        right_clip_ind = tf.where(tf.greater_equal(
-            U_obs, (self.clip_range - self.clip_tol)),
-            name='right_clip_indices')
-        non_clip_ind = tf.where(tf.logical_and(
-            tf.greater(U_obs, (-self.clip_range + self.clip_tol)),
-            tf.less(U_obs, (self.clip_range - self.clip_tol))),
-            name='non_clip_indices')
-        left_clip_node = Normal(tf.gather_nd(value, left_clip_ind),
-                                self.eta, name='left_clip_node')
-        right_clip_node = Normal(tf.gather_nd(-value, right_clip_ind),
-                                 self.eta, name='right_clip_node')
-        non_clip_node = Normal(tf.gather_nd(value, non_clip_ind),
-                               self.eta, name='non_clip_node')
-        LogDensity = 0.0
-        LogDensity += tf.reduce_sum(
-            left_clip_node.log_cdf(-1., name='left_clip_logcdf'))
-        LogDensity += tf.reduce_sum(
-            right_clip_node.log_cdf(-1., name='right_clip_logcdf'))
-        LogDensity += tf.reduce_sum(
-            non_clip_node.log_prob(tf.gather_nd(U_obs, non_clip_ind),
-                                   name='non_clip_logpdf'))
+    # def clip_loss(self, acc, inputs):
+    #     """upsilon (derived from time series of y) is a censored version of
+    #     a noisy control signal: \hat{u} ~ N(u, \eta^2).
+    #     log p(upsilon|u, g) = log p(upsilon|u) + log(u|g)
+    #     log p(upsilon|u) breaks down into three cases,
+    #     namely left-clipped (upsilon_t = -1), right-clipped (upsilon_t = 1),
+    #     and non-clipped (-1 < upsilon_t < 1). For the first two cases,
+    #     Normal CDF is used instead of PDF due to censoring.
+    #     The log density term is computed for each and then add up.
+    #     """
+    #     (U_obs, value) = inputs
+    #     left_clip_ind = tf.where(tf.less_equal(
+    #         U_obs, (-self.clip_range + self.clip_tol)),
+    #         name='left_clip_indices')
+    #     right_clip_ind = tf.where(tf.greater_equal(
+    #         U_obs, (self.clip_range - self.clip_tol)),
+    #         name='right_clip_indices')
+    #     non_clip_ind = tf.where(tf.logical_and(
+    #         tf.greater(U_obs, (-self.clip_range + self.clip_tol)),
+    #         tf.less(U_obs, (self.clip_range - self.clip_tol))),
+    #         name='non_clip_indices')
+    #     left_clip_node = Normal(tf.gather_nd(value, left_clip_ind),
+    #                             self.eta, name='left_clip_node')
+    #     right_clip_node = Normal(tf.gather_nd(-value, right_clip_ind),
+    #                              self.eta, name='right_clip_node')
+    #     non_clip_node = Normal(tf.gather_nd(value, non_clip_ind),
+    #                            self.eta, name='non_clip_node')
+    #     LogDensity = 0.0
+    #     LogDensity += tf.reduce_sum(
+    #         left_clip_node.log_cdf(-1., name='left_clip_logcdf'))
+    #     LogDensity += tf.reduce_sum(
+    #         right_clip_node.log_cdf(-1., name='right_clip_logcdf'))
+    #     LogDensity += tf.reduce_sum(
+    #         non_clip_node.log_prob(tf.gather_nd(U_obs, non_clip_ind),
+    #                                name='non_clip_logpdf'))
 
-        return LogDensity
+    #     return LogDensity
+
+    def clip_log_prob(self, upsilon, u):
+        u_b = self.clip_range - self.clip_tol
+        l_b = -self.clip_range + self.clip_tol
+        eta = self.eta
+
+        def z(x, loc, scale):
+            return (x - loc) / scale
+        def normal_logpdf(x, loc, scale):
+            return -(0.5 * np.log(2 * np.pi) + tf.log(scale) +
+                     0.5 * tf.square(z(x, loc, scale)))
+        def normal_logcdf(x, loc, scale):
+            return log_ndtr(z(x, loc, scale))
+
+        return tf.where(tf.less_equal(upsilon, l_b),
+                        normal_logcdf(-1., u, eta),
+                        tf.where(tf.greater_equal(upsilon, u_b),
+                                 normal_logcdf(-1., -u, eta),
+                                 normal_logpdf(upsilon, u, eta)))
 
     def _log_prob(self, value):
         """Evaluates the log-density of the GenerativeModel.
         """
 
-        # Calculate real control signal
-        with tf.name_scope('observed_control_signal'):
-            if self.ctrl_obs is None:
-                U_obs = tf.concat([tf.zeros([self.B, 1, self.yDim]),
-                                   (tf.gather(self.y, self.yCols,
-                                              axis=-1)[:, 1:] -
-                                    tf.gather(self.y, self.yCols,
-                                              axis=-1)[:, :-1]) /
-                                   tf.reshape(self.vel, [1, self.yDim])], 1,
-                                  name='U_obs')
-            else:
-                U_obs = self.ctrl_obs
         # Get predictions for next timestep (at each timestep except for last)
         # disregard last timestep bc we don't know the next value, thus, we
         # can't calculate the error
@@ -442,9 +456,11 @@ class GBDS_u(RandomVariable, Distribution):
         LogDensity = 0.0
         with tf.name_scope('control_signal_loss'):
             # calculate loss on control signal
-            LogDensity += tf.scan(self.clip_loss, (U_obs, value),
-                                  initializer=0.0, name='clip_noise')
-
+            # LogDensity += tf.scan(self.clip_loss, (self.ctrl_obs, value),
+            #                       initializer=0.0, name='clip_noise')
+            LogDensity += tf.reduce_sum(
+                self.clip_log_prob(self.ctrl_obs, value), axis=[1, 2],
+                name='clip_noise')
             resU = value[:, 1:] - Upred
             LogDensity -= tf.reduce_sum(resU ** 2 / (2 * self.eps ** 2),
                                         axis=[1, 2])

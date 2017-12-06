@@ -76,7 +76,7 @@ def smooth_trial(trial, sigma=4.0, pad_method='extrapolate'):
     return rtrial
 
 
-def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5 * np.ones((1, 2)))),
+def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 2)))),
              eps=np.log1p(np.exp(-10.)), Kp=1, Ki=0, Kd=0,
              vel=1e-2 * np.ones((3))):
     """Generate fake data to test the accuracy of the model
@@ -569,6 +569,13 @@ def pad_extra_conds(data, extra_conds=None):
         return padded_data
     else:
         raise Exception('Must provide extra conditions.')
+
+
+def add_summary(summary_op, inference, session, feed_dict, step):
+    if inference.n_print != 0:
+        if step == 1 or step % inference.n_print == 0:
+            summary = session.run(summary_op, feed_dict=feed_dict)
+            inference.train_writer.add_summary(summary, step)
 
 
 class DatasetTrialIndexIterator(object):
