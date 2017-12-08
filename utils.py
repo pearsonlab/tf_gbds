@@ -153,25 +153,23 @@ def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 3)))),
         g_b_x_mu = (np.linspace(0, 0.975, n_obs) + 0.02 * np.sin(2. *
             (np.linspace(0, 2 * np.pi, n_obs) - init_b_x)))
 
-        s = np.random.choice(2)
-        g_y_mu_s = [np.linspace(-0.2 + (np.random.rand() * 0.1 - 0.05),
-                                0.4 + (np.random.rand() * 0.1 - 0.05),
-                                n_obs),
-                    np.linspace(0.2 + (np.random.rand() * 0.1 - 0.05),
-                                -0.4 + (np.random.rand() * 0.1 - 0.05),
-                                n_obs)]
-
         init_b_y = np.pi * (np.random.rand() * 2 - 1)
-        g_b_y_mu = (g_y_mu_s[s] + 0.05 * np.sin(2. * 
-            (np.linspace(0, 2 * np.pi, n_obs) - init_b_y)))
+        g_b_y_mu = (np.linspace(-0.2 + (np.random.rand() * 0.1 - 0.05),
+                                0.4 + (np.random.rand() * 0.1 - 0.05),
+                                n_obs) +
+                    0.05 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
+                                        init_b_y)))
         g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1),
                             g_b_y_mu.reshape(n_obs, 1)])
         g_b_lambda = np.array([1e4, 1e4])
         g_b[0] = g_b_mu[0]
         
         init_g = np.pi * (np.random.rand() * 2 - 1)
-        g_g_mu = (g_y_mu_s[s] + 0.05 * np.sin(2. *
-            (np.linspace(0, 2 * np.pi, n_obs) - init_g)))
+        g_g_mu = (np.linspace(-0.2 + (np.random.rand() * 0.1 - 0.05),
+                                0.4 + (np.random.rand() * 0.1 - 0.05),
+                                n_obs) +
+                  0.05 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
+                                      init_g)))
         g_g_lambda = 1e4
         g_g[0] = g_g_mu[0]
 
