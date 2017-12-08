@@ -41,6 +41,7 @@ CLIP = True
 CLIP_RANGE = 1.
 CLIP_TOL = 1e-5
 ETA = 1e-6
+CONTROL_ERROR_PENALTY = 1e6
 EPS_INIT = 1e-5
 EPS_TRAINABLE = False
 EPS_PENALTY = None
@@ -114,6 +115,8 @@ flags.DEFINE_float('clip_range', CLIP_RANGE,
 flags.DEFINE_float('clip_tol', CLIP_TOL,
                    'The tolerance of signal censoring')
 flags.DEFINE_float('eta', ETA, 'The scale of control signal noise')
+flags.DEFINE_float('ctrl_error_penalty', CONTROL_ERROR_PENALTY,
+                   'Penalty on control error (input to PID controll model)')
 flags.DEFINE_float('eps_init', EPS_INIT,
                    'Initial value of control signal variance')
 flags.DEFINE_boolean('eps_trainable', EPS_TRAINABLE,
@@ -181,6 +184,7 @@ def build_hyperparameter_dict(flags):
     d['clip_range'] = flags.clip_range
     d['clip_tol'] = flags.clip_tol
     d['eta'] = flags.eta
+    d['ctrl_error_penalty'] = flags.ctrl_error_penalty
     d['eps_init'] = flags.eps_init
     d['eps_trainable'] = flags.eps_trainable
     d['eps_penalty'] = flags.eps_penalty
@@ -271,7 +275,7 @@ def run_model(hps):
             gen_params_goalie = get_gen_params_GBDS_GMM(
                 hps.p1_dim, obs_dim, extra_dim, hps.add_accel, p1_cols,
                 hps.gen_nlayers, hps.gen_hidden_dim, hps.K, PKLparams, vel,
-                hps.eps_penalty, hps.sigma_penalty,
+                hps.ctrl_error_penalty, hps.eps_penalty, hps.sigma_penalty,
                 hps.goal_bound, hps.goal_bound_penalty,
                 hps.clip, hps.clip_range, hps.clip_tol, hps.eta, name='Goalie')
             PID_params_goalie = init_PID_params('Goalie', hps.p1_dim)
@@ -279,7 +283,7 @@ def run_model(hps):
             gen_params_ball = get_gen_params_GBDS_GMM(
                 hps.p2_dim, obs_dim, extra_dim, hps.add_accel, p2_cols,
                 hps.gen_nlayers, hps.gen_hidden_dim, hps.K, PKLparams, vel,
-                hps.eps_penalty, hps.sigma_penalty,
+                hps.ctrl_error_penalty, hps.eps_penalty, hps.sigma_penalty,
                 hps.goal_bound, hps.goal_bound_penalty,
                 hps.clip, hps.clip_range, hps.clip_tol, hps.eta, name='Ball')
             PID_params_ball = init_PID_params('Ball', hps.p2_dim)

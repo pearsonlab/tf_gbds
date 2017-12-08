@@ -102,8 +102,7 @@ def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 2)))),
         g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1),
                             g_b_y_mu.reshape(n_obs, 1)])
         g_b_lambda = np.array([16, 16], np.float32)
-        g_b[0] = [0.25 * (np.random.rand() * 2 - 1),
-                  0.25 * (np.random.rand() * 2 - 1)]
+        g_b[0] = g_b_mu[0]
 
         for t in range(n_obs - 1):
             g_b[t + 1] = ((g_b[t] + g_b_lambda * g_b_mu[t + 1]) /
@@ -386,7 +385,7 @@ def get_rec_params_GBDS(obs_dim, extra_dim, lag, num_layers, hidden_dim,
 def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
                             yCols_agent, nlayers_gen, hidden_dim_gen,
                             K, PKLparams, vel,
-                            penalty_eps, penalty_sigma,
+                            penalty_ctrl_error, penalty_eps, penalty_sigma,
                             boundaries_g, penalty_g,
                             clip, clip_range, clip_tol, eta, name):
     """Return a dictionary of timeseries-specific parameters for generative
@@ -412,6 +411,7 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
     gen_params = dict(all_vel=vel,
                       vel=vel[yCols_agent],
                       yCols=yCols_agent,  # which columns belong to the agent
+                      pen_ctrl_error=penalty_ctrl_error,
                       pen_eps=penalty_eps,
                       pen_sigma=penalty_sigma,
                       bounds_g=boundaries_g,

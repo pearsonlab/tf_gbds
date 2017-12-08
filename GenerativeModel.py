@@ -319,7 +319,12 @@ class GBDS_u(RandomVariable, Distribution):
             self.unc_eps = PID_params['unc_eps']
             self.eps = tf.nn.softplus(self.unc_eps, name='eps')
         with tf.name_scope('control_signal_penalty'):
-            # penalty on epsilon (noise on control signal)
+            # penalty on control error
+            if GenerativeParams['pen_ctrl_error'] is not None:
+                self.pen_ctrl_error = GenerativeParams['pen_ctrl_error']
+            else:
+                self.pen_ctrl_error = None
+            # penalty on epsilon (noise of control signal)
             if GenerativeParams['pen_eps'] is not None:
                 self.pen_eps = GenerativeParams['pen_eps']
             else:
@@ -343,10 +348,12 @@ class GBDS_u(RandomVariable, Distribution):
         For training: provide post_g, sample from the posterior,
                       which is used to calculate the ELBO
         """
-        with tf.name_scope('error'):
+        with tf.name_scope('control_error'):
             # PID Controller for next control point
             if post_g is not None:  # calculate error from posterior goals
-                error = post_g[:, 1:] - tf.gather(Y, self.yCols, axis=-1)
+                error = tf.subtract(post_g[:, 1:],
+                                    tf.gather(Y, self.yCols, axis=-1),
+                                    name='ctrl_error')
             # else:  # calculate error from generated goals
             #     error = next_g - tf.gather(Y, self.yCols, axis=1)
         with tf.name_scope('control_signal_change'):
@@ -383,7 +390,7 @@ class GBDS_u(RandomVariable, Distribution):
                 Ypred = (tf.gather(Y, self.yCols, axis=-1) +
                          tf.reshape(self.vel, [1, self.yDim]) * Upred)
 
-        return (Upred, Ypred)
+        return (error, Upred, Ypred)
 
     # def clip_loss(self, acc, inputs):
     #     """upsilon (derived from time series of y) is a censored version of
@@ -450,8 +457,8 @@ class GBDS_u(RandomVariable, Distribution):
         # disregard last timestep bc we don't know the next value, thus, we
         # can't calculate the error
         with tf.name_scope('next_time_step_pred'):
-            Upred, _ = self.get_preds(self.y[:, :-1], training=True,
-                                      post_g=self.g, post_U=value)
+            ctrl_error, Upred, _ = self.get_preds(
+                self.y[:, :-1], training=True, post_g=self.g, post_U=value)
 
         LogDensity = 0.0
         with tf.name_scope('control_signal_loss'):
@@ -467,9 +474,19 @@ class GBDS_u(RandomVariable, Distribution):
             LogDensity -= (0.5 * tf.log(2 * np.pi) +
                            tf.reduce_sum(tf.log(self.eps)))
         with tf.name_scope('control_signal_penalty'):
-            # penalty on eps
-            if self.pen_eps is not None:
-                LogDensity -= self.pen_eps * tf.reduce_sum(self.unc_eps)
+            with tf.name_scope('control_error_penalty'):
+                # penalty on ctrl error
+                if self.pen_ctrl_error is not None:
+                    LogDensity -= (self.pen_ctrl_error * tf.reduce_sum(
+                        tf.nn.relu(ctrl_error - 1.0), axis=[1, 2]))
+                    LogDensity -= (self.pen_ctrl_error * tf.reduce_sum(
+                        tf.nn.relu(-ctrl_error - 1.0), axis=[1, 2]))
+                    # LogDensity -= (self.pen_ctrl_error * tf.reduce_sum(
+                    #     tf.norm(ctrl_error, axis=-1), axis=-1))
+            with tf.name_scope('control_noise_penalty'):
+                # penalty on eps
+                if self.pen_eps is not None:
+                    LogDensity -= self.pen_eps * tf.reduce_sum(self.unc_eps)
 
         return LogDensity
 
