@@ -76,11 +76,66 @@ def smooth_trial(trial, sigma=4.0, pad_method='extrapolate'):
     return rtrial
 
 
-def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 2)))),
+# def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 2)))),
+#              eps=np.log1p(np.exp(-10.)), Kp=1, Ki=0, Kd=0,
+#              vel=1e-2 * np.ones((3))):
+#     """Generate fake data to test the accuracy of the model
+#     """
+#     p = []
+#     g = []
+
+#     for _ in range(n_trials):
+#         p_b = np.zeros((n_obs, 2), np.float32)
+#         p_g = np.zeros((n_obs, 1), np.float32)
+#         g_b = np.zeros((n_obs, 2), np.float32)
+#         prev_error_b = 0
+#         prev_error_g = 0
+#         int_error_b = 0
+#         int_error_g = 0
+
+#         init_b_x = np.pi * (np.random.rand() * 2 - 1)
+#         g_b_x_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
+#                                        init_b_x))
+#         init_b_y = np.pi * (np.random.rand() * 2 - 1)
+#         g_b_y_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
+#                                        init_b_y))
+#         g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1),
+#                             g_b_y_mu.reshape(n_obs, 1)])
+#         g_b_lambda = np.array([16, 16], np.float32)
+#         g_b[0] = g_b_mu[0]
+
+#         for t in range(n_obs - 1):
+#             g_b[t + 1] = ((g_b[t] + g_b_lambda * g_b_mu[t + 1]) /
+#                           (1 + g_b_lambda))
+#             var = sigma ** 2 / (1 + g_b_lambda)
+#             g_b[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
+
+#             error_b = g_b[t + 1] - p_b[t]
+#             int_error_b += error_b
+#             der_error_b = error_b - prev_error_b
+#             u_b = (Kp * error_b + Ki * int_error_b + Kd * der_error_b +
+#                    eps * np.random.randn(2,))
+#             prev_error_b = error_b
+#             p_b[t + 1] = p_b[t] + vel[1:] * np.clip(u_b, -1, 1)
+
+#             error_g = p_b[t + 1, 1] - p_g[t]
+#             int_error_g += error_g
+#             der_error_g = error_g - prev_error_g
+#             u_g = (Kp * error_g + Ki * int_error_g + Kd * der_error_g +
+#                    eps * np.random.randn())
+#             prev_error_g = error_g
+#             p_g[t + 1] = p_g[t] + vel[0] * np.clip(u_g, -1, 1)
+
+#         p.append(np.hstack((p_g, p_b)))
+#         g.append(g_b)
+
+#     return p, g
+
+
+def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 3)))),
              eps=np.log1p(np.exp(-10.)), Kp=1, Ki=0, Kd=0,
-             vel=1e-2 * np.ones((3))):
-    """Generate fake data to test the accuracy of the model
-    """
+             vel=2e-2 * np.ones((3))):
+
     p = []
     g = []
 
@@ -88,27 +143,43 @@ def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 2)))),
         p_b = np.zeros((n_obs, 2), np.float32)
         p_g = np.zeros((n_obs, 1), np.float32)
         g_b = np.zeros((n_obs, 2), np.float32)
+        g_g = np.zeros((n_obs, 1), np.float32)
         prev_error_b = 0
         prev_error_g = 0
         int_error_b = 0
         int_error_g = 0
 
         init_b_x = np.pi * (np.random.rand() * 2 - 1)
-        g_b_x_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-                                       init_b_x))
+        g_b_x_mu = (np.linspace(0, 0.975, n_obs) + 0.02 * np.sin(2. *
+            (np.linspace(0, 2 * np.pi, n_obs) - init_b_x)))
+
+        s = np.random.choice(2)
+        g_y_mu_s = [np.linspace(-0.2 + (np.random.rand() * 0.1 - 0.05),
+                                0.4 + (np.random.rand() * 0.1 - 0.05),
+                                n_obs),
+                    np.linspace(0.2 + (np.random.rand() * 0.1 - 0.05),
+                                -0.4 + (np.random.rand() * 0.1 - 0.05),
+                                n_obs)]
+
         init_b_y = np.pi * (np.random.rand() * 2 - 1)
-        g_b_y_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-                                       init_b_y))
+        g_b_y_mu = (g_y_mu_s[s] + 0.05 * np.sin(2. * 
+            (np.linspace(0, 2 * np.pi, n_obs) - init_b_y)))
         g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1),
                             g_b_y_mu.reshape(n_obs, 1)])
-        g_b_lambda = np.array([16, 16], np.float32)
+        g_b_lambda = np.array([1e4, 1e4])
         g_b[0] = g_b_mu[0]
+        
+        init_g = np.pi * (np.random.rand() * 2 - 1)
+        g_g_mu = (g_y_mu_s[s] + 0.05 * np.sin(2. *
+            (np.linspace(0, 2 * np.pi, n_obs) - init_g)))
+        g_g_lambda = 1e4
+        g_g[0] = g_g_mu[0]
 
         for t in range(n_obs - 1):
             g_b[t + 1] = ((g_b[t] + g_b_lambda * g_b_mu[t + 1]) /
                           (1 + g_b_lambda))
-            var = sigma ** 2 / (1 + g_b_lambda)
-            g_b[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
+            var_b = sigma[0, 1:] ** 2 / (1 + g_b_lambda)
+            g_b[t + 1] += (np.random.randn(1, 2) * np.sqrt(var_b)).reshape(2,)
 
             error_b = g_b[t + 1] - p_b[t]
             int_error_b += error_b
@@ -116,18 +187,24 @@ def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 2)))),
             u_b = (Kp * error_b + Ki * int_error_b + Kd * der_error_b +
                    eps * np.random.randn(2,))
             prev_error_b = error_b
-            p_b[t + 1] = p_b[t] + vel[1:] * np.clip(u_b, -1, 1)
+            p_b[t + 1] = np.clip(p_b[t] + vel[1:] * np.clip(u_b, -1, 1),
+                                 -1, 1)
 
-            error_g = p_b[t + 1, 1] - p_g[t]
+            g_g[t + 1] = ((g_g[t] + g_g_lambda * g_g_mu[t + 1]) /
+                          (1 + g_g_lambda))
+            var_g = sigma[0, 0] ** 2 / (1 + g_g_lambda)
+            g_g[t + 1] += np.random.randn() * np.sqrt(var_g)
+
+            error_g = g_g[t + 1] - p_g[t]
             int_error_g += error_g
             der_error_g = error_g - prev_error_g
             u_g = (Kp * error_g + Ki * int_error_g + Kd * der_error_g +
                    eps * np.random.randn())
             prev_error_g = error_g
-            p_g[t + 1] = p_g[t] + vel[0] * np.clip(u_g, -1, 1)
+            p_g[t + 1] = np.clip(p_g[t] + vel[0] * np.clip(u_g, -1, 1), -1, 1)
 
         p.append(np.hstack((p_g, p_b)))
-        g.append(g_b)
+        g.append(np.hstack((g_g, g_b)))
 
     return p, g
 
@@ -138,8 +215,10 @@ def load_data(hps):
     train_data = []
     val_data = []
     if hps.synthetic_data:
+        # data, goals = gen_data(
+        #     n_trials=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
         data, goals = gen_data(
-            n_trials=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
+            n_trials=2000, n_obs=100, Kp=0.5, Ki=0.2, Kd=0.1)
         np.random.seed(hps.seed)  # set seed for consistent train/val split
         val_goals = []
         for (trial_data, trial_goals) in zip(data, goals):
