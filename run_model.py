@@ -1,6 +1,5 @@
 from tf_gbds.utils import (load_data, get_max_velocities,
-                           get_rec_params_GBDS, init_Dyn_params,
-                           get_gen_params_GBDS_GMM, init_PID_params,
+                           get_rec_params_GBDS, get_gen_params_GBDS_GMM,
                            batch_generator, batch_generator_pad, pad_batch,
                            KLqp_profile, add_summary)
 import os
@@ -26,7 +25,7 @@ SAVED_MODEL_DIR = 'model_gmm_copy'
 PROFILE = False
 
 P1_DIM = 1
-P2_DIM = 2  
+P2_DIM = 2
 
 REC_LAG = 10
 REC_NLAYERS = 3
@@ -37,6 +36,7 @@ GEN_HIDDEN_DIM = 64
 K = 8
 
 ADD_ACCEL = False
+LATENT_CONTROL = True
 CLIP = True
 CLIP_RANGE = 1.
 CLIP_TOL = 1e-5
@@ -109,6 +109,8 @@ flags.DEFINE_integer('K', K, 'Number of sub-strategies (components of GMM)')
 
 flags.DEFINE_boolean('add_accel', ADD_ACCEL,
                      'Should acceleration be added to states?')
+flags.DEFINE_boolean('latent_u', LATENT_CONTROL, 'Is observed control signal \
+                     modeled as a noisy version of latent control?')
 flags.DEFINE_boolean('clip', CLIP, 'Is the control signal censored?')
 flags.DEFINE_float('clip_range', CLIP_RANGE,
                    'The range beyond which control signals are censored')
@@ -180,6 +182,7 @@ def build_hyperparameter_dict(flags):
     d['K'] = flags.K
 
     d['add_accel'] = flags.add_accel
+    d['latent_u'] = flags.latent_u
     d['clip'] = flags.clip
     d['clip_range'] = flags.clip_range
     d['clip_tol'] = flags.clip_tol
@@ -264,29 +267,25 @@ def run_model(hps):
             rec_params_u = get_rec_params_GBDS(
                 obs_dim, extra_dim, hps.rec_lag, hps.rec_nlayers,
                 hps.rec_hidden_dim, penalty_Q, PKLparams, name='U')
-            Dyn_params_u = init_Dyn_params('U', rec_params_u)
         with tf.name_scope('rec_goal_params'):
             rec_params_g = get_rec_params_GBDS(
                 obs_dim, extra_dim, hps.rec_lag, hps.rec_nlayers,
                 hps.rec_hidden_dim, penalty_Q, PKLparams, name='G')
-            Dyn_params_g = init_Dyn_params('G', rec_params_g)
 
         with tf.name_scope('gen_goalie_params'):
             gen_params_goalie = get_gen_params_GBDS_GMM(
                 hps.p1_dim, obs_dim, extra_dim, hps.add_accel, p1_cols,
                 hps.gen_nlayers, hps.gen_hidden_dim, hps.K, PKLparams, vel,
                 hps.ctrl_error_penalty, hps.eps_penalty, hps.sigma_penalty,
-                hps.goal_bound, hps.goal_bound_penalty,
+                hps.goal_bound, hps.goal_bound_penalty, hps.latent_u,
                 hps.clip, hps.clip_range, hps.clip_tol, hps.eta, name='Goalie')
-            PID_params_goalie = init_PID_params('Goalie', hps.p1_dim)
         with tf.name_scope('gen_ball_params'):
             gen_params_ball = get_gen_params_GBDS_GMM(
                 hps.p2_dim, obs_dim, extra_dim, hps.add_accel, p2_cols,
                 hps.gen_nlayers, hps.gen_hidden_dim, hps.K, PKLparams, vel,
                 hps.ctrl_error_penalty, hps.eps_penalty, hps.sigma_penalty,
-                hps.goal_bound, hps.goal_bound_penalty,
+                hps.goal_bound, hps.goal_bound_penalty, hps.latent_u,
                 hps.clip, hps.clip_range, hps.clip_tol, hps.eta, name='Ball')
-            PID_params_ball = init_PID_params('Ball', hps.p2_dim)
 
     with tf.name_scope('model_setup'):
         # Creat the placeholder to input data
@@ -299,57 +298,72 @@ def run_model(hps):
         # Generate real goal and control signal
         with tf.name_scope('gen_g'):
             if extra_conds_present:
-                p_G = G.GBDS_g_all(gen_params_goalie, gen_params_ball, obs_dim,
-                                   Y_ph, extra_conds_ph, name='p_G',
-                                   value=tf.zeros_like(Y_ph))
+                if ctrl_obs_present:
+                    p_G = G.GBDS_g_all(
+                        gen_params_goalie, gen_params_ball, obs_dim, Y_ph,
+                        extra_conds_ph, ctrl_obs_ph, name='p_G',
+                        value=tf.zeros_like(Y_ph))
+                else:
+                    p_G = G.GBDS_g_all(
+                        gen_params_goalie, gen_params_ball, obs_dim, Y_ph,
+                        extra_conds_ph, None, name='p_G',
+                        value=tf.zeros_like(Y_ph))
+            elif ctrl_obs_present:
+                p_G = G.GBDS_g_all(
+                    gen_params_goalie, gen_params_ball, obs_dim, Y_ph, None,
+                    ctrl_obs_ph, name='p_G', value=tf.zeros_like(Y_ph))
             else:
-                p_G = G.GBDS_g_all(gen_params_goalie, gen_params_ball, obs_dim,
-                                   Y_ph, None, name='p_G',
-                                   value=tf.zeros_like(Y_ph))
+                p_G = G.GBDS_g_all(
+                    gen_params_goalie, gen_params_ball, obs_dim, Y_ph, None,
+                    None, name='p_G', value=tf.zeros_like(Y_ph))
+
         with tf.name_scope('gen_u'):
-            if ctrl_obs_present:
-                p_U = G.GBDS_u_all(gen_params_goalie, gen_params_ball, p_G,
-                                   Y_ph, ctrl_obs_ph, obs_dim,
-                                   PID_params_goalie, PID_params_ball,
-                                   name='p_U', value=tf.zeros_like(Y_ph))
-            else:
-                p_U = G.GBDS_u_all(gen_params_goalie, gen_params_ball, p_G,
-                                   Y_ph, None, obs_dim,
-                                   PID_params_goalie, PID_params_ball,
-                                   name='p_U', value=tf.zeros_like(Y_ph))
+            if hps.latent_u:
+                if ctrl_obs_present:
+                    p_U = G.GBDS_u_all(gen_params_goalie, gen_params_ball,
+                                       p_G, Y_ph, ctrl_obs_ph, obs_dim,
+                                       name='p_U', value=tf.zeros_like(Y_ph))
+                else:
+                    p_U = G.GBDS_u_all(gen_params_goalie, gen_params_ball,
+                                       p_G, Y_ph, None, obs_dim,
+                                       name='p_U', value=tf.zeros_like(Y_ph))
+
         # Generate posterior goal and control signal
         if extra_conds_present:
             with tf.name_scope('rec_g'):
-                q_G = R.SmoothingPastLDSTimeSeries(rec_params_g, Y_ph,
-                                                   extra_conds_ph,
-                                                   obs_dim, obs_dim,
-                                                   Dyn_params_g, name='q_G')
+                q_G = R.SmoothingPastLDSTimeSeries(
+                    rec_params_g, Y_ph, extra_conds_ph, obs_dim, obs_dim,
+                    name='q_G')
             with tf.name_scope('rec_u'):
-                q_U = R.SmoothingPastLDSTimeSeries(rec_params_u, Y_ph,
-                                                   extra_conds_ph,
-                                                   obs_dim, obs_dim,
-                                                   Dyn_params_u, name='q_U')
+                if hps.latent_u:
+                    q_U = R.SmoothingPastLDSTimeSeries(
+                        rec_params_u, Y_ph, extra_conds_ph, obs_dim, obs_dim,
+                        name='q_U')
         else:
             with tf.name_scope('rec_g'):
-                q_G = R.SmoothingPastLDSTimeSeries(rec_params_g, Y_ph, None,
-                                                   obs_dim, obs_dim,
-                                                   Dyn_params_g, name='q_G')
+                q_G = R.SmoothingPastLDSTimeSeries(
+                    rec_params_g, Y_ph, None, obs_dim, obs_dim, name='q_G')
             with tf.name_scope('rec_u'):
-                q_U = R.SmoothingPastLDSTimeSeries(rec_params_u, Y_ph, None,
-                                                   obs_dim, obs_dim,
-                                                   Dyn_params_u, name='q_U')
+                if hps.latent_u:
+                    q_U = R.SmoothingPastLDSTimeSeries(
+                        rec_params_u, Y_ph, None, obs_dim, obs_dim,
+                        name='q_U')
         # Generate real state based on control signal and velocility
         with tf.name_scope('obs'):
+            if hps.latent_u:
+                U = p_U
+            else:
+                U = tf.concat([p_G.goalie.u, p_G.ball.u], -1)
             if hps.clip:
                 Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1), (Y_ph[:, :-1] +
                                (tf.reshape(vel, [1, obs_dim]) *
-                                tf.clip_by_value(p_U[:, 1:], -hps.clip_range,
+                                tf.clip_by_value(U[:, 1:], -hps.clip_range,
                                                  hps.clip_range)))], 1,
                               name='Y')
             else:
                 Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1), (Y_ph[:, :-1] +
                                (tf.reshape(vel, [1, obs_dim]) *
-                                p_U[:, 1:]))], 1,
+                                U[:, 1:]))], 1,
                               name='Y')
 
     print('--------------Generative Params----------------')
@@ -371,32 +385,39 @@ def run_model(hps):
 
     PID_summary_key = tf.get_default_graph().unique_name('PID_params_summary')
 
+    if hps.latent_u:
+        U_goalie = p_U.goalie
+        U_ball = p_U.ball
+    else:
+        U_goalie = p_G.goalie.u
+        U_ball = p_G.ball.u
+
     Kp_goalie = tf.summary.scalar('PID_params/goalie/Kp',
-                                  p_U.goalie.Kp[0, 0],
+                                  U_goalie.Kp[0, 0],
                                   collections=PID_summary_key)
     Ki_goalie = tf.summary.scalar('PID_params/goalie/Ki',
-                                  p_U.goalie.Ki[0, 0],
+                                  U_goalie.Ki[0, 0],
                                   collections=PID_summary_key)
     Kd_goalie = tf.summary.scalar('PID_params/goalie/Kd',
-                                  p_U.goalie.Kd[0, 0],
+                                  U_goalie.Kd[0, 0],
                                   collections=PID_summary_key)
     Kp_ball_x = tf.summary.scalar('PID_params/ball_x/Kp',
-                                  p_U.ball.Kp[0, 0],
+                                  U_ball.Kp[0, 0],
                                   collections=PID_summary_key)
     Ki_ball_x = tf.summary.scalar('PID_params/ball_x/Ki',
-                                  p_U.ball.Ki[0, 0],
+                                  U_ball.Ki[0, 0],
                                   collections=PID_summary_key)
     Kd_ball_x = tf.summary.scalar('PID_params/ball_x/Kd',
-                                  p_U.ball.Kd[0, 0],
+                                  U_ball.Kd[0, 0],
                                   collections=PID_summary_key)
     Kp_ball_y = tf.summary.scalar('PID_params/ball_y/Kp',
-                                  p_U.ball.Kp[1, 0],
+                                  U_ball.Kp[1, 0],
                                   collections=PID_summary_key)
     Ki_ball_y = tf.summary.scalar('PID_params/ball_y/Ki',
-                                  p_U.ball.Ki[1, 0],
+                                  U_ball.Ki[1, 0],
                                   collections=PID_summary_key)
     Kd_ball_y = tf.summary.scalar('PID_params/ball_y/Kd',
-                                  p_U.ball.Kd[1, 0],
+                                  U_ball.Kd[1, 0],
                                   collections=PID_summary_key)
 
     PID_summary = tf.summary.merge([Kp_goalie, Ki_goalie, Kd_goalie,
@@ -412,9 +433,10 @@ def run_model(hps):
                 q_G_samp = tf.identity(q_G.sample(hps.n_post_samples),
                                        name='samples')
             with tf.name_scope('control_signal'):
-                q_U_mean = tf.squeeze(q_U.postX, -1, name='mean')
-                q_U_samp = tf.identity(q_U.sample(hps.n_post_samples),
-                                       name='samples')
+                if hps.latent_u:
+                    q_U_mean = tf.squeeze(q_U.postX, -1, name='mean')
+                    q_U_samp = tf.identity(q_U.sample(hps.n_post_samples),
+                                           name='samples')
             with tf.name_scope('GMM_goalie'):
                 GMM_mu, GMM_lambda, GMM_w, _ = p_G.goalie.get_preds(
                     Y_ph, training=True,
@@ -427,18 +449,24 @@ def run_model(hps):
     # Calculate variational inference using Edward KLqp function
     if hps.model_type == 'VI_KLqp':
         n_batches = math.ceil(train_ntrials / hps.B)
-        var_list = (p_G.getParams() + p_U.getParams() +
-                    q_G.getParams() + q_U.getParams())
         if hps.opt == 'Adam':
             optimizer = tf.train.AdamOptimizer(hps.learning_rate)
+
+        if hps.latent_u:
+            var_list = (p_G.getParams() + p_U.getParams() +
+                        q_G.getParams() + q_U.getParams())
+            latent_vars = {p_G: q_G, p_U: q_U}
+        else:
+            var_list = (p_G.getParams() + q_G.getParams())
+            latent_vars = {p_G: q_G}
 
         if hps.profile:
             options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
             run_metadata = tf.RunMetadata()
             inference = KLqp_profile(options, run_metadata,
-                                     {p_G: q_G, p_U: q_U}, data={Y: Y_ph})
+                                     latent_vars=latent_vars, data={Y: Y_ph})
         else:
-            inference = ed.KLqp({p_G: q_G, p_U: q_U}, data={Y: Y_ph})
+            inference = ed.KLqp(latent_vars=latent_vars, data={Y: Y_ph})
 
         inference.initialize(n_iter=hps.n_epochs * n_batches,
                              n_samples=hps.n_samples,

@@ -441,9 +441,17 @@ def get_rec_params_GBDS(obs_dim, extra_dim, lag, num_layers, hidden_dim,
                                                          num_layers, PKLparams,
                                                          batchnorm=False)
 
-    rec_params = dict(A=.9 * np.eye(obs_dim),
-                      QinvChol=np.eye(obs_dim),
-                      Q0invChol=np.eye(obs_dim),
+    with tf.name_scope('Dyn_params_%s' % name):
+        Dyn_params = dict(A=tf.Variable(.9 * np.eye(obs_dim),
+                                        name='A_%s' % name,
+                                        dtype=tf.float32),
+                          QinvChol=tf.Variable(np.eye(obs_dim),
+                                               name='QinvChol_%s' % name,
+                                               dtype=tf.float32),
+                          Q0invChol=tf.Variable(np.eye(obs_dim),
+                                                name='Q0invChol_%s' % name,
+                                                dtype=tf.float32))
+    rec_params = dict(Dyn_params=Dyn_params,
                       NN_Mu=dict(network=mu_net,
                                  PKbias_layers=PKbias_layers_mu),
                       NN_Lambda=dict(network=lambda_net,
@@ -463,7 +471,7 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
                             yCols_agent, nlayers_gen, hidden_dim_gen,
                             K, PKLparams, vel,
                             penalty_ctrl_error, penalty_eps, penalty_sigma,
-                            boundaries_g, penalty_g,
+                            boundaries_g, penalty_g, latent_u,
                             clip, clip_range, clip_tol, eta, name):
     """Return a dictionary of timeseries-specific parameters for generative
        model
@@ -477,12 +485,15 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
             get_states = get_vel
             state_dim = obs_dim * 2
 
-    with tf.name_scope('gen_gmm_%s' % name):
-        GMM_net, _ = get_network('gen_gmm_%s' % name, (state_dim + extra_dim),
+    with tf.name_scope('gen_GMM_%s' % name):
+        GMM_net, _ = get_network('gen_GMM_%s' % name, (state_dim + extra_dim),
                                  (obs_dim_agent * K * 2 + K),
                                  hidden_dim_gen, nlayers_gen, PKLparams)
 
-    with tf.name_scope('initial_distribution_%s' % name):
+    with tf.name_scope('PID_%s' % name):
+        PID_params = init_PID_params(name, obs_dim_agent)
+
+    with tf.name_scope('initial_goal_%s' % name):
         g0_params = init_GMM_params(name, obs_dim_agent, K)
 
     gen_params = dict(all_vel=vel,
@@ -493,11 +504,13 @@ def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
                       pen_sigma=penalty_sigma,
                       bounds_g=boundaries_g,
                       pen_g=penalty_g,
+                      latent_u=latent_u,
                       clip=clip,
                       clip_range=clip_range,
                       clip_tol=clip_tol,
                       eta=eta,
                       get_states=get_states,
+                      PID_params=PID_params,
                       g0_params=g0_params,
                       GMM_net=GMM_net,
                       GMM_k=K)
@@ -525,20 +538,20 @@ def init_PID_params(player, Dim):
     return PID_params
 
 
-def init_Dyn_params(var, RecognitionParams):
-    """Return a dictionary of dynamical parameters
-    """
-    Dyn_params = {}
-    Dyn_params['A'] = tf.Variable(RecognitionParams['A'],
-                                  name='A_%s' % var, dtype=tf.float32)
-    Dyn_params['QinvChol'] = tf.Variable(RecognitionParams['QinvChol'],
-                                         name='QinvChol_%s' % var,
-                                         dtype=tf.float32)
-    Dyn_params['Q0invChol'] = tf.Variable(RecognitionParams['Q0invChol'],
-                                          name='Q0invChol_%s' % var,
-                                          dtype=tf.float32)
+# def init_Dyn_params(var, RecognitionParams):
+#     """Return a dictionary of dynamical parameters
+#     """
+#     Dyn_params = {}
+#     Dyn_params['A'] = tf.Variable(RecognitionParams['A'],
+#                                   name='A_%s' % var, dtype=tf.float32)
+#     Dyn_params['QinvChol'] = tf.Variable(RecognitionParams['QinvChol'],
+#                                          name='QinvChol_%s' % var,
+#                                          dtype=tf.float32)
+#     Dyn_params['Q0invChol'] = tf.Variable(RecognitionParams['Q0invChol'],
+#                                           name='Q0invChol_%s' % var,
+#                                           dtype=tf.float32)
 
-    return Dyn_params
+#     return Dyn_params
 
 
 def init_GMM_params(player, Dim, K):

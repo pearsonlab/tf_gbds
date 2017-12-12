@@ -18,9 +18,9 @@ class GBDS_g_all(RandomVariable, Distribution):
     combining both goalie agent and ball agent.
     """
 
-    def __init__(self, GenerativeParams_goalie, GenerativeParams_ball, yDim,
-                 y, extra_conds, name='GBDS_g_all', value=None,
-                 dtype=tf.float32,
+    def __init__(self, GenerativeParams_goalie, GenerativeParams_ball,
+                 yDim, y, extra_conds, ctrl_obs, name='GBDS_g_all',
+                 value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
 
@@ -69,16 +69,26 @@ class GBDS_g_all(RandomVariable, Distribution):
         self.y = y
         self.yDim = yDim
         self.extra_conds = extra_conds
+        self.ctrl_obs = ctrl_obs
 
         yDim_ball = len(self.yCols_ball)
         yDim_goalie = len(self.yCols_goalie)
 
+        if self.ctrl_obs is not None:
+            ctrl_ball = tf.gather(self.ctrl_obs, self.yCols_ball, axis=-1,
+                                  name='ctrl_obs_ball')
+            ctrl_goalie = tf.gather(self.ctrl_obs, self.yCols_goalie, axis=-1,
+                                    name='ctrl_obs_goalie')
+        else:
+            ctrl_ball = None
+            ctrl_goalie = None
+
         self.goalie = GBDS_g(GenerativeParams_goalie, yDim_goalie, yDim, y,
-                             extra_conds, name='G_goalie',
+                             extra_conds, ctrl_goalie, name='G_goalie',
                              value=tf.gather(value, self.yCols_goalie,
                                              axis=-1))
         self.ball = GBDS_g(GenerativeParams_ball, yDim_ball, yDim, y,
-                           extra_conds, name='G_ball',
+                           extra_conds, ctrl_ball, name='G_ball',
                            value=tf.gather(value, self.yCols_ball, axis=-1))
 
         super(GBDS_g_all, self).__init__(
@@ -91,6 +101,7 @@ class GBDS_g_all(RandomVariable, Distribution):
         self._kwargs['y'] = y
         self._kwargs['yDim'] = yDim
         self._kwargs['extra_conds'] = extra_conds
+        self._kwargs['ctrl_obs'] = ctrl_obs
 
     def _log_prob(self, value):
         log_prob_ball = self.ball.log_prob(
@@ -109,9 +120,9 @@ class GBDS_u_all(RandomVariable, Distribution):
         System combining both goalie agent and ball agent.
     """
 
-    def __init__(self, GenerativeParams_goalie, GenerativeParams_ball, g, y,
-                 ctrl_obs, yDim, PID_params_goalie, PID_params_ball,
-                 name='GBDS_u_all', value=None, dtype=tf.float32,
+    def __init__(self, GenerativeParams_goalie, GenerativeParams_ball,
+                 g, y, ctrl_obs, yDim, name='GBDS_u_all',
+                 value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
 
@@ -151,10 +162,6 @@ class GBDS_u_all(RandomVariable, Distribution):
           y: Time series of positions
           g: The dependent customized Random Variable of goal in Goal-Based
              Dynamical System (GBDS_g_all)
-          PID_params_goalie: A dictionary of PID controller parameters for the
-                             goalie model
-          PID_params_ball: A dictionary of PID controller parameters for the
-                           ball model
           value: The Random Variable sample of goal. Since GBDS_u_all is just a
                  likelihood node, value is just used to specify the shape of g.
                  Set it to tf.zeros_like(Y).
@@ -182,12 +189,11 @@ class GBDS_u_all(RandomVariable, Distribution):
             ctrl_goalie = None
 
         self.goalie = GBDS_u(GenerativeParams_goalie, g_goalie, y,
-                             ctrl_goalie, yDim_goalie, PID_params_goalie,
-                             name='U_goalie',
+                             ctrl_goalie, yDim_goalie, name='U_goalie',
                              value=tf.gather(value, self.yCols_goalie,
                                              axis=-1))
         self.ball = GBDS_u(GenerativeParams_ball, g_ball, y, ctrl_ball,
-                           yDim_ball, PID_params_ball, name='U_ball',
+                           yDim_ball, name='U_ball',
                            value=tf.gather(value, self.yCols_ball, axis=-1))
 
         super(GBDS_u_all, self).__init__(
@@ -201,8 +207,6 @@ class GBDS_u_all(RandomVariable, Distribution):
         self._kwargs['y'] = y
         self._kwargs['ctrl_obs'] = ctrl_obs
         self._kwargs['yDim'] = yDim
-        self._kwargs['PID_params_goalie'] = PID_params_goalie
-        self._kwargs['PID_params_ball'] = PID_params_ball
 
     def _log_prob(self, value):
         log_prob_ball = self.ball.log_prob(
@@ -220,8 +224,8 @@ class GBDS_u(RandomVariable, Distribution):
        System
     """
 
-    def __init__(self, GenerativeParams, g, y, ctrl_obs, yDim, PID_params,
-                 name='GBDS_u', value=None, dtype=tf.float32,
+    def __init__(self, GenerativeParams, g, y, ctrl_obs, yDim, name='GBDS_u',
+                 value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
 
@@ -258,7 +262,6 @@ class GBDS_u(RandomVariable, Distribution):
              Dynamical System (GBDS_g)
           y: Time series of positions
           yDim: Number of dimensions for this agent
-          PID_params: A dictionary of PID controller parameters
           value: The Random Variable sample of control signal
         """
 
@@ -266,6 +269,7 @@ class GBDS_u(RandomVariable, Distribution):
         self.y = y
         self.yDim = yDim
         self.B = tf.shape(y)[0]  # batch size
+        self.latent_u = GenerativeParams['latent_u']
         self.clip = GenerativeParams['clip']
 
         with tf.name_scope('agent_columns'):
@@ -280,6 +284,7 @@ class GBDS_u(RandomVariable, Distribution):
                 # coefficients for PID controller (one for each dimension)
                 # https://en.wikipedia.org/wiki/PID_controller
                 # Discrete_implementation
+                PID_params = GenerativeParams['PID_params']
                 unc_Kp = PID_params['unc_Kp']
                 unc_Ki = PID_params['unc_Ki']
                 unc_Kd = PID_params['unc_Kd']
@@ -340,9 +345,8 @@ class GBDS_u(RandomVariable, Distribution):
         self._kwargs['ctrl_obs'] = ctrl_obs
         self._kwargs['yDim'] = yDim
         self._kwargs['GenerativeParams'] = GenerativeParams
-        self._kwargs['PID_params'] = PID_params
 
-    def get_preds(self, Y, training=False, post_g=None, post_U=None):
+    def get_preds(self, Y, training=False, post_g=None, Uprev=None):
         """Return the predicted next U, and Y for each point in Y.
 
         For training: provide post_g, sample from the posterior,
@@ -377,7 +381,7 @@ class GBDS_u(RandomVariable, Distribution):
             if post_g is None:  # Add control signal noise to generated data
                 Udiff += self.eps * tf.random_normal(Udiff.shape)
         with tf.name_scope('control_signal'):
-            Upred = post_U[:, :-1] + Udiff
+            Upred = Uprev + Udiff
         with tf.name_scope('predicted_position'):
             # get predicted Y
             if self.clip:
@@ -457,18 +461,28 @@ class GBDS_u(RandomVariable, Distribution):
         # disregard last timestep bc we don't know the next value, thus, we
         # can't calculate the error
         with tf.name_scope('next_time_step_pred'):
-            ctrl_error, Upred, _ = self.get_preds(
-                self.y[:, :-1], training=True, post_g=self.g, post_U=value)
+            if self.latent_u:
+                ctrl_error, Upred, _ = self.get_preds(
+                    self.y[:, :-1], training=True, post_g=self.g,
+                    Uprev=value[:, :-1])
+            else:
+                ctrl_error, Upred, _ = self.get_preds(
+                    self.y[:, :-1], training=True, post_g=self.g,
+                    Uprev=self.ctrl_obs[:, :-1])
 
         LogDensity = 0.0
         with tf.name_scope('control_signal_loss'):
             # calculate loss on control signal
-            # LogDensity += tf.scan(self.clip_loss, (self.ctrl_obs, value),
-            #                       initializer=0.0, name='clip_noise')
-            LogDensity += tf.reduce_sum(
-                self.clip_log_prob(self.ctrl_obs, value), axis=[1, 2],
-                name='clip_noise')
-            resU = value[:, 1:] - Upred
+            if self.latent_u:
+                # LogDensity += tf.scan(self.clip_loss, (self.ctrl_obs, value),
+                #                       initializer=0.0, name='clip_noise')
+                LogDensity += tf.reduce_sum(
+                    self.clip_log_prob(self.ctrl_obs, value), axis=[1, 2],
+                    name='clip_noise')
+                resU = value[:, 1:] - Upred
+            else:
+                resU = self.ctrl_obs[:, 1:] - Upred
+
             LogDensity -= tf.reduce_sum(resU ** 2 / (2 * self.eps ** 2),
                                         axis=[1, 2])
             LogDensity -= (0.5 * tf.log(2 * np.pi) +
@@ -503,7 +517,7 @@ class GBDS_g(RandomVariable, Distribution):
     """
 
     def __init__(self, GenerativeParams, yDim, yDim_in, y, extra_conds,
-                 name='GBDS_g', value=None, dtype=tf.float32,
+                 ctrl_obs, name='GBDS_g', value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
         """Initialize a batch of GBDS_g random variables for one of the agent
@@ -548,6 +562,7 @@ class GBDS_g(RandomVariable, Distribution):
             self.y = y
             self.B = tf.shape(y)[0]  # batch size
             self.extra_conds = extra_conds
+            self.ctrl_obs = ctrl_obs
 
         with tf.name_scope('get_states'):
             # function that calculates states from positions
@@ -601,6 +616,13 @@ class GBDS_g(RandomVariable, Distribution):
                 dtype=tf.float32)
             self.sigma = tf.nn.softplus(self.unc_sigma, name='sigma')
 
+        with tf.name_scope('control_model'):
+            self.latent_u = GenerativeParams['latent_u']
+            if not self.latent_u:
+                self.u = GBDS_u(
+                    GenerativeParams, self, self.y, self.ctrl_obs, self.yDim,
+                    name='ctrl', value=value)
+
         super(GBDS_g, self).__init__(
             name=name, value=value, dtype=dtype,
             reparameterization_type=reparameterization_type,
@@ -611,6 +633,7 @@ class GBDS_g(RandomVariable, Distribution):
         self._kwargs['yDim_in'] = yDim_in
         self._kwargs['GenerativeParams'] = GenerativeParams
         self._kwargs['extra_conds'] = extra_conds
+        self._kwargs['ctrl_obs'] = ctrl_obs
 
     def get_preds(self, Y, training=False, post_g=None,
                   gen_g=None, extra_conds=None):
@@ -726,7 +749,7 @@ class GBDS_g(RandomVariable, Distribution):
             LogDensity += tf.reduce_sum(logsumexp(
                 tf.reduce_sum(gmm_term, axis=-1), axis=-1), axis=[-2, -1])
 
-        with tf.name_scope('goal_and_control_penalty'):
+        with tf.name_scope('goal_penalty'):
             if self.pen_g is not None:
                 # linear penalty on goal state escaping game space
                 LogDensity -= (self.pen_g * tf.reduce_sum(
@@ -737,10 +760,16 @@ class GBDS_g(RandomVariable, Distribution):
                 # penalty on sigma
                 LogDensity -= (self.pen_sigma * tf.reduce_sum(self.unc_sigma))
 
+        with tf.name_scope('control_model'):
+            if not self.latent_u:
+                LogDensity += self.u._log_prob(value=None)
+
         return LogDensity
 
     def getParams(self):
         """Return the learnable parameters of the model
         """
         rets = self.GMM_net.variables + self.g0_params
+        if not self.latent_u:
+            rets += self.u.getParams()
         return rets

@@ -27,7 +27,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
     """
 
     def __init__(self, RecognitionParams, Input, extra_conds, xDim, yDim,
-                 Dyn_params, nrng=None, name="SmoothingLDSTimeSeries",
+                 nrng=None, name="SmoothingLDSTimeSeries",
                  value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
@@ -61,7 +61,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
           value: The Recognition Random Variable sample of goal or control
                  signal
         """
-        self.Dyn_params = Dyn_params
+        self.Dyn_params = RecognitionParams['Dyn_params']
         self.nrng = nrng
         self.Input = Input
         self.extra_conds = extra_conds
@@ -110,7 +110,6 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
         self._kwargs['xDim'] = xDim
         self._kwargs['yDim'] = yDim
         self._kwargs['nrng'] = nrng
-        self._kwargs['Dyn_params'] = Dyn_params
 
     def _initialize_posterior_distribution(self, RecognitionParams):
 
@@ -263,7 +262,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
     current to evaluate the latent.
     """
     def __init__(self, RecognitionParams, Input, extra_conds, xDim, yDim,
-                 Dyn_params, nrng=None, name='SmoothingPastLDSTimeSeries',
+                 nrng=None, name='SmoothingPastLDSTimeSeries',
                  value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
@@ -314,8 +313,8 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
                 Input_ = tf.concat([Input_, lagged], -1, name='pad')
 
         super(SmoothingPastLDSTimeSeries, self).__init__(
-            RecognitionParams, Input_, extra_conds, xDim, yDim, Dyn_params,
-            nrng, name, value, dtype, reparameterization_type,
+            RecognitionParams, Input_, extra_conds, xDim, yDim, nrng,
+            name, value, dtype, reparameterization_type,
             validate_args, allow_nan_stats)
 
         self.Input = Input
