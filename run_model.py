@@ -21,7 +21,7 @@ DATA_DIR = ''
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
-SAVED_MODEL_DIR = 'model_gmm_copy'
+SAVED_MODEL_DIR = ''
 PROFILE = False
 
 P1_DIM = 1
@@ -41,8 +41,8 @@ CLIP = True
 CLIP_RANGE = 1.
 CLIP_TOL = 1e-5
 ETA = 1e-6
-CONTROL_ERROR_PENALTY = 1e6
-EPS_INIT = 1e-5
+CONTROL_ERROR_PENALTY = None
+EPS_INIT = 1e-10
 EPS_TRAINABLE = False
 EPS_PENALTY = None
 SIGMA_INIT = 1e-5
@@ -53,14 +53,14 @@ SIGMA_PENALTY = None
 # We left the possibility for 2 penalties in the model class just in case
 # it may be useful on a different dataset/task
 GOAL_BOUNDARY = 1.0
-GOAL_BOUND_PENALTY = 1e10
+GOAL_BOUND_PENALTY = None
 
 SEED = 1234
 TRAIN_RATIO = 0.85
 TRAIN_OPTIMIZER = 'Adam'
 LEARNING_RATE = 1e-3
 NUM_EPOCHS = 500
-BATCH_SIZE = 128
+BATCH_SIZE = 1
 NUM_SAMPLES = 1
 NUM_POSTERIOR_SAMPLES = 30
 MAX_CKPT_TO_KEEP = 5
@@ -376,12 +376,15 @@ def run_model(hps):
     if hps.goal_bound_penalty is not None:
         print('Penalty on goal state leaving boundary (Generative): %i'
               % hps.goal_bound_penalty)
-    print('Number of GMM components: %i' % hps.K)
+    if hps.ctrl_error_penalty is not None:
+        print('Penalty on large control error (Generative): %i'
+              % hps.ctrl_error_penalty)
+    print('Num GMM components: %i' % hps.K)
 
     print('--------------Recognition Params---------------')
     print('Num Layers (VILDS recognition): %i' % hps.rec_nlayers)
     print('Hidden Dims (VILDS recognition): %i' % hps.rec_hidden_dim)
-    print('Input lag (VILDS recognition): %i' % hps.rec_lag)
+    print('Input Lag (VILDS recognition): %i' % hps.rec_lag)
 
     PID_summary_key = tf.get_default_graph().unique_name('PID_params_summary')
 
@@ -485,8 +488,8 @@ def run_model(hps):
                                    max_to_keep=2)
 
         if hps.load_saved_model:
-            seso.saver.restore(sess, hps.saved_model_dir + '/saved_model')
-            print('Model restored.')
+            seso.saver.restore(sess, hps.saved_model_dir)
+            print('Model restored from ' + hps.saved_model_dir)
 
         # time2 = time.time()
         # print('Model setup took %.3f s.' % (time2 - time1))

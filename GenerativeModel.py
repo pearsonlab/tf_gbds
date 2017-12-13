@@ -753,9 +753,9 @@ class GBDS_g(RandomVariable, Distribution):
             if self.pen_g is not None:
                 # linear penalty on goal state escaping game space
                 LogDensity -= (self.pen_g * tf.reduce_sum(
-                    tf.nn.relu(all_mu - self.bounds_g), axis=[1, 2, 3]))
+                    tf.nn.relu(value - self.bounds_g), axis=[1, 2]))
                 LogDensity -= (self.pen_g * tf.reduce_sum(
-                    tf.nn.relu(-all_mu - self.bounds_g), axis=[1, 2, 3]))
+                    tf.nn.relu(-value - self.bounds_g), axis=[1, 2]))
             if self.pen_sigma is not None:
                 # penalty on sigma
                 LogDensity -= (self.pen_sigma * tf.reduce_sum(self.unc_sigma))
