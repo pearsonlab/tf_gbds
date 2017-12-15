@@ -87,7 +87,8 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
         with tf.name_scope('LambdaChol'):
             self.NN_Lambda = RecognitionParams['NN_Lambda']['network']
             self.lambda_net_out = self.NN_Lambda(self.Input)
-            # Lambda will automatically be of size [Batch_size x T x xDim x xDim]
+            # Lambda will automatically be of size
+            # [Batch_size x T x xDim x xDim]
             self.LambdaChol = tf.reshape(self.lambda_net_out,
                                          [self.B, self.Tt, xDim, xDim])
 
@@ -96,6 +97,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             self.lambdaX_net_out = self.NN_LambdaX(self.Input[:, 1:])
             self.LambdaXChol = tf.reshape(self.lambdaX_net_out,
                                           [self.B, self.Tt - 1, xDim, xDim])
+
         with tf.name_scope('init_posterior'):
             self._initialize_posterior_distribution(RecognitionParams)
 

@@ -12,6 +12,7 @@ import edward as ed
 import six
 from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
 
+
 class set_cbar_zero(Normalize):
     """set_cbar_zero(midpoint = float)       default: midpoint = 0.
     Normalizes and sets the center of any colormap to the desired value which
@@ -151,7 +152,7 @@ def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 3)))),
 
         init_b_x = np.pi * (np.random.rand() * 2 - 1)
         g_b_x_mu = (np.linspace(0, 0.975, n_obs) + 0.02 * np.sin(2. *
-            (np.linspace(0, 2 * np.pi, n_obs) - init_b_x)))
+                    (np.linspace(0, 2 * np.pi, n_obs) - init_b_x)))
 
         init_b_y = np.pi * (np.random.rand() * 2 - 1)
         g_b_y_mu = (np.linspace(-0.2 + (np.random.rand() * 0.1 - 0.05),
@@ -163,11 +164,10 @@ def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 3)))),
                             g_b_y_mu.reshape(n_obs, 1)])
         g_b_lambda = np.array([1e4, 1e4])
         g_b[0] = g_b_mu[0]
-        
+
         init_g = np.pi * (np.random.rand() * 2 - 1)
         g_g_mu = (np.linspace(-0.2 + (np.random.rand() * 0.1 - 0.05),
-                                0.4 + (np.random.rand() * 0.1 - 0.05),
-                                n_obs) +
+                              0.4 + (np.random.rand() * 0.1 - 0.05), n_obs) +
                   0.05 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
                                       init_g)))
         g_g_lambda = 1e4
@@ -344,7 +344,7 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
     Also returns a list of PKBias layers
     """
     PKbias_layers = []
-    NN = models.Sequential()
+    NN = models.Sequential(name=name)
     with tf.name_scope('%s_input' % name):
         NN.add(keras_layers.InputLayer(input_shape=(None, input_dim),
                                        name='%s_Input' % name))
@@ -435,7 +435,7 @@ def get_rec_params_GBDS(obs_dim, extra_dim, lag, num_layers, hidden_dim,
         lambdaX_net, PKbias_layers_lambdaX = get_network('rec_lambdaX_%s'
                                                          % name,
                                                          (obs_dim * (lag + 1) +
-                                                            extra_dim),
+                                                          extra_dim),
                                                          obs_dim**2,
                                                          hidden_dim,
                                                          num_layers, PKLparams,
@@ -641,7 +641,7 @@ def pad_batch(arrays, mode='edge'):
     if mode == 'edge':
         return np.array([np.pad(a, ((0, max_len - len(a)), (0, 0)),
                                 'edge') for a in arrays])
-    elif mode =='zero':
+    elif mode == 'zero':
         return np.array([np.pad(a, ((0, max_len-len(a)), (0, 0)), 'constant',
                                 constant_values=0) for a in arrays])
 
@@ -768,33 +768,34 @@ class MultiDatasetMiniBatchIterator(object):
             curr_rows = rows[beg:end]
             yield tuple(dset[curr_rows, :] for dset in self.data)
 
+
 class KLqp_profile(ed.KLqp):
     def __init__(self, options=None, run_metadata=None, latent_vars=None,
                  data=None):
         super(KLqp_profile, self).__init__(latent_vars=latent_vars, data=data)
-        self.options=options
-        self.run_metadata=run_metadata
+        self.options = options
+        self.run_metadata = run_metadata
 
     def update(self, feed_dict=None):
         if feed_dict is None:
-          feed_dict = {}
+            feed_dict = {}
 
         for key, value in six.iteritems(self.data):
-          if isinstance(key, tf.Tensor) and "Placeholder" in key.op.type:
-            feed_dict[key] = value
+            if isinstance(key, tf.Tensor) and "Placeholder" in key.op.type:
+                feed_dict[key] = value
 
         sess = ed.get_session()
         _, t, loss = sess.run([self.train, self.increment_t, self.loss],
-                              options = self.options,
-                              run_metadata = self.run_metadata,
+                              options=self.options,
+                              run_metadata=self.run_metadata,
                               feed_dict=feed_dict)
 
         if self.debug:
-          sess.run(self.op_check, feed_dict)
+            sess.run(self.op_check, feed_dict)
 
         if self.logging and self.n_print != 0:
-          if t == 1 or t % self.n_print == 0:
-            summary = sess.run(self.summarize, feed_dict)
-            self.train_writer.add_summary(summary, t)
+            if t == 1 or t % self.n_print == 0:
+                summary = sess.run(self.summarize, feed_dict)
+                self.train_writer.add_summary(summary, t)
 
         return {'t': t, 'loss': loss}

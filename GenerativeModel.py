@@ -1,8 +1,8 @@
 import tensorflow as tf
 import numpy as np
 from edward.models import RandomVariable
-from tensorflow.contrib.distributions import Distribution, Normal
-from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
+from tensorflow.contrib.distributions import (Distribution,
+                                              FULLY_REPARAMETERIZED)
 from tensorflow.python.ops.distributions.special_math import log_ndtr
 from tf_gbds.utils import pad_extra_conds
 
@@ -64,32 +64,36 @@ class GBDS_g_all(RandomVariable, Distribution):
 
         """
 
-        self.yCols_ball = GenerativeParams_ball['yCols']
         self.yCols_goalie = GenerativeParams_goalie['yCols']
+        self.yCols_ball = GenerativeParams_ball['yCols']
         self.y = y
         self.yDim = yDim
         self.extra_conds = extra_conds
         self.ctrl_obs = ctrl_obs
 
-        yDim_ball = len(self.yCols_ball)
         yDim_goalie = len(self.yCols_goalie)
+        yDim_ball = len(self.yCols_ball)
 
-        if self.ctrl_obs is not None:
-            ctrl_ball = tf.gather(self.ctrl_obs, self.yCols_ball, axis=-1,
-                                  name='ctrl_obs_ball')
-            ctrl_goalie = tf.gather(self.ctrl_obs, self.yCols_goalie, axis=-1,
-                                    name='ctrl_obs_goalie')
-        else:
-            ctrl_ball = None
-            ctrl_goalie = None
+        with tf.name_scope('observed_control'):
+            if self.ctrl_obs is not None:
+                ctrl_goalie = tf.gather(self.ctrl_obs, self.yCols_goalie,
+                                        axis=-1, name='ctrl_obs_goalie')
+                ctrl_ball = tf.gather(self.ctrl_obs, self.yCols_ball,
+                                      axis=-1, name='ctrl_obs_ball')
+            else:
+                ctrl_goalie = None
+                ctrl_ball = None
 
-        self.goalie = GBDS_g(GenerativeParams_goalie, yDim_goalie, yDim, y,
-                             extra_conds, ctrl_goalie, name='G_goalie',
-                             value=tf.gather(value, self.yCols_goalie,
-                                             axis=-1))
-        self.ball = GBDS_g(GenerativeParams_ball, yDim_ball, yDim, y,
-                           extra_conds, ctrl_ball, name='G_ball',
-                           value=tf.gather(value, self.yCols_ball, axis=-1))
+        with tf.name_scope('G_goalie'):
+            self.goalie = GBDS_g(GenerativeParams_goalie, yDim_goalie, yDim,
+                                 y, extra_conds, ctrl_goalie, name='G_goalie',
+                                 value=tf.gather(value, self.yCols_goalie,
+                                                 axis=-1))
+        with tf.name_scope('G_ball'):
+            self.ball = GBDS_g(GenerativeParams_ball, yDim_ball, yDim, y,
+                               extra_conds, ctrl_ball, name='G_ball',
+                               value=tf.gather(value, self.yCols_ball,
+                                               axis=-1))
 
         super(GBDS_g_all, self).__init__(
             name=name, value=value, dtype=dtype,
@@ -104,15 +108,17 @@ class GBDS_g_all(RandomVariable, Distribution):
         self._kwargs['ctrl_obs'] = ctrl_obs
 
     def _log_prob(self, value):
-        log_prob_ball = self.ball.log_prob(
-            tf.gather(value, self.yCols_ball, axis=-1))
-        log_prob_goalie = self.goalie.log_prob(
-            tf.gather(value, self.yCols_goalie, axis=-1))
+        with tf.name_scope('goalie'):
+            log_prob_goalie = self.goalie.log_prob(
+                tf.gather(value, self.yCols_goalie, axis=-1))
+        with tf.name_scope('ball'):
+            log_prob_ball = self.ball.log_prob(
+                tf.gather(value, self.yCols_ball, axis=-1))
 
-        return log_prob_ball + log_prob_goalie
+        return log_prob_goalie + log_prob_ball
 
     def getParams(self):
-        return self.ball.getParams() + self.goalie.getParams()
+        return self.goalie.getParams() + self.ball.getParams()
 
 
 class GBDS_u_all(RandomVariable, Distribution):
@@ -167,34 +173,42 @@ class GBDS_u_all(RandomVariable, Distribution):
                  Set it to tf.zeros_like(Y).
         """
 
-        self.yCols_ball = GenerativeParams_ball['yCols']
         self.yCols_goalie = GenerativeParams_goalie['yCols']
+        self.yCols_ball = GenerativeParams_ball['yCols']
         self.y = y
         self.yDim = yDim
         self.g = g
         self.ctrl_obs = ctrl_obs
 
-        yDim_ball = len(self.yCols_ball)
         yDim_goalie = len(self.yCols_goalie)
-        g_ball = tf.gather(self.g, self.yCols_ball, axis=-1)
-        g_goalie = tf.gather(self.g, self.yCols_goalie, axis=-1)
+        yDim_ball = len(self.yCols_ball)
 
-        if self.ctrl_obs is not None:
-            ctrl_ball = tf.gather(self.ctrl_obs, self.yCols_ball, axis=-1,
-                                  name='ctrl_obs_ball')
-            ctrl_goalie = tf.gather(self.ctrl_obs, self.yCols_goalie, axis=-1,
-                                    name='ctrl_obs_goalie')
-        else:
-            ctrl_ball = None
-            ctrl_goalie = None
+        with tf.name_scope('goals'):
+            g_goalie = tf.gather(self.g, self.yCols_goalie, axis=-1,
+                                 name='goals_goalie')
+            g_ball = tf.gather(self.g, self.yCols_ball, axis=-1,
+                               name='goals_ball')
 
-        self.goalie = GBDS_u(GenerativeParams_goalie, g_goalie, y,
-                             ctrl_goalie, yDim_goalie, name='U_goalie',
-                             value=tf.gather(value, self.yCols_goalie,
-                                             axis=-1))
-        self.ball = GBDS_u(GenerativeParams_ball, g_ball, y, ctrl_ball,
-                           yDim_ball, name='U_ball',
-                           value=tf.gather(value, self.yCols_ball, axis=-1))
+        with tf.name_scope('observed_control'):
+            if self.ctrl_obs is not None:
+                ctrl_goalie = tf.gather(self.ctrl_obs, self.yCols_goalie,
+                                        axis=-1, name='ctrl_obs_goalie')
+                ctrl_ball = tf.gather(self.ctrl_obs, self.yCols_ball,
+                                      axis=-1, name='ctrl_obs_ball')
+            else:
+                ctrl_goalie = None
+                ctrl_ball = None
+
+        with tf.name_scope('U_goalie'):
+            self.goalie = GBDS_u(GenerativeParams_goalie, g_goalie, y,
+                                 ctrl_goalie, yDim_goalie, name='U_goalie',
+                                 value=tf.gather(value, self.yCols_goalie,
+                                                 axis=-1))
+        with tf.name_scope('U_ball'):
+            self.ball = GBDS_u(GenerativeParams_ball, g_ball, y, ctrl_ball,
+                               yDim_ball, name='U_ball',
+                               value=tf.gather(value, self.yCols_ball,
+                                               axis=-1))
 
         super(GBDS_u_all, self).__init__(
             name=name, value=value, dtype=dtype,
@@ -209,14 +223,17 @@ class GBDS_u_all(RandomVariable, Distribution):
         self._kwargs['yDim'] = yDim
 
     def _log_prob(self, value):
-        log_prob_ball = self.ball.log_prob(
-            tf.gather(value, self.yCols_ball, axis=-1))
-        log_prob_goalie = self.goalie.log_prob(
-            tf.gather(value, self.yCols_goalie, axis=-1))
-        return log_prob_ball + log_prob_goalie
+        with tf.name_scope('goalie'):
+            log_prob_goalie = self.goalie.log_prob(
+                tf.gather(value, self.yCols_goalie, axis=-1))
+        with tf.name_scope('ball'):
+            log_prob_ball = self.ball.log_prob(
+                tf.gather(value, self.yCols_ball, axis=-1))
+
+        return log_prob_goalie + log_prob_ball
 
     def getParams(self):
-        return self.ball.getParams() + self.goalie.getParams()
+        return self.goalie.getParams() + self.ball.getParams()
 
 
 class GBDS_u(RandomVariable, Distribution):
@@ -352,6 +369,7 @@ class GBDS_u(RandomVariable, Distribution):
         For training: provide post_g, sample from the posterior,
                       which is used to calculate the ELBO
         """
+
         with tf.name_scope('control_error'):
             # PID Controller for next control point
             if post_g is not None:  # calculate error from posterior goals
@@ -441,9 +459,11 @@ class GBDS_u(RandomVariable, Distribution):
 
         def z(x, loc, scale):
             return (x - loc) / scale
+
         def normal_logpdf(x, loc, scale):
             return -(0.5 * np.log(2 * np.pi) + tf.log(scale) +
                      0.5 * tf.square(z(x, loc, scale)))
+
         def normal_logcdf(x, loc, scale):
             return log_ndtr(z(x, loc, scale))
 
@@ -460,7 +480,7 @@ class GBDS_u(RandomVariable, Distribution):
         # Get predictions for next timestep (at each timestep except for last)
         # disregard last timestep bc we don't know the next value, thus, we
         # can't calculate the error
-        with tf.name_scope('next_time_step_pred'):
+        with tf.name_scope('next_time_point_pred'):
             if self.latent_u:
                 ctrl_error, Upred, _ = self.get_preds(
                     self.y[:, :-1], training=True, post_g=self.g,
@@ -509,6 +529,7 @@ class GBDS_u(RandomVariable, Distribution):
         """
 
         rets = self.PID_params  # + [self.unc_eps]
+
         return rets
 
 
@@ -556,17 +577,23 @@ class GBDS_g(RandomVariable, Distribution):
 
         """
 
+        self.y = y
+        self.B = tf.shape(y)[0]  # batch size
+        self.extra_conds = extra_conds
+        self.ctrl_obs = ctrl_obs
+
         with tf.name_scope('dimension'):
             self.yDim_in = yDim_in  # dimension of observation input
             self.yDim = yDim
-            self.y = y
-            self.B = tf.shape(y)[0]  # batch size
-            self.extra_conds = extra_conds
-            self.ctrl_obs = ctrl_obs
 
         with tf.name_scope('get_states'):
             # function that calculates states from positions
             self.get_states = GenerativeParams['get_states']
+
+        with tf.name_scope('velocity'):
+            # velocity for each observation dimension (of all agents)
+            self.all_vel = tf.constant(GenerativeParams['all_vel'],
+                                       dtype=tf.float32, name='velocity')
 
         with tf.name_scope('g0'):
             self.g0_mu = GenerativeParams['g0_params']['mu']
@@ -583,14 +610,21 @@ class GBDS_g(RandomVariable, Distribution):
             # GMM neural networks
             self.GMM_net = GenerativeParams['GMM_net']
 
-        with tf.name_scope('goal_state_penalty'):
+        with tf.name_scope('goal_state_noise'):
+            # noise coefficient on goal states
+            self.unc_sigma = tf.Variable(
+                initial_value=-5 * np.ones((1, self.yDim)), name='unc_sigma',
+                dtype=tf.float32)
+            self.sigma = tf.nn.softplus(self.unc_sigma, name='sigma')
+
+        with tf.name_scope('goal_state_noise_penalty'):
             # penalty on sigma (noise on goal state)
             if GenerativeParams['pen_sigma'] is not None:
                 self.pen_sigma = GenerativeParams['pen_sigma']
             else:
                 self.pen_sigma = None
 
-        with tf.name_scope('boundary_penalty'):
+        with tf.name_scope('goal_boundary_penalty'):
             with tf.name_scope('boundary'):
                 # corresponding boundaries for pen_g
                 if GenerativeParams['bounds_g'] is not None:
@@ -603,18 +637,6 @@ class GBDS_g(RandomVariable, Distribution):
                     self.pen_g = GenerativeParams['pen_g']
                 else:
                     self.pen_g = None
-
-        with tf.name_scope('velocity'):
-            # velocity for each observation dimension (of all agents)
-            self.all_vel = tf.constant(GenerativeParams['all_vel'],
-                                       dtype=tf.float32, name='velocity')
-
-        with tf.name_scope('goal_state_noise'):
-            # noise coefficient on goal states
-            self.unc_sigma = tf.Variable(
-                initial_value=-5 * np.ones((1, self.yDim)), name='unc_sigma',
-                dtype=tf.float32)
-            self.sigma = tf.nn.softplus(self.unc_sigma, name='sigma')
 
         with tf.name_scope('control_model'):
             self.latent_u = GenerativeParams['latent_u']
@@ -642,6 +664,7 @@ class GBDS_g(RandomVariable, Distribution):
         For training: provide post_g, sample from the posterior,
                       which is used to calculate the ELBO
         """
+
         if training and post_g is None:
             raise Exception(
                 'Must provide sample of g from posterior during training')
@@ -686,12 +709,12 @@ class GBDS_g(RandomVariable, Distribution):
                 all_w = tf.concat([w_0, all_w], 1, name='all_w')
 
         with tf.name_scope('next_g'):
-                # Draw next goals based on force
+            # Draw next goals based on force
             if post_g is not None:  # Calculate next goals from posterior
                 next_g = ((tf.expand_dims(
                     tf.concat([tf.expand_dims(self.sample_g0(), 1),
                                post_g[:, :-1]], 1), 2) + all_mu * all_lambda) /
-                (1 + all_lambda))
+                          (1 + all_lambda))
 
         return (all_mu, all_lambda, all_w, next_g)
 
@@ -699,9 +722,10 @@ class GBDS_g(RandomVariable, Distribution):
         k_0 = tf.squeeze(tf.multinomial(
             tf.tile(tf.expand_dims(tf.log(self.g0_w), 0),
                     [self.B, 1]), 1), name='k_0')
-        g_0 = (tf.gather(self.g0_mu, k_0, axis=0) +
-               tf.random_normal([self.B, self.yDim]) /
-               tf.sqrt(tf.gather(self.g0_lambda, k_0, axis=0)))
+        g_0 = (tf.gather(self.g0_mu, k_0, axis=0, name='mean') +
+               tf.random_normal([self.B, self.yDim], name='std_normal') /
+               tf.sqrt(tf.gather(self.g0_lambda, k_0, axis=0),
+                       name='inv_std_dev'))
 
         return g_0
 
@@ -731,14 +755,15 @@ class GBDS_g(RandomVariable, Distribution):
         return (mu_k, lambda_k), updates
 
     def _log_prob(self, value):
-        with tf.name_scope('get_params_g_pred'):
+        with tf.name_scope('next_time_point_pred'):
             all_mu, all_lambda, all_w, g_pred = self.get_preds(
                 self.y[:, :-1], training=True, post_g=value)
 
         LogDensity = 0.0
         with tf.name_scope('goal_state_loss'):
             w_brdcst = tf.expand_dims(all_w, -1, name='reshape_w')
-            gmm_res_g = (tf.expand_dims(value, 2, name='reshape_sample') -
+            gmm_res_g = (tf.expand_dims(value, 2,
+                                        name='reshape_posterior_samples') -
                          g_pred)
             gmm_term = (tf.log(w_brdcst + 1e-8) - ((1 + all_lambda) /
                         (2 * tf.reshape(self.sigma, [1, -1]) ** 2)) *
@@ -750,15 +775,18 @@ class GBDS_g(RandomVariable, Distribution):
                 tf.reduce_sum(gmm_term, axis=-1), axis=-1), axis=[-2, -1])
 
         with tf.name_scope('goal_penalty'):
-            if self.pen_g is not None:
-                # linear penalty on goal state escaping game space
-                LogDensity -= (self.pen_g * tf.reduce_sum(
-                    tf.nn.relu(value - self.bounds_g), axis=[1, 2]))
-                LogDensity -= (self.pen_g * tf.reduce_sum(
-                    tf.nn.relu(-value - self.bounds_g), axis=[1, 2]))
-            if self.pen_sigma is not None:
-                # penalty on sigma
-                LogDensity -= (self.pen_sigma * tf.reduce_sum(self.unc_sigma))
+            with tf.name_scope('boundary'):
+                if self.pen_g is not None:
+                    # linear penalty on goal state escaping game space
+                    LogDensity -= (self.pen_g * tf.reduce_sum(
+                        tf.nn.relu(value - self.bounds_g), axis=[1, 2]))
+                    LogDensity -= (self.pen_g * tf.reduce_sum(
+                        tf.nn.relu(-value - self.bounds_g), axis=[1, 2]))
+            with tf.name_scope('noise'):
+                if self.pen_sigma is not None:
+                    # penalty on sigma
+                    LogDensity -= (self.pen_sigma *
+                                   tf.reduce_sum(self.unc_sigma))
 
         with tf.name_scope('control_model'):
             if not self.latent_u:
@@ -769,7 +797,9 @@ class GBDS_g(RandomVariable, Distribution):
     def getParams(self):
         """Return the learnable parameters of the model
         """
+
         rets = self.GMM_net.variables + self.g0_params
         if not self.latent_u:
             rets += self.u.getParams()
+
         return rets

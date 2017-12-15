@@ -1,16 +1,15 @@
+import os
+import tensorflow as tf
+import numpy as np
+import math
+import edward as ed
+import tf_gbds.GenerativeModel as G
+import tf_gbds.RecognitionModel as R
 from tf_gbds.utils import (load_data, get_max_velocities,
                            get_rec_params_GBDS, get_gen_params_GBDS_GMM,
                            batch_generator, batch_generator_pad, pad_batch,
                            KLqp_profile, add_summary)
-import os
-import tensorflow as tf
-import numpy as np
-import tf_gbds.GenerativeModel as G
-import tf_gbds.RecognitionModel as R
-import edward as ed
-import sys
 import time
-import math
 from tensorflow.python.client import timeline
 
 # export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
@@ -296,7 +295,7 @@ def run_model(hps):
         ctrl_obs_ph = tf.placeholder(tf.float32, shape=(None, None, obs_dim),
                                      name='ctrl_obs')
         # Generate real goal and control signal
-        with tf.name_scope('gen_g'):
+        with tf.name_scope('gen_G'):
             if extra_conds_present:
                 if ctrl_obs_present:
                     p_G = G.GBDS_g_all(
@@ -317,7 +316,7 @@ def run_model(hps):
                     gen_params_goalie, gen_params_ball, obs_dim, Y_ph, None,
                     None, name='p_G', value=tf.zeros_like(Y_ph))
 
-        with tf.name_scope('gen_u'):
+        with tf.name_scope('gen_U'):
             if hps.latent_u:
                 if ctrl_obs_present:
                     p_U = G.GBDS_u_all(gen_params_goalie, gen_params_ball,
@@ -329,42 +328,47 @@ def run_model(hps):
                                        name='p_U', value=tf.zeros_like(Y_ph))
 
         # Generate posterior goal and control signal
-        if extra_conds_present:
-            with tf.name_scope('rec_g'):
+
+        with tf.name_scope('rec_G'):
+            if extra_conds_present:
                 q_G = R.SmoothingPastLDSTimeSeries(
                     rec_params_g, Y_ph, extra_conds_ph, obs_dim, obs_dim,
                     name='q_G')
-            with tf.name_scope('rec_u'):
-                if hps.latent_u:
+            else:
+                q_G = R.SmoothingPastLDSTimeSeries(
+                    rec_params_g, Y_ph, None, obs_dim, obs_dim, name='q_G')
+
+        with tf.name_scope('rec_U'):
+            if hps.latent_u:
+                if extra_conds_present:
                     q_U = R.SmoothingPastLDSTimeSeries(
                         rec_params_u, Y_ph, extra_conds_ph, obs_dim, obs_dim,
                         name='q_U')
-        else:
-            with tf.name_scope('rec_g'):
-                q_G = R.SmoothingPastLDSTimeSeries(
-                    rec_params_g, Y_ph, None, obs_dim, obs_dim, name='q_G')
-            with tf.name_scope('rec_u'):
-                if hps.latent_u:
+                else:
                     q_U = R.SmoothingPastLDSTimeSeries(
                         rec_params_u, Y_ph, None, obs_dim, obs_dim,
                         name='q_U')
+
         # Generate real state based on control signal and velocility
-        with tf.name_scope('obs'):
-            if hps.latent_u:
-                U = p_U
-            else:
-                U = tf.concat([p_G.goalie.u, p_G.ball.u], -1)
-            if hps.clip:
-                Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1), (Y_ph[:, :-1] +
-                               (tf.reshape(vel, [1, obs_dim]) *
-                                tf.clip_by_value(U[:, 1:], -hps.clip_range,
-                                                 hps.clip_range)))], 1,
-                              name='Y')
-            else:
-                Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1), (Y_ph[:, :-1] +
-                               (tf.reshape(vel, [1, obs_dim]) *
-                                U[:, 1:]))], 1,
-                              name='Y')
+        with tf.name_scope('observations'):
+            with tf.name_scope('control_signals'):
+                if hps.latent_u:
+                    U = p_U
+                else:
+                    U = tf.concat([p_G.goalie.u, p_G.ball.u], -1)
+            with tf.name_scope('trajectories'):
+                if hps.clip:
+                    Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1),
+                                   (Y_ph[:, :-1] + (tf.reshape(
+                                        vel, [1, obs_dim]) *
+                                    tf.clip_by_value(
+                                        U[:, 1:], -hps.clip_range,
+                                        hps.clip_range)))], 1, name='Y')
+                else:
+                    Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1),
+                                   (Y_ph[:, :-1] + (tf.reshape(
+                                        vel, [1, obs_dim]) *
+                                    U[:, 1:]))], 1, name='Y')
 
     print('--------------Generative Params----------------')
     if hps.eps_penalty is not None:
@@ -386,48 +390,50 @@ def run_model(hps):
     print('Hidden Dims (VILDS recognition): %i' % hps.rec_hidden_dim)
     print('Input Lag (VILDS recognition): %i' % hps.rec_lag)
 
-    PID_summary_key = tf.get_default_graph().unique_name('PID_params_summary')
+    with tf.name_scope('PID_params_summary'):
+        PID_summary_key = tf.get_default_graph().unique_name(
+            'PID_params_summary')
 
-    if hps.latent_u:
-        U_goalie = p_U.goalie
-        U_ball = p_U.ball
-    else:
-        U_goalie = p_G.goalie.u
-        U_ball = p_G.ball.u
+        if hps.latent_u:
+            U_goalie = p_U.goalie
+            U_ball = p_U.ball
+        else:
+            U_goalie = p_G.goalie.u
+            U_ball = p_G.ball.u
 
-    Kp_goalie = tf.summary.scalar('PID_params/goalie/Kp',
-                                  U_goalie.Kp[0, 0],
-                                  collections=PID_summary_key)
-    Ki_goalie = tf.summary.scalar('PID_params/goalie/Ki',
-                                  U_goalie.Ki[0, 0],
-                                  collections=PID_summary_key)
-    Kd_goalie = tf.summary.scalar('PID_params/goalie/Kd',
-                                  U_goalie.Kd[0, 0],
-                                  collections=PID_summary_key)
-    Kp_ball_x = tf.summary.scalar('PID_params/ball_x/Kp',
-                                  U_ball.Kp[0, 0],
-                                  collections=PID_summary_key)
-    Ki_ball_x = tf.summary.scalar('PID_params/ball_x/Ki',
-                                  U_ball.Ki[0, 0],
-                                  collections=PID_summary_key)
-    Kd_ball_x = tf.summary.scalar('PID_params/ball_x/Kd',
-                                  U_ball.Kd[0, 0],
-                                  collections=PID_summary_key)
-    Kp_ball_y = tf.summary.scalar('PID_params/ball_y/Kp',
-                                  U_ball.Kp[1, 0],
-                                  collections=PID_summary_key)
-    Ki_ball_y = tf.summary.scalar('PID_params/ball_y/Ki',
-                                  U_ball.Ki[1, 0],
-                                  collections=PID_summary_key)
-    Kd_ball_y = tf.summary.scalar('PID_params/ball_y/Kd',
-                                  U_ball.Kd[1, 0],
-                                  collections=PID_summary_key)
+        Kp_goalie = tf.summary.scalar('PID_params/goalie/Kp',
+                                      U_goalie.Kp[0, 0],
+                                      collections=PID_summary_key)
+        Ki_goalie = tf.summary.scalar('PID_params/goalie/Ki',
+                                      U_goalie.Ki[0, 0],
+                                      collections=PID_summary_key)
+        Kd_goalie = tf.summary.scalar('PID_params/goalie/Kd',
+                                      U_goalie.Kd[0, 0],
+                                      collections=PID_summary_key)
+        Kp_ball_x = tf.summary.scalar('PID_params/ball_x/Kp',
+                                      U_ball.Kp[0, 0],
+                                      collections=PID_summary_key)
+        Ki_ball_x = tf.summary.scalar('PID_params/ball_x/Ki',
+                                      U_ball.Ki[0, 0],
+                                      collections=PID_summary_key)
+        Kd_ball_x = tf.summary.scalar('PID_params/ball_x/Kd',
+                                      U_ball.Kd[0, 0],
+                                      collections=PID_summary_key)
+        Kp_ball_y = tf.summary.scalar('PID_params/ball_y/Kp',
+                                      U_ball.Kp[1, 0],
+                                      collections=PID_summary_key)
+        Ki_ball_y = tf.summary.scalar('PID_params/ball_y/Ki',
+                                      U_ball.Ki[1, 0],
+                                      collections=PID_summary_key)
+        Kd_ball_y = tf.summary.scalar('PID_params/ball_y/Kd',
+                                      U_ball.Kd[1, 0],
+                                      collections=PID_summary_key)
 
-    PID_summary = tf.summary.merge([Kp_goalie, Ki_goalie, Kd_goalie,
-                                    Kp_ball_x, Ki_ball_x, Kd_ball_x,
-                                    Kp_ball_y, Ki_ball_y, Kd_ball_y],
-                                    collections=PID_summary_key,
-                                    name='PID_params_summary')
+        PID_summary = tf.summary.merge([Kp_goalie, Ki_goalie, Kd_goalie,
+                                        Kp_ball_x, Ki_ball_x, Kd_ball_x,
+                                        Kp_ball_y, Ki_ball_y, Kd_ball_y],
+                                       collections=PID_summary_key,
+                                       name='PID_params_summary')
 
     if hps.save_posterior:
         with tf.name_scope('posterior'):
@@ -488,7 +494,7 @@ def run_model(hps):
                                    max_to_keep=2)
 
         if hps.load_saved_model:
-            seso.saver.restore(sess, hps.saved_model_dir)
+            seso_saver.restore(sess, hps.saved_model_dir)
             print('Model restored from ' + hps.saved_model_dir)
 
         # time2 = time.time()
@@ -575,6 +581,8 @@ def run_model(hps):
                 f.close()
 
         seso_saver.save(sess, hps.model_dir + '/final_model')
+
+        print('Model has been saved. Training ends.')
 
         # time3 = time.time()
         # print('Model training took %.3f s.' % (time3 - time2))
