@@ -328,7 +328,6 @@ def run_model(hps):
                                        name='p_U', value=tf.zeros_like(Y_ph))
 
         # Generate posterior goal and control signal
-
         with tf.name_scope('rec_G'):
             if extra_conds_present:
                 q_G = R.SmoothingPastLDSTimeSeries(
@@ -404,34 +403,37 @@ def run_model(hps):
         Kp_goalie = tf.summary.scalar('PID_params/goalie/Kp',
                                       U_goalie.Kp[0, 0],
                                       collections=PID_summary_key)
-        Ki_goalie = tf.summary.scalar('PID_params/goalie/Ki',
-                                      U_goalie.Ki[0, 0],
-                                      collections=PID_summary_key)
-        Kd_goalie = tf.summary.scalar('PID_params/goalie/Kd',
-                                      U_goalie.Kd[0, 0],
-                                      collections=PID_summary_key)
+        # Ki_goalie = tf.summary.scalar('PID_params/goalie/Ki',
+        #                               U_goalie.Ki[0, 0],
+        #                               collections=PID_summary_key)
+        # Kd_goalie = tf.summary.scalar('PID_params/goalie/Kd',
+        #                               U_goalie.Kd[0, 0],
+        #                               collections=PID_summary_key)
         Kp_ball_x = tf.summary.scalar('PID_params/ball_x/Kp',
                                       U_ball.Kp[0, 0],
                                       collections=PID_summary_key)
-        Ki_ball_x = tf.summary.scalar('PID_params/ball_x/Ki',
-                                      U_ball.Ki[0, 0],
-                                      collections=PID_summary_key)
-        Kd_ball_x = tf.summary.scalar('PID_params/ball_x/Kd',
-                                      U_ball.Kd[0, 0],
-                                      collections=PID_summary_key)
+        # Ki_ball_x = tf.summary.scalar('PID_params/ball_x/Ki',
+        #                               U_ball.Ki[0, 0],
+        #                               collections=PID_summary_key)
+        # Kd_ball_x = tf.summary.scalar('PID_params/ball_x/Kd',
+        #                               U_ball.Kd[0, 0],
+        #                               collections=PID_summary_key)
         Kp_ball_y = tf.summary.scalar('PID_params/ball_y/Kp',
                                       U_ball.Kp[1, 0],
                                       collections=PID_summary_key)
-        Ki_ball_y = tf.summary.scalar('PID_params/ball_y/Ki',
-                                      U_ball.Ki[1, 0],
-                                      collections=PID_summary_key)
-        Kd_ball_y = tf.summary.scalar('PID_params/ball_y/Kd',
-                                      U_ball.Kd[1, 0],
-                                      collections=PID_summary_key)
+        # Ki_ball_y = tf.summary.scalar('PID_params/ball_y/Ki',
+        #                               U_ball.Ki[1, 0],
+        #                               collections=PID_summary_key)
+        # Kd_ball_y = tf.summary.scalar('PID_params/ball_y/Kd',
+        #                               U_ball.Kd[1, 0],
+        #                               collections=PID_summary_key)
 
-        PID_summary = tf.summary.merge([Kp_goalie, Ki_goalie, Kd_goalie,
-                                        Kp_ball_x, Ki_ball_x, Kd_ball_x,
-                                        Kp_ball_y, Ki_ball_y, Kd_ball_y],
+        # PID_summary = tf.summary.merge([Kp_goalie, Ki_goalie, Kd_goalie,
+        #                                 Kp_ball_x, Ki_ball_x, Kd_ball_x,
+        #                                 Kp_ball_y, Ki_ball_y, Kd_ball_y],
+        #                                collections=PID_summary_key,
+        #                                name='PID_params_summary')
+        PID_summary = tf.summary.merge([Kp_goalie, Kp_ball_x, Kp_ball_y],
                                        collections=PID_summary_key,
                                        name='PID_params_summary')
 

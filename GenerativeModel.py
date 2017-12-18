@@ -303,20 +303,24 @@ class GBDS_u(RandomVariable, Distribution):
                 # Discrete_implementation
                 PID_params = GenerativeParams['PID_params']
                 unc_Kp = PID_params['unc_Kp']
-                unc_Ki = PID_params['unc_Ki']
-                unc_Kd = PID_params['unc_Kd']
+                # unc_Ki = PID_params['unc_Ki']
+                # unc_Kd = PID_params['unc_Kd']
                 # create list of PID controller parameters for easy access in
                 # getParams
-                self.PID_params = [unc_Kp, unc_Ki, unc_Kd]
+                # self.PID_params = [unc_Kp, unc_Ki, unc_Kd]
+                self.PID_params = [unc_Kp]
                 # constrain PID controller parameters to be positive
                 self.Kp = tf.nn.softplus(unc_Kp, name='Kp')
-                self.Ki = tf.nn.softplus(unc_Ki, name='Ki')
-                self.Kd = tf.nn.softplus(unc_Kd, name='Kd')
+                # self.Ki = tf.nn.softplus(unc_Ki, name='Ki')
+                # self.Kd = tf.nn.softplus(unc_Kd, name='Kd')
             with tf.name_scope('filter'):
                 # calculate coefficients to be placed in convolutional filter
-                t_coeff = self.Kp + self.Ki + self.Kd
-                t1_coeff = -self.Kp - 2 * self.Kd
-                t2_coeff = self.Kd
+                # t_coeff = self.Kp + self.Ki + self.Kd
+                # t1_coeff = -self.Kp - 2 * self.Kd
+                # t2_coeff = self.Kd
+                t_coeff = self.Kp
+                t1_coeff = -self.Kp
+                t2_coeff = tf.zeros_like(self.Kp, dtype=tf.float32)
                 # concatenate coefficients into filter
                 self.L = tf.concat([t2_coeff, t1_coeff, t_coeff], axis=1,
                                    name='filter')

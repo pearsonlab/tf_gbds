@@ -215,8 +215,9 @@ def load_data(hps):
     if hps.synthetic_data:
         # data, goals = gen_data(
         #     n_trials=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
-        data, goals = gen_data(
-            n_trials=2000, n_obs=100, Kp=0.5, Ki=0.2, Kd=0.1)
+        # data, goals = gen_data(
+        #     n_trials=2000, n_obs=100, Kp=0.5, Ki=0.2, Kd=0.1)
+        data, goals = gen_data(n_trials=2000, n_obs=100, Kp=0.5)
         np.random.seed(hps.seed)  # set seed for consistent train/val split
         val_goals = []
         for (trial_data, trial_goals) in zip(data, goals):
@@ -525,12 +526,12 @@ def init_PID_params(player, Dim):
     PID_params['unc_Kp'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
                                        name='unc_Kp_%s' % player,
                                        dtype=tf.float32)
-    PID_params['unc_Ki'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
-                                       name='unc_Ki_%s' % player,
-                                       dtype=tf.float32)
-    PID_params['unc_Kd'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
-                                       name='unc_Kd_%s' % player,
-                                       dtype=tf.float32)
+    # PID_params['unc_Ki'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
+    #                                    name='unc_Ki_%s' % player,
+    #                                    dtype=tf.float32)
+    # PID_params['unc_Kd'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
+    #                                    name='unc_Kd_%s' % player,
+    #                                    dtype=tf.float32)
     PID_params['unc_eps'] = tf.Variable(
         initial_value=-10 * np.ones((1, Dim)), name='unc_eps_%s' % player,
         dtype=tf.float32)
