@@ -149,6 +149,8 @@ def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 3)))),
         prev_error_g = 0
         int_error_b = 0
         int_error_g = 0
+        u_b = 0
+        u_g = 0
 
         init_b_x = np.pi * (np.random.rand() * 2 - 1)
         g_b_x_mu = (np.linspace(0, 0.975, n_obs) + 0.02 * np.sin(2. *
@@ -182,7 +184,7 @@ def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 3)))),
             error_b = g_b[t + 1] - p_b[t]
             int_error_b += error_b
             der_error_b = error_b - prev_error_b
-            u_b = (Kp * error_b + Ki * int_error_b + Kd * der_error_b +
+            u_b = (u_b + Kp * error_b + Ki * int_error_b + Kd * der_error_b +
                    eps * np.random.randn(2,))
             prev_error_b = error_b
             p_b[t + 1] = np.clip(p_b[t] + vel[1:] * np.clip(u_b, -1, 1),
@@ -196,7 +198,7 @@ def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 3)))),
             error_g = g_g[t + 1] - p_g[t]
             int_error_g += error_g
             der_error_g = error_g - prev_error_g
-            u_g = (Kp * error_g + Ki * int_error_g + Kd * der_error_g +
+            u_g = (u_g + Kp * error_g + Ki * int_error_g + Kd * der_error_g +
                    eps * np.random.randn())
             prev_error_g = error_g
             p_g[t + 1] = np.clip(p_g[t] + vel[0] * np.clip(u_g, -1, 1), -1, 1)
@@ -217,7 +219,7 @@ def load_data(hps):
         #     n_trials=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
         # data, goals = gen_data(
         #     n_trials=2000, n_obs=100, Kp=0.5, Ki=0.2, Kd=0.1)
-        data, goals = gen_data(n_trials=2000, n_obs=100, Kp=0.5)
+        data, goals = gen_data(n_trials=2000, n_obs=100, Kp=0.05)
         np.random.seed(hps.seed)  # set seed for consistent train/val split
         val_goals = []
         for (trial_data, trial_goals) in zip(data, goals):
