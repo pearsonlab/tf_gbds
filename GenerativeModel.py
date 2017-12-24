@@ -377,8 +377,9 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope('control_error'):
             # PID Controller for next control point
             if post_g is not None:  # calculate error from posterior goals
-                error = tf.subtract(post_g[:, 1:],
-                                    tf.gather(Y, self.yCols, axis=-1),
+                error = tf.subtract(post_g,
+                                    tf.pad(tf.gather(Y, self.yCols, axis=-1),
+                                           [[0, 0], [1, 0], [0, 0]]),
                                     name='ctrl_error')
             # else:  # calculate error from generated goals
             #     error = next_g - tf.gather(Y, self.yCols, axis=1)
@@ -388,9 +389,8 @@ class GBDS_u(RandomVariable, Distribution):
             for i in range(self.yDim):
                 signal = error[:, :, i]
                 # zero pad beginning
-                signal = tf.expand_dims(tf.concat(
-                    [tf.zeros([self.B, 2]), signal], 1), -1,
-                    name='zero_padding')
+                signal = tf.expand_dims(
+                    tf.pad(signal, [[0, 0], [2, 0]], name='zero_padding'), -1)
                 filt = tf.reshape(self.L[i], [-1, 1, 1])
                 res = tf.nn.convolution(signal, filt, padding='VALID',
                                         name='signal_conv')
@@ -407,13 +407,15 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope('predicted_position'):
             # get predicted Y
             if self.clip:
-                Ypred = (tf.gather(Y, self.yCols, axis=-1) +
+                Ypred = (tf.pad(tf.gather(Y, self.yCols, axis=-1),
+                                [[0, 0], [1, 0], [0, 0]]) +
                          tf.reshape(self.vel, [1, self.yDim]) *
                          tf.clip_by_value(Upred, -self.clip_range,
                                           self.clip_range,
                                           name='clipped_signal'))
             else:
-                Ypred = (tf.gather(Y, self.yCols, axis=-1) +
+                Ypred = (tf.pad(tf.gather(Y, self.yCols, axis=-1),
+                                [[0, 0], [1, 0], [0, 0]]) +
                          tf.reshape(self.vel, [1, self.yDim]) * Upred)
 
         return (error, Upred, Ypred)
@@ -488,11 +490,12 @@ class GBDS_u(RandomVariable, Distribution):
             if self.latent_u:
                 ctrl_error, Upred, _ = self.get_preds(
                     self.y[:, :-1], training=True, post_g=self.g,
-                    Uprev=value[:, :-1])
+                    Uprev=tf.pad(value[:, :-1], [[0, 0], [1, 0], [0, 0]]))
             else:
                 ctrl_error, Upred, _ = self.get_preds(
                     self.y[:, :-1], training=True, post_g=self.g,
-                    Uprev=self.ctrl_obs[:, :-1])
+                    Uprev=tf.pad(self.ctrl_obs[:, :-1],
+                                 [[0, 0], [1, 0], [0, 0]]))
 
         LogDensity = 0.0
         with tf.name_scope('control_signal_loss'):
@@ -503,9 +506,9 @@ class GBDS_u(RandomVariable, Distribution):
                 LogDensity += tf.reduce_sum(
                     self.clip_log_prob(self.ctrl_obs, value), axis=[1, 2],
                     name='clip_noise')
-                resU = value[:, 1:] - Upred
+                resU = value - Upred
             else:
-                resU = self.ctrl_obs[:, 1:] - Upred
+                resU = self.ctrl_obs - Upred
 
             LogDensity -= tf.reduce_sum(resU ** 2 / (2 * self.eps ** 2),
                                         axis=[1, 2])
