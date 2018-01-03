@@ -525,7 +525,7 @@ def init_PID_params(player, Dim):
     """Return a dictionary of PID controller parameters
     """
     PID_params = {}
-    PID_params['unc_Kp'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
+    PID_params['unc_Kp'] = tf.Variable(initial_value=-2.970628 * np.ones((Dim, 1)),
                                        name='unc_Kp_%s' % player,
                                        dtype=tf.float32)
     # PID_params['unc_Ki'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
