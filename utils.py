@@ -316,8 +316,8 @@ def get_vel(data, max_vel=None):
     velocities = data[:, 1:] - data[:, :-1]
     if max_vel is not None:
         velocities /= max_vel
-    velocities = tf.concat([tf.zeros((B, 1, dims), tf.float32), velocities],
-                           1, name='velocities')
+    velocities = tf.pad(velocities, [[0, 0], [1, 0], [0, 0]],
+                        name='velocities')
     states = tf.concat([positions, velocities], -1, name='position_vel')
     return states
 
