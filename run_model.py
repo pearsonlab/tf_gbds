@@ -310,7 +310,8 @@ def run_model(hps):
             elif ctrl_obs_present:
                 p_G = G.GBDS_g_all(
                     gen_params_goalie, gen_params_ball, obs_dim, Y_ph, None,
-                    ctrl_obs_ph, name='p_G', value=tf.zeros_like(Y_ph))
+                    ctrl_obs_ph, name='p_G',
+                    value=tf.zeros_like(Y_ph))
             else:
                 p_G = G.GBDS_g_all(
                     gen_params_goalie, gen_params_ball, obs_dim, Y_ph, None,
@@ -345,8 +346,7 @@ def run_model(hps):
                         name='q_U')
                 else:
                     q_U = R.SmoothingPastLDSTimeSeries(
-                        rec_params_u, Y_ph, None, obs_dim, obs_dim,
-                        name='q_U')
+                        rec_params_u, Y_ph, None, obs_dim, obs_dim, name='q_U')
 
         # Generate real state based on control signal and velocility
         with tf.name_scope('observations'):
@@ -366,8 +366,8 @@ def run_model(hps):
                 else:
                     Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1),
                                    (Y_ph[:, :-1] + (tf.reshape(
-                                        vel, [1, obs_dim]) *
-                                    U[:, 1:]))], 1, name='Y')
+                                        vel, [1, obs_dim]) * U[:, 1:]))], 1,
+                                  name='Y')
 
     print('--------------Generative Params----------------')
     if hps.eps_penalty is not None:
@@ -483,8 +483,8 @@ def run_model(hps):
                              n_samples=hps.n_samples,
                              # scale={Y: train_ntrials / hps.B},
                              var_list=var_list,
-                             optimizer=optimizer,
-                             logdir=hps.model_dir + '/log')
+                             optimizer=optimizer)
+                             # logdir=hps.model_dir + '/log')
 
         sess = ed.get_session()
         tf.global_variables_initializer().run()
@@ -535,8 +535,8 @@ def run_model(hps):
                 for batch in batches:
                     feed_dict = {Y_ph: batch}
                     info_dict = inference.update(feed_dict=feed_dict)
-                    add_summary(PID_summary, inference, sess, feed_dict,
-                                info_dict['t'])
+                    # add_summary(PID_summary, inference, sess, feed_dict,
+                    #             info_dict['t'])
                     inference.print_progress(info_dict)
 
             if (i + 1) % hps.frequency_saving_ckpt == 0:
