@@ -604,7 +604,7 @@ class GBDS_g(RandomVariable, Distribution):
             self.g0_unc_w = GenerativeParams['g0_params']['unc_w']
             self.g0_w = tf.nn.softmax(self.g0_unc_w,
                                       name='softmax_g0_w')
-            self.g0_params = [self.g0_mu, self.g0_unc_lambda, self.g0_unc_w]
+            self.g0_params = [self.g0_mu] + [self.g0_unc_lambda] + [self.g0_unc_w]
 
         with tf.name_scope('GMM_NN'):
             self.GMM_k = GenerativeParams['GMM_k']  # number of GMM components
@@ -644,7 +644,7 @@ class GBDS_g(RandomVariable, Distribution):
             if not self.latent_u:
                 self.u = GBDS_u(
                     GenerativeParams, self, self.y, self.ctrl_obs, self.yDim,
-                    name='ctrl', value=value)
+                    name='ctrl', value=tf.zeros_like(value))
 
         super(GBDS_g, self).__init__(
             name=name, value=value, dtype=dtype,
@@ -707,7 +707,7 @@ class GBDS_g(RandomVariable, Distribution):
 
     def sample_g0(self):
         k_0 = tf.squeeze(tf.multinomial(
-            tf.tile(tf.expand_dims(tf.log(self.g0_w), 0),
+            tf.tile(tf.reshape(tf.log(self.g0_w), [1, -1]),
                     [self.B, 1]), 1), name='k_0')
         g_0 = (tf.gather(self.g0_mu, k_0, axis=0, name='mean') +
                tf.random_normal([self.B, self.yDim], name='std_normal') /
@@ -744,9 +744,7 @@ class GBDS_g(RandomVariable, Distribution):
     def _log_prob(self, value):
         with tf.name_scope('next_time_point_pred'):
             _, all_lambda, all_w, g_pred = self.get_preds(
-                self.y[:, :-1], training=True,
-                post_g=tf.concat([tf.expand_dims(self.sample_g0(), 1),
-                                  value[:, 1:-1]], 1))
+                self.y[:, :-1], training=True, post_g=value[:, :-1])
 
         LogDensity = 0.0
         with tf.name_scope('goal_state_loss'):
@@ -759,9 +757,21 @@ class GBDS_g(RandomVariable, Distribution):
                         gmm_res_g ** 2)
             gmm_term += (0.5 * tf.log(1 + all_lambda) -
                          0.5 * tf.log(2 * np.pi) -
-                         tf.reshape(tf.log(self.sigma), [1, 1, 1, -1]))
+                         tf.reshape(tf.log(self.sigma), [1, -1]))
             LogDensity += tf.reduce_sum(logsumexp(
                 tf.reduce_sum(gmm_term, axis=-1), axis=-1), axis=[-2, -1])
+
+        with tf.name_scope('g0_loss'):
+            res_g0 = tf.expand_dims(value[:, 0], 1) - self.g0_mu
+            g0_term = (tf.expand_dims(tf.log(self.g0_w + 1e-8), -1) -
+                       (self.g0_lambda /
+                        (2 * tf.reshape(self.sigma, [1, -1]) ** 2)) *
+                       res_g0 ** 2)
+            g0_term += (0.5 * tf.log(self.g0_lambda) -
+                        0.5 * tf.log(2 * np.pi) -
+                        tf.reshape(tf.log(self.sigma), [1, -1]))
+            LogDensity += tf.reduce_sum(logsumexp(
+                tf.reduce_sum(g0_term, axis=-1), axis=1), axis=1)
 
         with tf.name_scope('goal_penalty'):
             with tf.name_scope('boundary'):
