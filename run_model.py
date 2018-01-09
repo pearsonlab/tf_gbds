@@ -362,13 +362,13 @@ def run_model(hps):
                                    (Y_ph[:, :-1] + (tf.reshape(
                                         vel, [1, obs_dim]) *
                                     tf.clip_by_value(
-                                        U[:, 1:], -hps.clip_range,
+                                        U[:, :-1], -hps.clip_range,
                                         hps.clip_range)))], 1, name='Y')
                 else:
                     Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1),
                                    (Y_ph[:, :-1] + (tf.reshape(
                                         vel, [1, obs_dim]) *
-                                    U[:, 1:]))], 1, name='Y')
+                                    U[:, :-1]))], 1, name='Y')
 
     print('--------------Generative Params----------------')
     if hps.eps_penalty is not None:
