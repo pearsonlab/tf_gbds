@@ -288,6 +288,7 @@ class GBDS_u(RandomVariable, Distribution):
         self.y = y
         self.yDim = yDim
         self.B = tf.shape(y)[0]  # batch size
+        self.Tt = tf.shape(y)[1]
         self.latent_u = GenerativeParams['latent_u']
         self.clip = GenerativeParams['clip']
 
@@ -485,7 +486,7 @@ class GBDS_u(RandomVariable, Distribution):
                 ctrl_error, Upred, _ = self.get_preds(
                     Y=tf.gather(self.y[:, :-1], self.yCols, axis=-1),
                     training=True, post_g=self.g[:, 1:],
-                    Uprev=tf.pad(value[:, :-1], [[0, 0], [1, 0], [0, 0]]))
+                    Uprev=tf.pad(value[:, :-2], [[0, 0], [1, 0], [0, 0]]))
             else:
                 ctrl_error, Upred, _ = self.get_preds(
                     Y=tf.gather(self.y[:, :-1], self.yCols, axis=-1),
@@ -500,9 +501,9 @@ class GBDS_u(RandomVariable, Distribution):
                 # LogDensity += tf.scan(self.clip_loss, (self.ctrl_obs, value),
                 #                       initializer=0.0, name='clip_noise')
                 LogDensity += tf.reduce_sum(
-                    self.clip_log_prob(self.ctrl_obs, value), axis=[1, 2],
+                    self.clip_log_prob(self.ctrl_obs, value[:, :-1]), axis=[1, 2],
                     name='clip_noise')
-                resU = value[:, 1:] - Upred
+                resU = value[:, :-1] - Upred
             else:
                 resU = self.ctrl_obs - Upred
 
@@ -525,7 +526,7 @@ class GBDS_u(RandomVariable, Distribution):
                 if self.pen_eps is not None:
                     LogDensity -= self.pen_eps * tf.reduce_sum(self.unc_eps)
 
-        return LogDensity
+        return LogDensity / tf.cast(self.Tt, tf.float32)
 
     def getParams(self):
         """Return the learnable parameters of the model
@@ -582,6 +583,7 @@ class GBDS_g(RandomVariable, Distribution):
 
         self.y = y
         self.B = tf.shape(y)[0]  # batch size
+        self.Tt = tf.shape(y)[1]
         self.extra_conds = extra_conds
         self.ctrl_obs = ctrl_obs
 
@@ -793,7 +795,7 @@ class GBDS_g(RandomVariable, Distribution):
             if not self.latent_u:
                 LogDensity += self.u._log_prob(value=None)
 
-        return LogDensity
+        return LogDensity / tf.cast(self.Tt, tf.float32)
 
     def getParams(self):
         """Return the learnable parameters of the model

@@ -575,7 +575,7 @@ def batch_generator(arrays, batch_size, randomize=True):
     (#observations, #dimensions)
     """
     n_trials = len(arrays)
-    n_batch = math.ceil(n_trials / batch_size)
+    n_batch = math.floor(n_trials / batch_size)
     if randomize:
         np.random.shuffle(arrays)
 
@@ -585,19 +585,19 @@ def batch_generator(arrays, batch_size, randomize=True):
         for _ in range(n_batch):
             stop = start + batch_size
             diff = stop - n_trials
+
             if diff <= 0:
                 batch = np.array(arrays[start:stop])
                 start = stop
-            else:
-                batch = np.array(arrays[start:])
             batches.append(batch)
+
         yield batches
 
 
 def batch_generator_pad(arrays, batch_size, extra_conds=None, ctrl_obs=None,
                         randomize=True):
     n_trials = len(arrays)
-    n_batch = math.ceil(n_trials / batch_size)
+    n_batch = math.floor(n_trials / batch_size)
     if randomize:
         p = np.random.permutation(n_trials)
         arrays = arrays[p]
@@ -614,6 +614,7 @@ def batch_generator_pad(arrays, batch_size, extra_conds=None, ctrl_obs=None,
         for _ in range(n_batch):
             stop = start + batch_size
             diff = stop - n_trials
+
             if diff <= 0:
                 batch = arrays[start:stop]
                 if extra_conds is not None:
@@ -621,12 +622,6 @@ def batch_generator_pad(arrays, batch_size, extra_conds=None, ctrl_obs=None,
                 if ctrl_obs is not None:
                     ctrl = np.array(ctrl_obs[start:stop])
                 start = stop
-            else:
-                batch = arrays[start:]
-                if extra_conds is not None:
-                    cond = np.array(extra_conds[start:])
-                if ctrl_obs is not None:
-                    ctrl = np.array(ctrl_obs[start:])
             batch = pad_batch(batch)
             batches.append(batch)
             if extra_conds is not None:
@@ -634,6 +629,7 @@ def batch_generator_pad(arrays, batch_size, extra_conds=None, ctrl_obs=None,
             if ctrl_obs is not None:
                 ctrl = pad_batch(ctrl, mode='zero')
                 ctrls.append(ctrl)
+
         yield batches, conds, ctrls
 
 

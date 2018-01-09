@@ -245,7 +245,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             entropy += (self.p *
                         (tf.reduce_sum(tf.log(tf.diag_part(self.Qinv))) +
                             tf.reduce_sum(tf.log(tf.diag_part(self.Q0inv)))))
-        return entropy
+        return entropy / tf.cast(self.Tt, tf.float32)
 
     def getDynParams(self):
         """Return the dynamical parameters of the model

@@ -361,13 +361,13 @@ def run_model(hps):
                                    (Y_ph[:, :-1] + (tf.reshape(
                                         vel, [1, obs_dim]) *
                                     tf.clip_by_value(
-                                        U[:, 1:], -hps.clip_range,
+                                        U[:, :-1], -hps.clip_range,
                                         hps.clip_range)))], 1, name='Y')
                 else:
                     Y = tf.concat([tf.expand_dims(Y_ph[:, 0], 1),
                                    (Y_ph[:, :-1] + (tf.reshape(
-                                        vel, [1, obs_dim]) * U[:, 1:]))], 1,
-                                  name='Y')
+                                        vel, [1, obs_dim]) *
+                                    U[:, :-1]))], 1, name='Y')
 
     print('--------------Generative Params----------------')
     if hps.eps_penalty is not None:
@@ -488,7 +488,7 @@ def run_model(hps):
 
         inference.initialize(n_iter=hps.n_epochs * n_batches,
                              n_samples=hps.n_samples,
-                             # scale={Y: train_ntrials / hps.B},
+                             scale={Y: 1 / hps.B},
                              var_list=var_list,
                              optimizer=optimizer,
                              logdir=hps.model_dir + '/log')
@@ -570,11 +570,11 @@ def run_model(hps):
                         inference.loss, feed_dict={Y_ph: val_data})
 
                 print('\n', 'Validation loss after epoch %i: %.3f' %
-                      (i + 1, val_loss / val_ntrials))
+                      (i + 1, val_loss * hps.B / val_ntrials))
 
-                if val_loss / val_ntrials < lowest_ev_cost:
+                if val_loss * hps.B / val_ntrials < lowest_ev_cost:
                     print('Saving model with lowest validation loss...')
-                    lowest_ev_cost = val_loss / val_ntrials
+                    lowest_ev_cost = val_loss * hps.B / val_ntrials
                     lve_saver.save(sess, hps.model_dir + '/saved_model_lve',
                                    global_step=(i + 1),
                                    latest_filename='checkpoint_lve',
