@@ -326,11 +326,10 @@ class GBDS_u(RandomVariable, Distribution):
             if ctrl_obs is not None:
                 self.ctrl_obs = ctrl_obs
             else:
-                self.ctrl_obs = tf.pad(
-                    ((tf.gather(self.y, self.yCols, axis=-1)[:, 1:] -
-                      tf.gather(self.y, self.yCols, axis=-1)[:, :-1]) /
-                     tf.reshape(self.vel, [1, self.yDim])),
-                    [[0, 0], [1, 0], [0, 0]], name='ctrl_obs')
+                self.ctrl_obs = self.ctrl_obs = tf.divide(
+                    (tf.gather(self.y, self.yCols, axis=-1)[:, 1:] -
+                     tf.gather(self.y, self.yCols, axis=-1)[:, :-1]),
+                    tf.reshape(self.vel, [1, self.yDim]), name='ctrl_obs')
         with tf.name_scope('control_signal_censoring'):
             # clipping signal
             if self.clip:
@@ -374,9 +373,7 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope('control_error'):
             # PID Controller for next control point
             if post_g is not None:  # calculate error from posterior goals
-                error = tf.subtract(post_g[:, 1:],
-                                    tf.gather(Y, self.yCols, axis=-1),
-                                    name='ctrl_error')
+                error = tf.subtract(post_g, Y, name='ctrl_error')
             # else:  # calculate error from generated goals
             #     error = next_g - tf.gather(Y, self.yCols, axis=1)
         with tf.name_scope('control_signal_change'):
@@ -385,9 +382,8 @@ class GBDS_u(RandomVariable, Distribution):
             for i in range(self.yDim):
                 signal = error[:, :, i]
                 # zero pad beginning
-                signal = tf.expand_dims(tf.concat(
-                    [tf.zeros([self.B, 2]), signal], 1), -1,
-                    name='zero_padding')
+                signal = tf.expand_dims(
+                    tf.pad(signal, [[0, 0], [2, 0]], name='zero_padding'), -1)
                 filt = tf.reshape(self.L[i], [-1, 1, 1])
                 res = tf.nn.convolution(signal, filt, padding='VALID',
                                         name='signal_conv')
@@ -404,14 +400,12 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope('predicted_position'):
             # get predicted Y
             if self.clip:
-                Ypred = (tf.gather(Y, self.yCols, axis=-1) +
-                         tf.reshape(self.vel, [1, self.yDim]) *
-                         tf.clip_by_value(Upred, -self.clip_range,
-                                          self.clip_range,
-                                          name='clipped_signal'))
+                Ypred = (Y + (tf.reshape(self.vel, [1, self.yDim]) *
+                              tf.clip_by_value(
+                                  Upred, -self.clip_range, self.clip_range,
+                                  name='clipped_signal')))
             else:
-                Ypred = (tf.gather(Y, self.yCols, axis=-1) +
-                         tf.reshape(self.vel, [1, self.yDim]) * Upred)
+                Ypred = (Y + tf.reshape(self.vel, [1, self.yDim]) * Upred)
 
         return (error, Upred, Ypred)
 
@@ -484,12 +478,15 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope('next_time_point_pred'):
             if self.latent_u:
                 ctrl_error, Upred, _ = self.get_preds(
-                    self.y[:, :-1], training=True, post_g=self.g,
-                    Uprev=value[:, :-1])
+                    Y=tf.gather(self.y[:, :-1], self.yCols, axis=-1),
+                    training=True, post_g=self.g[:, 1:],
+                    Uprev=tf.pad(value[:, :-1], [[0, 0], [1, 0], [0, 0]]))
             else:
                 ctrl_error, Upred, _ = self.get_preds(
-                    self.y[:, :-1], training=True, post_g=self.g,
-                    Uprev=self.ctrl_obs[:, :-1])
+                    Y=tf.gather(self.y[:, :-1], self.yCols, axis=-1),
+                    training=True, post_g=self.g[:, 1:],
+                    Uprev=tf.pad(self.ctrl_obs[:, :-1],
+                                 [[0, 0], [1, 0], [0, 0]]))
 
         LogDensity = 0.0
         with tf.name_scope('control_signal_loss'):
@@ -500,9 +497,9 @@ class GBDS_u(RandomVariable, Distribution):
                 LogDensity += tf.reduce_sum(
                     self.clip_log_prob(self.ctrl_obs, value), axis=[1, 2],
                     name='clip_noise')
-                resU = value[:, 1:] - Upred
+                resU = value - Upred
             else:
-                resU = self.ctrl_obs[:, 1:] - Upred
+                resU = self.ctrl_obs - Upred
 
             LogDensity -= tf.reduce_sum(resU ** 2 / (2 * self.eps ** 2),
                                         axis=[1, 2])
@@ -605,7 +602,7 @@ class GBDS_g(RandomVariable, Distribution):
             self.g0_unc_w = GenerativeParams['g0_params']['unc_w']
             self.g0_w = tf.nn.softmax(self.g0_unc_w,
                                       name='softmax_g0_w')
-            self.g0_params = [self.g0_mu, self.g0_unc_lambda, self.g0_unc_w]
+            self.g0_params = [self.g0_mu] + [self.g0_unc_lambda] + [self.g0_unc_w]
 
         with tf.name_scope('GMM_NN'):
             self.GMM_k = GenerativeParams['GMM_k']  # number of GMM components
@@ -645,7 +642,7 @@ class GBDS_g(RandomVariable, Distribution):
             if not self.latent_u:
                 self.u = GBDS_u(
                     GenerativeParams, self, self.y, self.ctrl_obs, self.yDim,
-                    name='ctrl', value=value)
+                    name='ctrl', value=tf.zeros_like(value))
 
         super(GBDS_g, self).__init__(
             name=name, value=value, dtype=dtype,
@@ -680,49 +677,35 @@ class GBDS_g(RandomVariable, Distribution):
 
         with tf.name_scope('get_GMM_params'):
             with tf.name_scope('mu'):
-                mu_0 = tf.tile(
-                    tf.reshape(self.g0_mu, [1, 1, self.GMM_k, self.yDim]),
-                    [self.B, 1, 1, 1], name='repeat_mu0')
                 all_mu = tf.reshape(
                     self.GMM_net(states)[:, :, :(self.yDim * self.GMM_k)],
-                    [self.B, -1, self.GMM_k, self.yDim], name='reshape_mu')
-                all_mu = tf.concat([mu_0, all_mu], 1, name='all_mu')
+                    [self.B, -1, self.GMM_k, self.yDim], name='all_mu')
 
             with tf.name_scope('lambda'):
-                lambda_0 = tf.tile(
-                    tf.reshape(self.g0_lambda, [1, 1, self.GMM_k, self.yDim]),
-                    [self.B, 1, 1, 1], name='repeat_lambda0')
                 all_lambda = tf.nn.softplus(tf.reshape(
                     self.GMM_net(states)[:, :, (self.yDim *
                                                 self.GMM_k):(2 * self.yDim *
                                                              self.GMM_k)],
                     [self.B, -1, self.GMM_k, self.yDim],
-                    name='reshape_lambda'), name='softplus_lambda')
-                all_lambda = tf.concat([lambda_0, all_lambda], 1,
-                                       name='all_lambda')
+                    name='reshape_lambda'), name='all_lambda')
 
             with tf.name_scope('w'):
-                w_0 = tf.tile(tf.reshape(self.g0_w, [1, 1, self.GMM_k]),
-                              [self.B, 1, 1], name='repeat_w0')
                 all_w = tf.nn.softmax(tf.reshape(
                     self.GMM_net(states)[:, :, (2 * self.yDim * self.GMM_k):],
                     [self.B, -1, self.GMM_k],
-                    name='reshape_w'), dim=-1, name='softmax_w')
-                all_w = tf.concat([w_0, all_w], 1, name='all_w')
+                    name='reshape_w'), dim=-1, name='all_w')
 
         with tf.name_scope('next_g'):
             # Draw next goals based on force
             if post_g is not None:  # Calculate next goals from posterior
-                next_g = ((tf.expand_dims(
-                    tf.concat([tf.expand_dims(self.sample_g0(), 1),
-                               post_g[:, :-1]], 1), 2) + all_mu * all_lambda) /
+                next_g = ((tf.expand_dims(post_g, 2) + all_mu * all_lambda) /
                           (1 + all_lambda))
 
         return (all_mu, all_lambda, all_w, next_g)
 
     def sample_g0(self):
         k_0 = tf.squeeze(tf.multinomial(
-            tf.tile(tf.expand_dims(tf.log(self.g0_w), 0),
+            tf.tile(tf.reshape(tf.log(self.g0_w), [1, -1]),
                     [self.B, 1]), 1), name='k_0')
         g_0 = (tf.gather(self.g0_mu, k_0, axis=0, name='mean') +
                tf.random_normal([self.B, self.yDim], name='std_normal') /
@@ -758,13 +741,13 @@ class GBDS_g(RandomVariable, Distribution):
 
     def _log_prob(self, value):
         with tf.name_scope('next_time_point_pred'):
-            all_mu, all_lambda, all_w, g_pred = self.get_preds(
-                self.y[:, :-1], training=True, post_g=value)
+            _, all_lambda, all_w, g_pred = self.get_preds(
+                self.y[:, :-1], training=True, post_g=value[:, :-1])
 
         LogDensity = 0.0
         with tf.name_scope('goal_state_loss'):
             w_brdcst = tf.expand_dims(all_w, -1, name='reshape_w')
-            gmm_res_g = (tf.expand_dims(value, 2,
+            gmm_res_g = (tf.expand_dims(value[:, 1:], 2,
                                         name='reshape_posterior_samples') -
                          g_pred)
             gmm_term = (tf.log(w_brdcst + 1e-8) - ((1 + all_lambda) /
@@ -772,9 +755,21 @@ class GBDS_g(RandomVariable, Distribution):
                         gmm_res_g ** 2)
             gmm_term += (0.5 * tf.log(1 + all_lambda) -
                          0.5 * tf.log(2 * np.pi) -
-                         tf.log(tf.reshape(self.sigma, [1, 1, 1, -1])))
+                         tf.reshape(tf.log(self.sigma), [1, -1]))
             LogDensity += tf.reduce_sum(logsumexp(
                 tf.reduce_sum(gmm_term, axis=-1), axis=-1), axis=[-2, -1])
+
+        with tf.name_scope('g0_loss'):
+            res_g0 = tf.expand_dims(value[:, 0], 1) - self.g0_mu
+            g0_term = (tf.expand_dims(tf.log(self.g0_w + 1e-8), -1) -
+                       (self.g0_lambda /
+                        (2 * tf.reshape(self.sigma, [1, -1]) ** 2)) *
+                       res_g0 ** 2)
+            g0_term += (0.5 * tf.log(self.g0_lambda) -
+                        0.5 * tf.log(2 * np.pi) -
+                        tf.reshape(tf.log(self.sigma), [1, -1]))
+            LogDensity += tf.reduce_sum(logsumexp(
+                tf.reduce_sum(g0_term, axis=-1), axis=1), axis=1)
 
         with tf.name_scope('goal_penalty'):
             with tf.name_scope('boundary'):

@@ -450,10 +450,17 @@ def run_model(hps):
                 GMM_mu, GMM_lambda, GMM_w, _ = p_G.goalie.get_preds(
                     Y_ph, training=True,
                     post_g=tf.gather(q_G.sample(), p1_cols, axis=-1))
+                g0_mu = tf.identity(p_G.goalie.g0_mu, name='g0_mu')
+                g0_lambda = tf.identity(p_G.goalie.g0_lambda,
+                                        name='g0_lambda')
+                g0_w = tf.identity(p_G.goalie.g0_w, name='g0_w')
             with tf.name_scope('GMM_ball'):
                 GMM_mu, GMM_lambda, GMM_w, _ = p_G.ball.get_preds(
                     Y_ph, training=True,
                     post_g=tf.gather(q_G.sample(), p2_cols, axis=-1))
+                g0_mu = tf.identity(p_G.ball.g0_mu, name='g0_mu')
+                g0_lambda = tf.identity(p_G.ball.g0_lambda, name='g0_lambda')
+                g0_w = tf.identity(p_G.ball.g0_w, name='g0_w')
 
     # Calculate variational inference using Edward KLqp function
     if hps.model_type == 'VI_KLqp':
