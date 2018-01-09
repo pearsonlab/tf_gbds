@@ -347,8 +347,8 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
     PKbias_layers = []
     NN = models.Sequential(name=name)
     with tf.name_scope('%s_input' % name):
-        NN.add(keras_layers.InputLayer(input_shape=(None, input_dim),
-                                       name='%s_Input' % name))
+        NN.add(keras_layers.Input(shape=(input_dim,),
+                                  name='%s_Input' % name))
 
     with tf.name_scope('%s_batchnorm' % name):
         if batchnorm:
@@ -409,25 +409,25 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
     return NN, PKbias_layers
 
 
-def get_rec_params_GBDS(obs_dim, extra_dim, lag, num_layers, hidden_dim,
-                        penalty_Q, PKLparams, name):
+def get_rec_params(xDim, yDim, extra_dim, lag, num_layers, hidden_dim,
+                   penalty_Q, PKLparams, name):
     """Return a dictionary of timeseries-specific parameters for recognition
        model
     """
 
     with tf.name_scope('rec_mu_%s' % name):
         mu_net, PKbias_layers_mu = get_network('rec_mu_%s' % name,
-                                               (obs_dim * (lag + 1) +
+                                               (yDim * (lag + 1) +
                                                 extra_dim),
-                                               obs_dim, hidden_dim,
+                                               xDim, hidden_dim,
                                                num_layers, PKLparams,
                                                batchnorm=False)
 
     with tf.name_scope('rec_lambda_%s' % name):
         lambda_net, PKbias_layers_lambda = get_network('rec_lambda_%s' % name,
-                                                       (obs_dim * (lag + 1) +
+                                                       (yDim * (lag + 1) +
                                                         extra_dim),
-                                                       obs_dim**2,
+                                                       xDim**2,
                                                        hidden_dim,
                                                        num_layers, PKLparams,
                                                        batchnorm=False)
@@ -435,21 +435,21 @@ def get_rec_params_GBDS(obs_dim, extra_dim, lag, num_layers, hidden_dim,
     with tf.name_scope('rec_lambdaX_%s' % name):
         lambdaX_net, PKbias_layers_lambdaX = get_network('rec_lambdaX_%s'
                                                          % name,
-                                                         (obs_dim * (lag + 1) +
+                                                         (yDim * (lag + 1) +
                                                           extra_dim),
-                                                         obs_dim**2,
+                                                         xDim**2,
                                                          hidden_dim,
                                                          num_layers, PKLparams,
                                                          batchnorm=False)
 
     with tf.name_scope('Dyn_params_%s' % name):
-        Dyn_params = dict(A=tf.Variable(.9 * np.eye(obs_dim),
+        Dyn_params = dict(A=tf.Variable(.9 * np.eye(xDim),
                                         name='A_%s' % name,
                                         dtype=tf.float32),
-                          QinvChol=tf.Variable(np.eye(obs_dim),
+                          QinvChol=tf.Variable(np.eye(xDim),
                                                name='QinvChol_%s' % name,
                                                dtype=tf.float32),
-                          Q0invChol=tf.Variable(np.eye(obs_dim),
+                          Q0invChol=tf.Variable(np.eye(xDim),
                                                 name='Q0invChol_%s' % name,
                                                 dtype=tf.float32))
     rec_params = dict(Dyn_params=Dyn_params,
