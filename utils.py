@@ -390,18 +390,18 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
                 NN.add(keras_layers.Dense(
                     output_dim, name='%s_Dense_%s' % (name, i+1),
                     kernel_initializer=tf.random_normal_initializer(
-                        stddev=0.1),
-                    kernel_constraint=constraints.MaxNorm(5),
-                    bias_constraint=constraints.MaxNorm(5)))
+                        stddev=0.1)))
+                    # kernel_constraint=constraints.MaxNorm(5),
+                    # bias_constraint=constraints.MaxNorm(5)))
                 NN.add(keras_layers.Activation(
                     activation='linear',
                     name='%s_Activation_%s' % (name, i+1)))
             else:
                 NN.add(keras_layers.Dense(
                     hidden_dim, name='%s_Dense_%s' % (name, i+1),
-                    kernel_initializer=tf.orthogonal_initializer(),
-                    kernel_constraint=constraints.MaxNorm(5),
-                    bias_constraint=constraints.MaxNorm(5)))
+                    kernel_initializer=tf.orthogonal_initializer()))
+                    # kernel_constraint=constraints.MaxNorm(5),
+                    # bias_constraint=constraints.MaxNorm(5)))
                 NN.add(keras_layers.Activation(
                     activation='relu',
                     name='%s_Activation_%s' % (name, i+1)))
