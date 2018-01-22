@@ -6,10 +6,10 @@ from tensorflow.contrib.distributions import (Distribution,
 from tensorflow.python.ops.distributions.special_math import log_ndtr
 
 
-def logsumexp(x, axis=None):
-    x_max = tf.reduce_max(x, axis=axis, keep_dims=True)
-    return (tf.log(tf.reduce_sum(tf.exp(x - x_max),
-                                 axis=axis, keep_dims=True)) + x_max)
+# def logsumexp(x, axis=None):
+#     x_max = tf.reduce_max(x, axis=axis, keep_dims=True)
+#     return (tf.log(tf.reduce_sum(tf.exp(x - x_max),
+#                                  axis=axis, keep_dims=True)) + x_max)
 
 
 class GBDS_g(RandomVariable, Distribution):
@@ -37,9 +37,11 @@ class GBDS_g(RandomVariable, Distribution):
             self.g0_unc_lambda = GenerativeParams['g0_params']['unc_lambda']
             self.g0_lambda = tf.nn.softplus(self.g0_unc_lambda,
                                             name='softplus_g0_lambda')
+            # self.g0_lambda = GenerativeParams['g0_params']['lmbda']
             self.g0_unc_w = GenerativeParams['g0_params']['unc_w']
             self.g0_w = tf.nn.softmax(self.g0_unc_w,
                                       name='softmax_g0_w')
+            # self.g0_w = GenerativeParams['g0_params']['w']
             self.g0_params = ([self.g0_mu] + [self.g0_unc_lambda] +
                               [self.g0_unc_w])
 
@@ -111,20 +113,19 @@ class GBDS_g(RandomVariable, Distribution):
             gmm_term = (tf.log(all_w + 1e-8) - tf.reduce_sum(
                 (1 + all_lambda) * (gmm_res_g ** 2) / (2 * self.sigma ** 2),
                 axis=-1))
-            gmm_term += (0.5 * tf.reduce_sum(tf.log(1 + all_lambda),
-                                             axis=-1) -
-                         tf.reduce_sum(tf.log(self.sigma), axis=-1) -
-                         0.5 * tf.log(2 * np.pi))
-            LogDensity += tf.reduce_sum(logsumexp(gmm_term, axis=-1),
-                                        axis=[-2, -1])
+            gmm_term += (0.5 * tf.reduce_sum(
+                  tf.log(1 + all_lambda), axis=-1) - tf.reduce_sum(
+                  tf.log(self.sigma) + 0.5 * tf.log(2 * np.pi), axis=-1))
+            LogDensity += tf.reduce_sum(tf.reduce_logsumexp(gmm_term, axis=-1),
+                                        axis=-1)
 
         with tf.name_scope('g0_loss'):
             res_g0 = tf.expand_dims(value[:, 0], 1) - self.g0_mu
             g0_term = (tf.log(self.g0_w + 1e-8) - tf.reduce_sum(
-                 (res_g0 ** 2) * self.g0_lambda / 2, axis=-1))
-            g0_term += (0.5 * tf.reduce_sum(tf.log(self.g0_lambda), axis=-1) -
-                        0.5 * tf.log(2 * np.pi))
-            LogDensity += tf.reduce_sum(logsumexp(g0_term, axis=-1), axis=-1)
+                (res_g0 ** 2) * self.g0_lambda / 2, axis=-1))
+            g0_term += (0.5 * tf.reduce_sum(
+                tf.log(self.g0_lambda) - tf.log(2 * np.pi), axis=-1))
+            LogDensity += tf.reduce_logsumexp(g0_term, axis=-1)
 
         with tf.name_scope('goal_penalty'):
             with tf.name_scope('boundary'):
@@ -168,8 +169,8 @@ class GBDS_g(RandomVariable, Distribution):
         with tf.name_scope('lambda'):
             all_lambda = tf.nn.softplus(tf.reshape(
                 self.GMM_net(state)[:, :, (self.yDim *
-                                            self.GMM_k):(2 * self.yDim *
-                                                         self.GMM_k)],
+                                           self.GMM_k):(2 * self.yDim *
+                                                        self.GMM_k)],
                 [self.GMM_k, self.yDim],
                 name='reshape_lambda'), name='all_lambda')
 
@@ -181,7 +182,7 @@ class GBDS_g(RandomVariable, Distribution):
 
         with tf.name_scope('select_component'):
             k = tf.squeeze(tf.multinomial(
-                tf.reshape(tf.log(self.g0_w), [1, -1]), 1), name='k')
+                tf.reshape(tf.log(all_w), [1, -1]), 1), name='k')
 
         with tf.name_scope('get_sample'):
             next_g = (tf.divide(curr_goal + all_mu[k] * all_lambda[k],
@@ -194,7 +195,7 @@ class GBDS_g(RandomVariable, Distribution):
 
     def update_ctrl(self, errors, curr_ctrl):
         return GBDS_u(self.GenerativeParams, tf.zeros_like(self.y), self.y,
-                      self.yDim, name='u',
+                      self.yDim, name='ctrl_model',
                       value=tf.zeros_like(self.y)).update_ctrl(
                       errors, curr_ctrl)
 
@@ -230,7 +231,7 @@ class GBDS_u(RandomVariable, Distribution):
 
         with tf.name_scope('observed_control_signal'):
             self.ctrl_obs = tf.divide(self.y[:, 1:] - self.y[:, :-1],
-                self.vel, name='ctrl_obs')
+                                      self.vel, name='ctrl_obs')
         # with tf.name_scope('control_signal_censoring'):
         #     self.clip_range = GenerativeParams['clip_range']
         #     self.clip_tol = GenerativeParams['clip_tol']
@@ -342,7 +343,7 @@ def generate_trial(goal_model, ctrl_model, y0, yDim, trial_len):
                            name='g_new')
         g = tf.concat([g, g_new], 0, name='concat_g')
 
-        error = tf.subtract(g[t + 1] , y[t], name='curr_error')
+        error = tf.subtract(g[t + 1], y[t], name='curr_error')
         errors = tf.stack([error, prev_error, prev2_error], 0, name='errors')
         if ctrl_model is None:
             u_new = tf.reshape(
