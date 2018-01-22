@@ -1,203 +1,9 @@
 import tensorflow as tf
 import numpy as np
-from edward.models import RandomVariable
+from edward.models import ExponentialWithSoftplusRate, RandomVariable
 from tensorflow.contrib.distributions import (Distribution,
                                               FULLY_REPARAMETERIZED)
 from tensorflow.python.ops.distributions.special_math import log_ndtr
-
-
-# def logsumexp(x, axis=None):
-#     x_max = tf.reduce_max(x, axis=axis, keep_dims=True)
-#     return (tf.log(tf.reduce_sum(tf.exp(x - x_max),
-#                                  axis=axis, keep_dims=True)) + x_max)
-
-
-class GBDS_g(RandomVariable, Distribution):
-
-    def __init__(self, GenerativeParams, y, yDim, name='GBDS_g',
-                 value=None, dtype=tf.float32,
-                 reparameterization_type=FULLY_REPARAMETERIZED,
-                 validate_args=True, allow_nan_stats=True):
-
-        self.y = y
-        self.yDim = yDim
-        self.B = tf.shape(y)[0]
-        self.Tt = tf.shape(y)[1]
-        self.GenerativeParams = GenerativeParams
-
-        with tf.name_scope('get_states'):
-            self.get_states = GenerativeParams['get_states']
-
-        with tf.name_scope('velocity'):
-            self.vel = tf.constant(GenerativeParams['vel'],
-                                   dtype=tf.float32, name='velocity')
-
-        with tf.name_scope('g0'):
-            self.g0_mu = GenerativeParams['g0_params']['mu']
-            self.g0_unc_lambda = GenerativeParams['g0_params']['unc_lambda']
-            self.g0_lambda = tf.nn.softplus(self.g0_unc_lambda,
-                                            name='softplus_g0_lambda')
-            # self.g0_lambda = GenerativeParams['g0_params']['lmbda']
-            self.g0_unc_w = GenerativeParams['g0_params']['unc_w']
-            self.g0_w = tf.nn.softmax(self.g0_unc_w,
-                                      name='softmax_g0_w')
-            # self.g0_w = GenerativeParams['g0_params']['w']
-            self.g0_params = ([self.g0_mu] + [self.g0_unc_lambda] +
-                              [self.g0_unc_w])
-
-        with tf.name_scope('GMM_NN'):
-            self.GMM_k = GenerativeParams['GMM_k']
-            self.GMM_net = GenerativeParams['GMM_net']
-
-        with tf.name_scope('goal_state_noise'):
-            self.sigma = GenerativeParams['sigma']
-
-        with tf.name_scope('goal_boundary_penalty'):
-            with tf.name_scope('boundary'):
-                self.bounds_g = 1.0
-            with tf.name_scope('penalty'):
-                if GenerativeParams['pen_g'] is not None:
-                    self.pen_g = GenerativeParams['pen_g']
-                else:
-                    self.pen_g = None
-
-        super(GBDS_g, self).__init__(
-            name=name, value=value, dtype=dtype,
-            reparameterization_type=reparameterization_type,
-            validate_args=validate_args, allow_nan_stats=allow_nan_stats)
-
-        self._kwargs['y'] = y
-        self._kwargs['yDim'] = yDim
-        self._kwargs['GenerativeParams'] = GenerativeParams
-
-    def get_preds(self, Y, post_g):
-        with tf.name_scope('states'):
-            states = self.get_states(Y, max_vel=self.vel)
-
-        with tf.name_scope('get_GMM_params'):
-            with tf.name_scope('mu'):
-                all_mu = tf.reshape(
-                    self.GMM_net(states)[:, :, :(self.yDim * self.GMM_k)],
-                    [self.B, -1, self.GMM_k, self.yDim], name='all_mu')
-
-            with tf.name_scope('lambda'):
-                all_lambda = tf.nn.softplus(tf.reshape(
-                    self.GMM_net(states)[:, :, (self.yDim *
-                                                self.GMM_k):(2 * self.yDim *
-                                                             self.GMM_k)],
-                    [self.B, -1, self.GMM_k, self.yDim],
-                    name='reshape_lambda'), name='all_lambda')
-
-            with tf.name_scope('w'):
-                all_w = tf.nn.softmax(tf.reshape(
-                    self.GMM_net(states)[:, :, (2 * self.yDim * self.GMM_k):],
-                    [self.B, -1, self.GMM_k],
-                    name='reshape_w'), dim=-1, name='all_w')
-
-        with tf.name_scope('next_g'):
-            next_g = ((tf.expand_dims(post_g, 2) + all_mu * all_lambda) /
-                      (1 + all_lambda))
-
-        return (all_mu, all_lambda, all_w, next_g)
-
-    def _log_prob(self, value):
-        with tf.name_scope('next_time_point_pred'):
-            _, all_lambda, all_w, g_pred = self.get_preds(
-                self.y[:, :-1], post_g=value[:, :-1])
-
-        LogDensity = 0.0
-        with tf.name_scope('goal_state_loss'):
-            gmm_res_g = (tf.expand_dims(value[:, 1:], 2,
-                                        name='reshape_posterior_samples') -
-                         g_pred)
-            gmm_term = (tf.log(all_w + 1e-8) - tf.reduce_sum(
-                (1 + all_lambda) * (gmm_res_g ** 2) / (2 * self.sigma ** 2),
-                axis=-1))
-            gmm_term += (0.5 * tf.reduce_sum(
-                  tf.log(1 + all_lambda), axis=-1) - tf.reduce_sum(
-                  tf.log(self.sigma) + 0.5 * tf.log(2 * np.pi), axis=-1))
-            LogDensity += tf.reduce_sum(tf.reduce_logsumexp(gmm_term, axis=-1),
-                                        axis=-1)
-
-        with tf.name_scope('g0_loss'):
-            res_g0 = tf.expand_dims(value[:, 0], 1) - self.g0_mu
-            g0_term = (tf.log(self.g0_w + 1e-8) - tf.reduce_sum(
-                (res_g0 ** 2) * self.g0_lambda / 2, axis=-1))
-            g0_term += (0.5 * tf.reduce_sum(
-                tf.log(self.g0_lambda) - tf.log(2 * np.pi), axis=-1))
-            LogDensity += tf.reduce_logsumexp(g0_term, axis=-1)
-
-        with tf.name_scope('goal_penalty'):
-            with tf.name_scope('boundary'):
-                if self.pen_g is not None:
-                    LogDensity -= (self.pen_g * tf.reduce_sum(
-                        tf.nn.relu(value - self.bounds_g), axis=[1, 2]))
-                    LogDensity -= (self.pen_g * tf.reduce_sum(
-                        tf.nn.relu(-value - self.bounds_g), axis=[1, 2]))
-
-        LogDensity /= tf.cast(self.Tt, tf.float32)
-
-        with tf.name_scope('control_model'):
-            LogDensity += GBDS_u(
-                self.GenerativeParams, value, self.y, self.yDim, name='u',
-                value=tf.zeros_like(value))._log_prob(value=None)
-
-        return LogDensity
-
-    def getParams(self):
-        return self.GMM_net.variables + self.g0_params
-
-    def sample_g0(self):
-        with tf.name_scope('select_component'):
-            k_0 = tf.squeeze(tf.multinomial(tf.reshape(
-                tf.log(self.g0_w), [1, -1]), 1), name='k_0')
-
-        with tf.name_scope('get_sample'):
-            g_0 = (self.g0_mu[k_0] +
-                   tf.random_normal([self.yDim], name='std_normal') /
-                   tf.sqrt(self.g0_lambda[k_0], name='inv_std_dev'))
-
-        return g_0
-
-    def sample_GMM(self, state, curr_goal):
-        state = tf.reshape(state, [1, 1, -1], name='reshape_state')
-        with tf.name_scope('mu'):
-            all_mu = tf.reshape(
-                self.GMM_net(state)[:, :, :(self.yDim * self.GMM_k)],
-                [self.GMM_k, self.yDim], name='all_mu')
-
-        with tf.name_scope('lambda'):
-            all_lambda = tf.nn.softplus(tf.reshape(
-                self.GMM_net(state)[:, :, (self.yDim *
-                                           self.GMM_k):(2 * self.yDim *
-                                                        self.GMM_k)],
-                [self.GMM_k, self.yDim],
-                name='reshape_lambda'), name='all_lambda')
-
-        with tf.name_scope('w'):
-            all_w = tf.nn.softmax(tf.reshape(
-                self.GMM_net(state)[:, :, (2 * self.yDim * self.GMM_k):],
-                [1, self.GMM_k],
-                name='reshape_w'), dim=-1, name='all_w')
-
-        with tf.name_scope('select_component'):
-            k = tf.squeeze(tf.multinomial(
-                tf.reshape(tf.log(all_w), [1, -1]), 1), name='k')
-
-        with tf.name_scope('get_sample'):
-            next_g = (tf.divide(curr_goal + all_mu[k] * all_lambda[k],
-                      1 + all_lambda[k], name='mean') +
-                      tf.random_normal([self.yDim], name='std_normal') *
-                      tf.divide(tf.squeeze(self.sigma),
-                                tf.sqrt(1 + all_lambda[k]), name='std_dev'))
-
-        return next_g
-
-    def update_ctrl(self, errors, curr_ctrl):
-        return GBDS_u(self.GenerativeParams, tf.zeros_like(self.y), self.y,
-                      self.yDim, name='ctrl_model',
-                      value=tf.zeros_like(self.y)).update_ctrl(
-                      errors, curr_ctrl)
 
 
 class GBDS_u(RandomVariable, Distribution):
@@ -218,10 +24,17 @@ class GBDS_u(RandomVariable, Distribution):
 
         with tf.name_scope('PID_controller_params'):
             with tf.name_scope('parameters'):
-                self.Kp = GenerativeParams['PID_params']['Kp']
-                self.Ki = GenerativeParams['PID_params']['Ki']
-                self.Kd = GenerativeParams['PID_params']['Kd']
-                self.PID_params = [self.Kp, self.Ki, self.Kd]
+                self.Kp_unc_rate = GenerativeParams['PID_params']['unc_Kp']
+                self.Ki_unc_rate = GenerativeParams['PID_params']['unc_Ki']
+                self.Kd_unc_rate = GenerativeParams['PID_params']['unc_Kd']
+                self.PID_params = [self.Kp_unc_rate, self.Ki_unc_rate,
+                                   self.Kd_unc_rate]
+                self.Kp = ExponentialWithSoftplusRate(
+                    self.Kp_unc_rate, name='%s_Kp' % name)
+                self.Ki = ExponentialWithSoftplusRate(
+                    self.Ki_unc_rate, name='%s_Ki' % name)
+                self.Kd = ExponentialWithSoftplusRate(
+                    self.Kd_unc_rate, name='%s_Kd' % name)
             with tf.name_scope('filter'):
                 t_coeff = self.Kp + self.Ki + self.Kd
                 t1_coeff = -self.Kp - 2 * self.Kd
@@ -295,7 +108,7 @@ class GBDS_u(RandomVariable, Distribution):
                                  normal_logcdf(-1., -u, eta),
                                  normal_logpdf(upsilon, u, eta)))
 
-    def _log_prob(self, value):
+    def _log_prob(self, value=None):
         with tf.name_scope('next_time_point_pred'):
             ctrl_error, Upred = self.get_preds(
                 Y=self.y[:, :-1], post_g=self.g[:, 1:],
@@ -324,41 +137,5 @@ class GBDS_u(RandomVariable, Distribution):
 
         return ctrl_diff + curr_ctrl
 
-
-def generate_trial(goal_model, ctrl_model, y0, yDim, trial_len):
-    g = tf.reshape(goal_model.sample_g0(), [1, yDim], name='g0')
-    u = tf.zeros([1, yDim], tf.float32, name='u0')
-    prev_error = tf.zeros([yDim], tf.float32, name='prev_error')
-    prev2_error = tf.zeros([yDim], tf.float32, name='prev2_error')
-    vel = goal_model.vel
-    y = tf.reshape(y0, [1, yDim], name='y0')
-
-    for t in range(trial_len - 1):
-        if t == 0:
-            v_t = tf.zeros_like(y0, tf.float32, name='curr_vel')
-        else:
-            v_t = tf.subtract(y[t], y[t - 1], name='curr_vel')
-        s_t = tf.stack([y[t], v_t], 0, name='curr_state')
-        g_new = tf.reshape(goal_model.sample_GMM(s_t, g[t]), [1, yDim],
-                           name='g_new')
-        g = tf.concat([g, g_new], 0, name='concat_g')
-
-        error = tf.subtract(g[t + 1], y[t], name='curr_error')
-        errors = tf.stack([error, prev_error, prev2_error], 0, name='errors')
-        if ctrl_model is None:
-            u_new = tf.reshape(
-                goal_model.update_ctrl(errors, u[t]), [1, yDim], name='u_new')
-        else:
-            u_new = tf.reshape(
-                ctrl_model.update_ctrl(errors, u[t]), [1, yDim], name='u_new')
-        u = tf.concat([u, u_new], 0, name='concat_u')
-
-        prev2_error = prev_error
-        prev_error = error
-
-        y_new = tf.reshape(tf.clip_by_value(y[t] + vel * tf.clip_by_value(
-            u[t + 1], -1., 1., name='clip_u'), -1., 1., name='bound_y'),
-                           [1, yDim], name='y_new')
-        y = tf.concat([y, y_new], 0, name='concat_y')
-
-    return y, u, g
+    def getParams(self):
+        return self.PID_params
