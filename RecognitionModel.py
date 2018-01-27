@@ -26,8 +26,8 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
 
     """
 
-    def __init__(self, RecognitionParams, Input, extra_conds, xDim, yDim,
-                 nrng=None, name="SmoothingLDSTimeSeries",
+    def __init__(self, RecognitionParams, Input, xDim, yDim,
+                 extra_conds=None, nrng=None, name="SmoothingLDSTimeSeries",
                  value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
@@ -61,10 +61,11 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
           value: The Recognition Random Variable sample of goal or control
                  signal
         """
-        self.Dyn_params = RecognitionParams['Dyn_params']
-        self.nrng = nrng
+
         self.Input = Input
+        self.Dyn_params = RecognitionParams['Dyn_params']
         self.extra_conds = extra_conds
+        self.nrng = nrng
 
         with tf.name_scope('dimension'):
             self.xDim = xDim
@@ -102,16 +103,14 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             self._initialize_posterior_distribution(RecognitionParams)
 
         super(SmoothingLDSTimeSeries, self).__init__(
-            value=value, name=name, dtype=dtype,
+            name=name, value=value, dtype=dtype,
             reparameterization_type=reparameterization_type,
             validate_args=validate_args, allow_nan_stats=allow_nan_stats)
 
         self._kwargs['RecognitionParams'] = RecognitionParams
         self._kwargs['Input'] = Input
-        self._kwargs['extra_conds'] = extra_conds
         self._kwargs['xDim'] = xDim
         self._kwargs['yDim'] = yDim
-        self._kwargs['nrng'] = nrng
 
     def _initialize_posterior_distribution(self, RecognitionParams):
 
@@ -263,8 +262,9 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
     """SmoothingLDSTimeSeries that uses past observations in addition to
     current to evaluate the latent.
     """
-    def __init__(self, RecognitionParams, Input, extra_conds, xDim, yDim,
-                 nrng=None, name='SmoothingPastLDSTimeSeries',
+    def __init__(self, RecognitionParams, Input, xDim, yDim,
+                 extra_conds=None, nrng=None,
+                 name='SmoothingPastLDSTimeSeries',
                  value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
@@ -315,7 +315,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
                 Input_ = tf.concat([Input_, lagged], -1, name='pad')
 
         super(SmoothingPastLDSTimeSeries, self).__init__(
-            RecognitionParams, Input_, extra_conds, xDim, yDim, nrng,
+            RecognitionParams, Input_, xDim, yDim, extra_conds, nrng,
             name, value, dtype, reparameterization_type,
             validate_args, allow_nan_stats)
 

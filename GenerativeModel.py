@@ -7,247 +7,16 @@ from tensorflow.python.ops.distributions.special_math import log_ndtr
 from tf_gbds.utils import pad_extra_conds
 
 
-def logsumexp(x, axis=None):
-    x_max = tf.reduce_max(x, axis=axis, keep_dims=True)
-    return (tf.log(tf.reduce_sum(tf.exp(x - x_max),
-                                 axis=axis, keep_dims=True)) + x_max)
-
-
-class GBDS_g_all(RandomVariable, Distribution):
-    """A customized Random Variable of goal in Goal-Based Dynamical System
-    combining both goalie agent and ball agent.
-    """
-
-    def __init__(self, GenerativeParams_goalie, GenerativeParams_ball,
-                 yDim, y, extra_conds, ctrl_obs, name='GBDS_g_all',
-                 value=None, dtype=tf.float32,
-                 reparameterization_type=FULLY_REPARAMETERIZED,
-                 validate_args=True, allow_nan_stats=True):
-
-        """Initialize a batch of GBDS_g random variables combining both ball
-            and goalie agent
-
-
-        Args:
-          GenerativeParams_goalie: A dictionary of parameters for the goalie
-                                   agent
-          GenerativeParams_ball: A dictionary of parameters for the ball agent
-          Entries both include:
-            - get_states: function that calculates current state from position
-            - pen_eps: Penalty on control signal noise, epsilon
-            - pen_sigma: Penalty on goals state noise, sigma
-            - pen_g: Two penalties on goal state leaving boundaries (Can be set
-                     None)
-            - bounds_g: Boundaries corresponding to above penalties
-            - NN_postJ_mu: Neural network that parametrizes the mean of the
-                           posterior of J (i.e. mu and sigma), conditioned on
-                           goals
-            - NN_postJ_sigma: Neural network that parametrizes the covariance
-                              of the posterior of J (i.e. mu and sigma),
-                              conditioned on goals
-            - yCols: Columns of Y this agent corresponds to. Used to index
-                     columns in real data to compare against generated data.
-            - vel: Maximum velocity of each dimension in columns belong to this
-                   agent(yCols)
-            - all_vel: Maximum velocity of each dimension in columns belong to
-                       all agents
-            - clip: Clipping signal
-            - clip_range: the range of the clipping states
-            - clip_tol: the tolenrance of clipping
-            - GMM_net: Gaussian Mixture Model network
-            - GMM_k: Number of GMM components
-          yDim: Number of dimensions for the data
-          y: Time series of positions
-          value: The Random Variable sample of goal. Since GBDS_g_all is just
-                 a likelihood node, value is just used to specify the shape
-                 of g. Set it to tf.zeros_like(Y).
-
-        """
-
-        self.yCols_goalie = GenerativeParams_goalie['yCols']
-        self.yCols_ball = GenerativeParams_ball['yCols']
-        self.y = y
-        self.yDim = yDim
-        self.extra_conds = extra_conds
-        self.ctrl_obs = ctrl_obs
-
-        yDim_goalie = len(self.yCols_goalie)
-        yDim_ball = len(self.yCols_ball)
-
-        with tf.name_scope('observed_control'):
-            if self.ctrl_obs is not None:
-                ctrl_goalie = tf.gather(self.ctrl_obs, self.yCols_goalie,
-                                        axis=-1, name='ctrl_obs_goalie')
-                ctrl_ball = tf.gather(self.ctrl_obs, self.yCols_ball,
-                                      axis=-1, name='ctrl_obs_ball')
-            else:
-                ctrl_goalie = None
-                ctrl_ball = None
-
-        with tf.name_scope('G_goalie'):
-            self.goalie = GBDS_g(GenerativeParams_goalie, yDim_goalie, yDim,
-                                 y, extra_conds, ctrl_goalie, name='G_goalie',
-                                 value=tf.gather(value, self.yCols_goalie,
-                                                 axis=-1))
-        with tf.name_scope('G_ball'):
-            self.ball = GBDS_g(GenerativeParams_ball, yDim_ball, yDim, y,
-                               extra_conds, ctrl_ball, name='G_ball',
-                               value=tf.gather(value, self.yCols_ball,
-                                               axis=-1))
-
-        super(GBDS_g_all, self).__init__(
-            name=name, value=value, dtype=dtype,
-            reparameterization_type=reparameterization_type,
-            validate_args=validate_args, allow_nan_stats=allow_nan_stats)
-
-        self._kwargs['GenerativeParams_goalie'] = GenerativeParams_goalie
-        self._kwargs['GenerativeParams_ball'] = GenerativeParams_ball
-        self._kwargs['y'] = y
-        self._kwargs['yDim'] = yDim
-        self._kwargs['extra_conds'] = extra_conds
-        self._kwargs['ctrl_obs'] = ctrl_obs
-
-    def _log_prob(self, value):
-        with tf.name_scope('goalie'):
-            log_prob_goalie = self.goalie.log_prob(
-                tf.gather(value, self.yCols_goalie, axis=-1))
-        with tf.name_scope('ball'):
-            log_prob_ball = self.ball.log_prob(
-                tf.gather(value, self.yCols_ball, axis=-1))
-
-        return log_prob_goalie + log_prob_ball
-
-    def getParams(self):
-        return self.goalie.getParams() + self.ball.getParams()
-
-
-class GBDS_u_all(RandomVariable, Distribution):
-    """A customized Random Variable of control signal in Goal-Based Dynamical
-        System combining both goalie agent and ball agent.
-    """
-
-    def __init__(self, GenerativeParams_goalie, GenerativeParams_ball,
-                 g, y, ctrl_obs, yDim, name='GBDS_u_all',
-                 value=None, dtype=tf.float32,
-                 reparameterization_type=FULLY_REPARAMETERIZED,
-                 validate_args=True, allow_nan_stats=True):
-
-        """Initialize a batch of GBDS_u random variables combining both ball
-            and goalie agent
-
-
-        Args:
-          GenerativeParams_goalie: A dictionary of parameters for the goalie
-                                   agent
-          GenerativeParams_ball: A dictionary of parameters for the ball agent
-          Entries both include:
-            - get_states: function that calculates current state from position
-            - pen_eps: Penalty on control signal noise, epsilon
-            - pen_sigma: Penalty on goals state noise, sigma
-            - pen_g: Two penalties on goal state leaving boundaries (Can be set
-                     None)
-            - bounds_g: Boundaries corresponding to above penalties
-            - NN_postJ_mu: Neural network that parametrizes the mean of the
-                           posterior of J (i.e. mu and sigma), conditioned on
-                           goals
-            - NN_postJ_sigma: Neural network that parametrizes the covariance
-                              of the posterior of J (i.e. mu and sigma),
-                              conditioned on goals
-            - yCols: Columns of Y this agent corresponds to. Used to index
-                     columns in real data to compare against generated data.
-            - vel: Maximum velocity of each dimension in columns belong to this
-                   agent(yCols)
-            - all_vel: Maximum velocity of each dimension in columns belong to
-                       all agents
-            - clip: Clipping signal
-            - clip_range: the range of the clipping states
-            - clip_tol: the tolenrance of clipping
-            - GMM_net: Gaussian Mixture Model network
-            - GMM_k: Number of GMM components
-          yDim: Number of dimensions for the data
-          y: Time series of positions
-          g: The dependent customized Random Variable of goal in Goal-Based
-             Dynamical System (GBDS_g_all)
-          value: The Random Variable sample of goal. Since GBDS_u_all is just a
-                 likelihood node, value is just used to specify the shape of g.
-                 Set it to tf.zeros_like(Y).
-        """
-
-        self.yCols_goalie = GenerativeParams_goalie['yCols']
-        self.yCols_ball = GenerativeParams_ball['yCols']
-        self.y = y
-        self.yDim = yDim
-        self.g = g
-        self.ctrl_obs = ctrl_obs
-
-        yDim_goalie = len(self.yCols_goalie)
-        yDim_ball = len(self.yCols_ball)
-
-        with tf.name_scope('goals'):
-            g_goalie = tf.gather(self.g, self.yCols_goalie, axis=-1,
-                                 name='goals_goalie')
-            g_ball = tf.gather(self.g, self.yCols_ball, axis=-1,
-                               name='goals_ball')
-
-        with tf.name_scope('observed_control'):
-            if self.ctrl_obs is not None:
-                ctrl_goalie = tf.gather(self.ctrl_obs, self.yCols_goalie,
-                                        axis=-1, name='ctrl_obs_goalie')
-                ctrl_ball = tf.gather(self.ctrl_obs, self.yCols_ball,
-                                      axis=-1, name='ctrl_obs_ball')
-            else:
-                ctrl_goalie = None
-                ctrl_ball = None
-
-        with tf.name_scope('U_goalie'):
-            self.goalie = GBDS_u(GenerativeParams_goalie, g_goalie, y,
-                                 ctrl_goalie, yDim_goalie, name='U_goalie',
-                                 value=tf.gather(value, self.yCols_goalie,
-                                                 axis=-1))
-        with tf.name_scope('U_ball'):
-            self.ball = GBDS_u(GenerativeParams_ball, g_ball, y, ctrl_ball,
-                               yDim_ball, name='U_ball',
-                               value=tf.gather(value, self.yCols_ball,
-                                               axis=-1))
-
-        super(GBDS_u_all, self).__init__(
-            name=name, value=value, dtype=dtype,
-            reparameterization_type=reparameterization_type,
-            validate_args=validate_args, allow_nan_stats=allow_nan_stats)
-
-        self._kwargs['GenerativeParams_goalie'] = GenerativeParams_goalie
-        self._kwargs['GenerativeParams_ball'] = GenerativeParams_ball
-        self._kwargs['g'] = g
-        self._kwargs['y'] = y
-        self._kwargs['ctrl_obs'] = ctrl_obs
-        self._kwargs['yDim'] = yDim
-
-    def _log_prob(self, value):
-        with tf.name_scope('goalie'):
-            log_prob_goalie = self.goalie.log_prob(
-                tf.gather(value, self.yCols_goalie, axis=-1))
-        with tf.name_scope('ball'):
-            log_prob_ball = self.ball.log_prob(
-                tf.gather(value, self.yCols_ball, axis=-1))
-
-        return log_prob_goalie + log_prob_ball
-
-    def getParams(self):
-        return self.goalie.getParams() + self.ball.getParams()
-
-
 class GBDS_u(RandomVariable, Distribution):
     """A customized Random Variable of control signal in Goal-Based Dynamical
        System
     """
-
-    def __init__(self, GenerativeParams, g, y, ctrl_obs, yDim, name='GBDS_u',
-                 value=None, dtype=tf.float32,
+    def __init__(self, GenerativeParams, goals, positions, ctrl_obs=None,
+                 name='GBDS_u', value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
 
         """Initialize a batch of GBDS_u random variables for one of the agents
-
 
         Args:
           GenerativeParams: A dictionary of parameters for the agent
@@ -282,54 +51,44 @@ class GBDS_u(RandomVariable, Distribution):
           value: The Random Variable sample of control signal
         """
 
-        self.g = g
-        self.y = y
-        self.yDim = yDim
-        self.B = tf.shape(y)[0]  # batch size
-        self.Tt = tf.shape(y)[1]
-        self.latent_u = GenerativeParams['latent_u']
+        self.g = tf.identity(goals, name='goals')
+        self.y = positions
+        self.dim = GenerativeParams['agent_dim']
+        self.cols = GenerativeParams['agent_cols']
+        self.B = tf.shape(positions)[0]  # batch size
+        self.Tt = tf.shape(positions)[1]
+        self.pen_u = GenerativeParams['pen_u']
+        self.res_tol = GenerativeParams['u_res_tol']
         self.clip = GenerativeParams['clip']
+        self.vel = tf.constant(
+            GenerativeParams['agent_vel'], dtype=tf.float32, shape=[self.dim],
+            name='velocity')
 
-        with tf.name_scope('agent_columns'):
-            # which dimensions of Y to predict
-            self.yCols = GenerativeParams['yCols']
-        with tf.name_scope('velocity'):
-            # velocity for each observation dimension (of this agent)
-            self.vel = tf.constant(GenerativeParams['vel'], tf.float32)
-
-        with tf.name_scope('PID_controller_params'):
+        with tf.name_scope('PID_control'):
             with tf.name_scope('parameters'):
                 # coefficients for PID controller (one for each dimension)
                 # https://en.wikipedia.org/wiki/PID_controller
                 # Discrete_implementation
                 PID_params = GenerativeParams['PID_params']
-                unc_Kp = PID_params['unc_Kp']
-                unc_Ki = PID_params['unc_Ki']
-                unc_Kd = PID_params['unc_Kd']
-                # create list of PID controller parameters for easy access in
-                # getParams
-                self.PID_params = [unc_Kp, unc_Ki, unc_Kd]
-                # constrain PID controller parameters to be positive
-                self.Kp = tf.nn.softplus(unc_Kp, name='Kp')
-                self.Ki = tf.nn.softplus(unc_Ki, name='Ki')
-                self.Kd = tf.nn.softplus(unc_Kd, name='Kd')
+                # priors of PID parameters
+                self.Kp = PID_params['Kp']
+                self.Ki = PID_params['Ki']
+                self.Kd = PID_params['Kd']
             with tf.name_scope('filter'):
                 # calculate coefficients to be placed in convolutional filter
                 t_coeff = self.Kp + self.Ki + self.Kd
                 t1_coeff = -self.Kp - 2 * self.Kd
                 t2_coeff = self.Kd
                 # concatenate coefficients into filter
-                self.L = tf.concat([t2_coeff, t1_coeff, t_coeff], axis=1,
-                                   name='filter')
+                self.L = tf.stack([t2_coeff, t1_coeff, t_coeff], axis=1,
+                                  name='PID_conv_filter')
 
         with tf.name_scope('control_signal'):
             if ctrl_obs is not None:
-                self.ctrl_obs = ctrl_obs
+                self.ctrl_obs = tf.identity(ctrl_obs, name='ctrl_obs')
             else:
-                self.ctrl_obs = tf.divide(
-                    (tf.gather(self.y, self.yCols, axis=-1)[:, 1:] -
-                     tf.gather(self.y, self.yCols, axis=-1)[:, :-1]),
-                    tf.reshape(self.vel, [1, self.yDim]), name='ctrl_obs')
+                self.ctrl_obs = tf.divide(self.y[:, 1:] - self.y[:, :-1],
+                                          self.vel, name='ctrl_obs')
         with tf.name_scope('control_signal_censoring'):
             # clipping signal
             if self.clip:
@@ -338,118 +97,69 @@ class GBDS_u(RandomVariable, Distribution):
                 self.eta = GenerativeParams['eta']
         with tf.name_scope('control_signal_noise'):
             # noise coefficient on control signals
-            self.unc_eps = PID_params['unc_eps']
-            self.eps = tf.nn.softplus(self.unc_eps, name='eps')
+            self.eps = tf.constant(
+                GenerativeParams['epsilon'] * np.ones((1, self.dim)),
+                dtype=tf.float32, name='epsilon')
         with tf.name_scope('control_signal_penalty'):
             # penalty on control error
             if GenerativeParams['pen_ctrl_error'] is not None:
                 self.pen_ctrl_error = GenerativeParams['pen_ctrl_error']
             else:
                 self.pen_ctrl_error = None
-            # penalty on epsilon (noise of control signal)
-            if GenerativeParams['pen_eps'] is not None:
-                self.pen_eps = GenerativeParams['pen_eps']
-            else:
-                self.pen_eps = None
 
         super(GBDS_u, self).__init__(
             name=name, value=value, dtype=dtype,
             reparameterization_type=reparameterization_type,
-            validate_args=validate_args, allow_nan_stats=allow_nan_stats)
+            validate_args=validate_args, allow_nan_stats=allow_nan_stats,
+            graph_parents=[self.g])
 
-        self._kwargs['g'] = g
-        self._kwargs['y'] = y
-        self._kwargs['ctrl_obs'] = ctrl_obs
-        self._kwargs['yDim'] = yDim
+        self._kwargs['goals'] = goals
+        self._kwargs['positions'] = positions
         self._kwargs['GenerativeParams'] = GenerativeParams
 
-    def get_preds(self, Y, training=False, post_g=None, Uprev=None):
-        """Return the predicted next U, and Y for each point in Y.
-
-        For training: provide post_g, sample from the posterior,
-                      which is used to calculate the ELBO
+    def get_preds(self, y, post_g, u_prev):
+        """Return one-step-ahead prediction of control signal,
+        given samples from goal posterior.
         """
 
-        with tf.name_scope('control_error'):
-            # PID Controller for next control point
-            if post_g is not None:  # calculate error from posterior goals
-                error = tf.subtract(post_g, Y, name='ctrl_error')
-            # else:  # calculate error from generated goals
-            #     error = next_g - tf.gather(Y, self.yCols, axis=1)
-        with tf.name_scope('control_signal_change'):
-            Udiff = []
-            # get current error signal and corresponding filter
-            for i in range(self.yDim):
-                signal = error[:, :, i]
-                # zero pad beginning
-                signal = tf.expand_dims(
-                    tf.pad(signal, [[0, 0], [2, 0]], name='zero_padding'), -1)
-                filt = tf.reshape(self.L[i], [-1, 1, 1])
-                res = tf.nn.convolution(signal, filt, padding='VALID',
-                                        name='signal_conv')
-                Udiff.append(res)
-            if len(Udiff) > 1:
-                Udiff = tf.concat([*Udiff], axis=-1)
-            else:
-                Udiff = Udiff[0]
-        with tf.name_scope('add_noise'):
-            if post_g is None:  # Add control signal noise to generated data
-                Udiff += self.eps * tf.random_normal(Udiff.shape)
-        with tf.name_scope('control_signal'):
-            Upred = Uprev + Udiff
-        with tf.name_scope('predicted_position'):
-            # get predicted Y
-            if self.clip:
-                Ypred = (Y + (tf.reshape(self.vel, [1, self.yDim]) *
-                              tf.clip_by_value(
-                                  Upred, -self.clip_range, self.clip_range,
-                                  name='clipped_signal')))
-            else:
-                Ypred = (Y + tf.reshape(self.vel, [1, self.yDim]) * Upred)
+        error = tf.subtract(post_g, y, name='control_error')
 
-        return (error, Upred, Ypred)
+        u_diff = []
+        # get current error signal and corresponding filter
+        for i in range(self.dim):
+            signal = error[:, :, i]
+            # pad the beginning of control signal with zero
+            signal = tf.expand_dims(
+                tf.pad(signal, [[0, 0], [2, 0]], name='zero_pad'),
+                -1, name='reshape_signal')
+            filt = tf.reshape(self.L[i], [-1, 1, 1],
+                              name='reshape_filter')
+            res = tf.nn.convolution(signal, filt, padding='VALID',
+                                    name='convolve_signal')
+            u_diff.append(res)
+        if len(u_diff) > 1:
+            u_diff = tf.concat([*u_diff], axis=-1,
+                               name='control_signal_change')
+        else:
+            u_diff = tf.identity(u_diff[0], name='contrl_signal_change')
 
-    # def clip_loss(self, acc, inputs):
-    #     """upsilon (derived from time series of y) is a censored version of
-    #     a noisy control signal: \hat{u} ~ N(u, \eta^2).
-    #     log p(upsilon|u, g) = log p(upsilon|u) + log(u|g)
-    #     log p(upsilon|u) breaks down into three cases,
-    #     namely left-clipped (upsilon_t = -1), right-clipped (upsilon_t = 1),
-    #     and non-clipped (-1 < upsilon_t < 1). For the first two cases,
-    #     Normal CDF is used instead of PDF due to censoring.
-    #     The log density term is computed for each and then add up.
-    #     """
-    #     (U_obs, value) = inputs
-    #     left_clip_ind = tf.where(tf.less_equal(
-    #         U_obs, (-self.clip_range + self.clip_tol)),
-    #         name='left_clip_indices')
-    #     right_clip_ind = tf.where(tf.greater_equal(
-    #         U_obs, (self.clip_range - self.clip_tol)),
-    #         name='right_clip_indices')
-    #     non_clip_ind = tf.where(tf.logical_and(
-    #         tf.greater(U_obs, (-self.clip_range + self.clip_tol)),
-    #         tf.less(U_obs, (self.clip_range - self.clip_tol))),
-    #         name='non_clip_indices')
-    #     left_clip_node = Normal(tf.gather_nd(value, left_clip_ind),
-    #                             self.eta, name='left_clip_node')
-    #     right_clip_node = Normal(tf.gather_nd(-value, right_clip_ind),
-    #                              self.eta, name='right_clip_node')
-    #     non_clip_node = Normal(tf.gather_nd(value, non_clip_ind),
-    #                            self.eta, name='non_clip_node')
-    #     LogDensity = 0.0
-    #     LogDensity += tf.reduce_sum(
-    #         left_clip_node.log_cdf(-1., name='left_clip_logcdf'))
-    #     LogDensity += tf.reduce_sum(
-    #         right_clip_node.log_cdf(-1., name='right_clip_logcdf'))
-    #     LogDensity += tf.reduce_sum(
-    #         non_clip_node.log_prob(tf.gather_nd(U_obs, non_clip_ind),
-    #                                name='non_clip_logpdf'))
+        u_pred = tf.add(u_prev, u_diff, name='predicted_control_signal')
 
-    #     return LogDensity
+        return (error, u_pred)
 
     def clip_log_prob(self, upsilon, u):
-        u_b = self.clip_range - self.clip_tol
-        l_b = -self.clip_range + self.clip_tol
+        """upsilon (derived from time series of y) is a censored version of
+        a noisy control signal: \hat{u} ~ N(u, \eta^2).
+        log p(upsilon|u, g) = log p(upsilon|u) + log(u|g)
+        log p(upsilon|u) breaks down into three cases,
+        namely left-clipped (upsilon_t = -1), right-clipped (upsilon_t = 1),
+        and non-clipped (-1 < upsilon_t < 1). For the first two cases,
+        Normal CDF is used instead of PDF due to censoring.
+        The log density term is computed for each and then add up.
+        """
+
+        l_b = tf.add(self.clip_range[0], self.clip_tol, name='lower_bound')
+        u_b = tf.subtract(self.clip_range[1], self.clip_tol, name='upper_bound')
         eta = self.eta
 
         def z(x, loc, scale):
@@ -462,9 +172,10 @@ class GBDS_u(RandomVariable, Distribution):
         def normal_logcdf(x, loc, scale):
             return log_ndtr(z(x, loc, scale))
 
-        return tf.where(tf.less_equal(upsilon, l_b),
+        return tf.where(tf.less_equal(upsilon, l_b, name='left_clip'),
                         normal_logcdf(-1., u, eta),
-                        tf.where(tf.greater_equal(upsilon, u_b),
+                        tf.where(tf.greater_equal(upsilon, u_b,
+                                                  name='right_clip'),
                                  normal_logcdf(-1., -u, eta),
                                  normal_logpdf(upsilon, u, eta)))
 
@@ -475,67 +186,59 @@ class GBDS_u(RandomVariable, Distribution):
         # Get predictions for next timestep (at each timestep except for last)
         # disregard last timestep bc we don't know the next value, thus, we
         # can't calculate the error
-        with tf.name_scope('next_time_point_pred'):
-            if self.latent_u:
-                ctrl_error, Upred, _ = self.get_preds(
-                    Y=tf.gather(self.y[:, :-1], self.yCols, axis=-1),
-                    training=True, post_g=self.g[:, 1:],
-                    Uprev=tf.pad(value[:, :-2], [[0, 0], [1, 0], [0, 0]]))
-            else:
-                ctrl_error, Upred, _ = self.get_preds(
-                    Y=tf.gather(self.y[:, :-1], self.yCols, axis=-1),
-                    training=True, post_g=self.g[:, 1:],
-                    Uprev=tf.pad(self.ctrl_obs[:, :-1],
-                                 [[0, 0], [1, 0], [0, 0]]))
+
+        with tf.name_scope('next_step_prediction'):
+            ctrl_error, u_pred = self.get_preds(
+                self.y[:, :-1], self.g[:, 1:],
+                tf.pad(value[:, :-2], [[0, 0], [1, 0], [0, 0]],
+                       name='previous_control'))
 
         LogDensity = 0.0
-        with tf.name_scope('control_signal_loss'):
-            # calculate loss on control signal
-            if self.latent_u:
-                # LogDensity += tf.scan(self.clip_loss, (self.ctrl_obs, value),
-                #                       initializer=0.0, name='clip_noise')
-                LogDensity += tf.reduce_sum(
-                    self.clip_log_prob(self.ctrl_obs, value[:, :-1]),
-                    axis=[1, 2], name='clip_noise')
-                resU = value[:, :-1] - Upred
-            else:
-                resU = self.ctrl_obs - Upred
+        # calculate loss on control signal
+        if self.clip:
+            LogDensity += tf.reduce_sum(
+                self.clip_log_prob(self.ctrl_obs, value[:, :-1]), [1, 2],
+                name='clipping_noise')
 
-            LogDensity -= tf.reduce_sum(
-                (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
-                 resU ** 2 / (2 * self.eps ** 2)), axis=[1, 2])
-        with tf.name_scope('control_signal_penalty'):
-            with tf.name_scope('control_error_penalty'):
-                # penalty on ctrl error
-                if self.pen_ctrl_error is not None:
-                    LogDensity -= (self.pen_ctrl_error * tf.reduce_sum(
-                        tf.nn.relu(ctrl_error - 1.0), axis=[1, 2]))
-                    LogDensity -= (self.pen_ctrl_error * tf.reduce_sum(
-                        tf.nn.relu(-ctrl_error - 1.0), axis=[1, 2]))
-                    # LogDensity -= (self.pen_ctrl_error * tf.reduce_sum(
-                    #     tf.norm(ctrl_error, axis=-1), axis=-1))
-            with tf.name_scope('control_noise_penalty'):
-                # penalty on eps
-                if self.pen_eps is not None:
-                    LogDensity -= self.pen_eps * tf.reduce_sum(self.unc_eps)
+        u_res = tf.subtract(value[:, :-1], u_pred,
+                            name='control_signal_residual')
+        # LogDensity -= tf.reduce_sum(
+        #     (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
+        #      u_res ** 2 / (2 * self.eps ** 2)), [1, 2])
+        LogDensity -= tf.reduce_sum(self.pen_u * tf.nn.relu(
+            u_res - self.res_tol), axis=[1, 2])
+        LogDensity -= tf.reduce_sum(self.pen_u * tf.nn.relu(
+            -u_res - self.res_tol), axis=[1, 2])
+        with tf.name_scope('control_error_penalty'):
+            # penalty on ctrl error
+            if self.pen_ctrl_error is not None:
+                LogDensity -= self.pen_ctrl_error * tf.reduce_sum(
+                    tf.nn.relu(ctrl_error - 1.0), [1, 2])
+                LogDensity -= self.pen_ctrl_error * tf.reduce_sum(
+                    tf.nn.relu(-ctrl_error - 1.0), [1, 2])
 
-        return LogDensity / tf.cast(self.Tt, tf.float32)
+        return tf.reduce_mean(LogDensity) / tf.cast(self.Tt - 1, tf.float32)
 
     def getParams(self):
         """Return the learnable parameters of the model
         """
+        return ([self.Kp] + [self.Ki] + [self.Kd])
 
-        rets = self.PID_params  # + [self.unc_eps]
+    def update_ctrl(self, errors, u_prev):
+        u_diff = tf.reduce_sum(errors * tf.transpose(self.L), 0,
+                               name='control_signal_change')
+        u = tf.add(u_prev, u_diff, name='update_control')
 
-        return rets
+        return u
 
 
 class GBDS_g(RandomVariable, Distribution):
     """A customized Random Variable of goal in Goal-Based Dynamical System
     """
 
-    def __init__(self, GenerativeParams, yDim, yDim_in, y, extra_conds,
-                 ctrl_obs, name='GBDS_g', value=None, dtype=tf.float32,
+    def __init__(self, GenerativeParams, states,
+                 extra_conds=None, ctrl_obs=None,
+                 name='GBDS_g', value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
         """Initialize a batch of GBDS_g random variables for one of the agent
@@ -568,60 +271,39 @@ class GBDS_g(RandomVariable, Distribution):
             - GMM_net: Gaussian Mixture Model network
             - GMM_k: Number of GMM components
           yDim: Number of dimensions for the agent
-          yDim_in: Number of dimensions for the data
           y: Time series of positions
           value: The Random Variable sample of goal.
-
         """
 
-        self.y = y
-        self.B = tf.shape(y)[0]  # batch size
-        self.Tt = tf.shape(y)[1]
+        self.states = states
+        self.dim = GenerativeParams['agent_dim']
+        self.cols = GenerativeParams['agent_cols']
+        self.B = tf.shape(states)[0]  # batch size
+        self.Tt = tf.shape(states)[1]
         self.extra_conds = extra_conds
         self.ctrl_obs = ctrl_obs
 
-        with tf.name_scope('dimension'):
-            self.yDim_in = yDim_in  # dimension of observation input
-            self.yDim = yDim
-
-        with tf.name_scope('get_states'):
-            # function that calculates states from positions
-            self.get_states = GenerativeParams['get_states']
-
-        with tf.name_scope('velocity'):
-            # velocity for each observation dimension (of all agents)
-            self.all_vel = tf.constant(GenerativeParams['all_vel'],
-                                       dtype=tf.float32, name='velocity')
-
         with tf.name_scope('g0'):
-            self.g0_mu = GenerativeParams['g0_params']['mu']
-            self.g0_unc_lambda = GenerativeParams['g0_params']['unc_lambda']
+            g0_params = GenerativeParams['g0_params']
+            self.g0_mu = g0_params['mu']
+            self.g0_unc_lambda = g0_params['unc_lambda']
             self.g0_lambda = tf.nn.softplus(self.g0_unc_lambda,
                                             name='softplus_g0_lambda')
-            self.g0_unc_w = GenerativeParams['g0_params']['unc_w']
+            self.g0_unc_w = g0_params['unc_w']
             self.g0_w = tf.nn.softmax(self.g0_unc_w,
                                       name='softmax_g0_w')
             self.g0_params = ([self.g0_mu] + [self.g0_unc_lambda] +
                               [self.g0_unc_w])
 
-        with tf.name_scope('GMM_NN'):
-            self.GMM_k = GenerativeParams['GMM_k']  # number of GMM components
-            # GMM neural networks
-            self.GMM_net = GenerativeParams['GMM_net']
+        with tf.name_scope('GMM_neural_network'):
+            self.GMM_K = GenerativeParams['GMM_K']  # number of GMM components
+            self.GMM_NN = GenerativeParams['GMM_NN']
 
         with tf.name_scope('goal_state_noise'):
             # noise coefficient on goal states
-            self.unc_sigma = tf.Variable(
-                initial_value=-5 * np.ones((1, self.yDim)), name='unc_sigma',
-                dtype=tf.float32)
-            self.sigma = tf.nn.softplus(self.unc_sigma, name='sigma')
-
-        with tf.name_scope('goal_state_noise_penalty'):
-            # penalty on sigma (noise on goal state)
-            if GenerativeParams['pen_sigma'] is not None:
-                self.pen_sigma = GenerativeParams['pen_sigma']
-            else:
-                self.pen_sigma = None
+            self.sigma = tf.constant(
+                GenerativeParams['sigma'] * np.ones((1, self.dim)),
+                dtype=tf.float32, name='sigma')
 
         with tf.name_scope('goal_boundary_penalty'):
             with tf.name_scope('boundary'):
@@ -629,7 +311,7 @@ class GBDS_g(RandomVariable, Distribution):
                 if GenerativeParams['bounds_g'] is not None:
                     self.bounds_g = GenerativeParams['bounds_g']
                 else:
-                    self.bounds_g = 1.0
+                    self.bounds_g = [-1., 1.]
             with tf.name_scope('penalty'):
                 # penalty on goal state escaping boundaries
                 if GenerativeParams['pen_g'] is not None:
@@ -637,165 +319,219 @@ class GBDS_g(RandomVariable, Distribution):
                 else:
                     self.pen_g = None
 
-        with tf.name_scope('control_model'):
-            self.latent_u = GenerativeParams['latent_u']
-            if not self.latent_u:
-                self.u = GBDS_u(
-                    GenerativeParams, self, self.y, self.ctrl_obs, self.yDim,
-                    name='ctrl', value=tf.zeros_like(value))
-
         super(GBDS_g, self).__init__(
             name=name, value=value, dtype=dtype,
             reparameterization_type=reparameterization_type,
             validate_args=validate_args, allow_nan_stats=allow_nan_stats)
 
-        self._kwargs['y'] = y
-        self._kwargs['yDim'] = yDim
-        self._kwargs['yDim_in'] = yDim_in
+        self._kwargs['states'] = states
         self._kwargs['GenerativeParams'] = GenerativeParams
-        self._kwargs['extra_conds'] = extra_conds
-        self._kwargs['ctrl_obs'] = ctrl_obs
 
-    def get_preds(self, Y, training=False, post_g=None,
-                  gen_g=None, extra_conds=None):
-        """Return the predicted next g for each point in Y.
-
-        For training: provide post_g, sample from the posterior,
-                      which is used to calculate the ELBO
+    def get_preds(self, s, g, extra_conds=None):
+        """Return one-step-ahead prediction of goals, given states.
         """
 
-        if training and post_g is None:
-            raise Exception(
-                'Must provide sample of g from posterior during training')
+        with tf.name_scope('pad_extra_conds'):
+            if extra_conds is not None:
+                s = pad_extra_conds(s, extra_conds)
 
-        with tf.name_scope('states'):
-            # get states from position
-            states = self.get_states(Y, max_vel=self.all_vel)
-            with tf.name_scope('pad_extra_conds'):
-                if self.extra_conds is not None:
-                    states = pad_extra_conds(states, self.extra_conds)
+        all_mu = tf.reshape(
+            self.GMM_NN(s)[:, :, :(self.GMM_K * self.dim)],
+            [self.B, -1, self.GMM_K, self.dim], name='all_mu')
 
-        with tf.name_scope('get_GMM_params'):
-            with tf.name_scope('mu'):
-                all_mu = tf.reshape(
-                    self.GMM_net(states)[:, :, :(self.yDim * self.GMM_k)],
-                    [self.B, -1, self.GMM_k, self.yDim], name='all_mu')
+        all_lambda = tf.reshape(tf.nn.softplus(
+            self.GMM_NN(s)[:, :, (self.GMM_K * self.dim):(
+                2 * self.GMM_K * self.dim)], name='softplus_lambda'),
+            [self.B, -1, self.GMM_K, self.dim], name='all_lambda')
 
-            with tf.name_scope('lambda'):
-                all_lambda = tf.nn.softplus(tf.reshape(
-                    self.GMM_net(states)[:, :, (self.yDim *
-                                                self.GMM_k):(2 * self.yDim *
-                                                             self.GMM_k)],
-                    [self.B, -1, self.GMM_k, self.yDim],
-                    name='reshape_lambda'), name='all_lambda')
+        all_w = tf.reshape(tf.nn.softmax(
+            self.GMM_NN(s)[:, :, (2 * self.GMM_K * self.dim):],
+            dim=-1, name='softmax_w'), [self.B, -1, self.GMM_K], name='all_w')
 
-            with tf.name_scope('w'):
-                all_w = tf.nn.softmax(tf.reshape(
-                    self.GMM_net(states)[:, :, (2 * self.yDim * self.GMM_k):],
-                    [self.B, -1, self.GMM_k],
-                    name='reshape_w'), dim=-1, name='all_w')
-
-        with tf.name_scope('next_g'):
-            # Draw next goals based on force
-            if post_g is not None:  # Calculate next goals from posterior
-                next_g = ((tf.expand_dims(post_g, 2) + all_mu * all_lambda) /
-                          (1 + all_lambda))
+        next_g = tf.divide(tf.expand_dims(g, 2) + all_mu * all_lambda,
+                           1 + all_lambda, name='next_goals')
 
         return (all_mu, all_lambda, all_w, next_g)
 
-    def sample_g0(self):
-        k_0 = tf.squeeze(tf.multinomial(
-            tf.tile(tf.reshape(tf.log(self.g0_w), [1, -1]),
-                    [self.B, 1]), 1), name='k_0')
-        g_0 = (tf.gather(self.g0_mu, k_0, axis=0, name='mean') +
-               tf.random_normal([self.B, self.yDim], name='std_normal') /
-               tf.sqrt(tf.gather(self.g0_lambda, k_0, axis=0),
-                       name='inv_std_dev'))
-
-        return g_0
-
-    def sample_GMM(self, mu, lmbda, w):
-        """Sample from GMM based on highest weight component
-        """
-
-        def select_components(acc, inputs):
-            sub_mu, sub_lambda, w = inputs
-            z = tf.range(self.GMM_k, name='classes')
-            p = tf.multinomial(tf.log(w), 1, name='draw')
-            component = z[tf.cast(p[0, 0], tf.int32)]
-
-            return sub_mu[:, component, :], sub_lambda[:, component, :]
-
-        (mu_k, lambda_k) = tf.scan(
-            select_components, [tf.transpose(mu, [1, 0, 2, 3]),
-                                tf.transpose(lmbda, [1, 0, 2, 3]),
-                                tf.transpose(w, [1, 0, 2])],
-            initializer=(tf.zeros([self.B, self.yDim]),
-                         tf.zeros([self.B, self.yDim])),
-            name='select_components')
-        mu_k = tf.transpose(mu_k, perm=[1, 0, 2])
-        lambda_k = tf.transpose(lambda_k, perm=[1, 0, 2])
-        updates = {}
-
-        return (mu_k, lambda_k), updates
-
     def _log_prob(self, value):
-        with tf.name_scope('next_time_point_pred'):
+        with tf.name_scope('next_step_prediction'):
             _, all_lambda, all_w, g_pred = self.get_preds(
-                self.y[:, :-1], training=True, post_g=value[:, :-1])
+                self.states[:, :-1], value[:, :-1], self.extra_conds)
 
         LogDensity = 0.0
-        with tf.name_scope('goal_state_loss'):
+        with tf.name_scope('goal_states'):
             # w_brdcst = tf.expand_dims(all_w, -1, name='reshape_w')
-            gmm_res_g = (tf.expand_dims(value[:, 1:], 2,
-                                        name='reshape_posterior_samples') -
-                         g_pred)
-            gmm_term = (tf.log(all_w + 1e-8) - tf.reduce_sum(
-                (1 + all_lambda) * (gmm_res_g ** 2) / (2 * self.sigma ** 2),
-                axis=-1))
-            gmm_term += (0.5 * tf.reduce_sum(tf.log(1 + all_lambda),
-                                             axis=-1) -
+            res_gmm = tf.subtract(
+                tf.expand_dims(value[:, 1:], 2, name='reshape_samples'),
+                g_pred, name='GMM_residual')
+            gmm_term = tf.log(all_w + 1e-8) - tf.reduce_sum(
+                (1 + all_lambda) * (res_gmm ** 2) / (2 * self.sigma ** 2), -1)
+            gmm_term += (0.5 * tf.reduce_sum(tf.log(1 + all_lambda), -1) -
                          tf.reduce_sum(0.5 * tf.log(2 * np.pi) +
-                                       tf.log(self.sigma), axis=-1))
-            LogDensity += tf.reduce_sum(logsumexp(gmm_term, axis=-1),
-                                        axis=[-2, -1])
+                                       tf.log(self.sigma), -1))
+            LogDensity += tf.reduce_sum(tf.reduce_logsumexp(gmm_term, -1), 1)
 
-        with tf.name_scope('g0_loss'):
-            res_g0 = tf.expand_dims(value[:, 0], 1) - self.g0_mu
-            g0_term = (tf.log(self.g0_w + 1e-8) - tf.reduce_sum(
-                self.g0_lambda * (res_g0 ** 2) / (2 * self.sigma ** 2),
-                axis=-1))
-            g0_term += (0.5 * tf.reduce_sum(tf.log(self.g0_lambda), axis=-1) -
-                        tf.reduce_sum(0.5 * tf.log(2 * np.pi) +
-                                      tf.log(self.sigma), axis=-1))
-            LogDensity += tf.reduce_sum(logsumexp(g0_term, axis=-1), axis=-1)
+        with tf.name_scope('g0'):
+            res_g0 = tf.subtract(tf.expand_dims(value[:, 0], 1), self.g0_mu,
+                                 name='g0_residual')
+            g0_term = tf.log(self.g0_w + 1e-8) - tf.reduce_sum(
+                self.g0_lambda * (res_g0 ** 2) / 2, -1)
+            g0_term += 0.5 * tf.reduce_sum(
+                tf.log(self.g0_lambda) - tf.log(2 * np.pi), -1)
+            LogDensity += tf.reduce_logsumexp(g0_term, -1)
 
-        with tf.name_scope('goal_penalty'):
-            with tf.name_scope('boundary'):
-                if self.pen_g is not None:
-                    # linear penalty on goal state escaping game space
-                    LogDensity -= (self.pen_g * tf.reduce_sum(
-                        tf.nn.relu(value - self.bounds_g), axis=[1, 2]))
-                    LogDensity -= (self.pen_g * tf.reduce_sum(
-                        tf.nn.relu(-value - self.bounds_g), axis=[1, 2]))
-            with tf.name_scope('noise'):
-                if self.pen_sigma is not None:
-                    # penalty on sigma
-                    LogDensity -= (self.pen_sigma *
-                                   tf.reduce_sum(self.unc_sigma))
+        with tf.name_scope('boundary_penalty'):
+            if self.pen_g is not None:
+                # linear penalty on goal state escaping game space
+                LogDensity -= self.pen_g * tf.reduce_sum(
+                    tf.nn.relu(self.bounds_g[0] - value), [1, 2])
+                LogDensity -= self.pen_g * tf.reduce_sum(
+                    tf.nn.relu(value - self.bounds_g[1]), axis=[1, 2])
 
-        with tf.name_scope('control_model'):
-            if not self.latent_u:
-                LogDensity += self.u._log_prob(value=None)
+        LogDensity = tf.reduce_mean(LogDensity) / tf.cast(self.Tt, tf.float32)
 
-        return LogDensity / tf.cast(self.Tt, tf.float32)
+        # with tf.name_scope('control_model'):
+        #     LogDensity += GBDS_u(
+        #         self.GenerativeParams, value,
+        #         tf.gather(self.states, self.cols, axis=-1), name='ctrl_model',
+        #         value=tf.zeros_like(value))._log_prob(value=None)
+
+        return LogDensity
+
+    def sample_g0(self):
+        with tf.name_scope('select_component'):
+            k0 = tf.squeeze(tf.multinomial(tf.reshape(
+                tf.log(self.g0_w, name='log_g0_w'), [1, -1]),
+                1, name='draw_sample'), name='k0')
+
+        with tf.name_scope('get_sample'):
+            g0 = tf.add((tf.random_normal([self.dim], name='std_normal') /
+                         tf.sqrt(self.g0_lambda[k0], name='inv_std_dev')),
+                        self.g0_mu[k0], name='g0')
+
+        return g0
+
+    def sample_GMM(self, state, g_prev):
+        state = tf.reshape(state, [1, 1, -1], name='reshape_state')
+        with tf.name_scope('mu'):
+            all_mu = tf.reshape(
+                self.GMM_NN(state)[:, :, :(self.GMM_K * self.dim)],
+                [self.GMM_K, self.dim], name='all_mu')
+
+        with tf.name_scope('lambda'):
+            all_lambda = tf.reshape(tf.nn.softplus(
+                self.GMM_NN(state)[:, :, (self.GMM_K * self.dim):(
+                    2 * self.GMM_K * self.dim)], name='softplus_lambda'),
+                [self.GMM_K, self.dim], name='all_lambda')
+
+        with tf.name_scope('w'):
+            all_w = tf.reshape(tf.nn.softmax(
+                self.GMM_NN(state)[:, :, (2 * self.GMM_K * self.dim):],
+                dim=-1, name='softmax_w'), [1, self.GMM_K], name='all_w')
+
+        with tf.name_scope('select_component'):
+            k = tf.squeeze(tf.multinomial(
+                tf.reshape(tf.log(all_w, name='log_w'), [1, -1]),
+                1, name='draw_sample'), name='k')
+
+        with tf.name_scope('get_sample'):
+            g = tf.add(tf.divide(g_prev + all_mu[k] * all_lambda[k],
+                                 1 + all_lambda[k], name='mean'),
+                       (tf.random_normal([self.dim], name='std_normal') *
+                        tf.divide(tf.squeeze(self.sigma),
+                                  tf.sqrt(1 + all_lambda[k]), name='std_dev')),
+                       name='goal')
+
+        return g
+
+    # def update_ctrl(self, errors, u_prev):
+    #     return GBDS_u(
+    #         self.GenerativeParams, tf.zeros([self.B, self.Tt, self.dim]),
+    #         tf.zeros([self.B, self.Tt, self.dim]), name='ctrl_model',
+    #         value=tf.zeros([self.B, self.Tt, self.dim])).update_ctrl(
+    #         errors, u_prev)
 
     def getParams(self):
-        """Return the learnable parameters of the model
-        """
+        return self.GMM_NN.variables + self.g0_params
 
-        rets = self.GMM_net.variables + self.g0_params
-        if not self.latent_u:
-            rets += self.u.getParams()
 
-        return rets
+class joint_goals(RandomVariable, Distribution):
+    def __init__(self, goals, name='goals', value=None, dtype=tf.float32,
+                 reparameterization_type=FULLY_REPARAMETERIZED,
+                 validate_args=True, allow_nan_stats=True):
+        if isinstance(goals, list):
+            self.goals = goals
+            self.n_agents = len(goals)
+            self.dim = np.sum(goal.dim for goal in goals)
+        else:
+            raise TypeError('goals must be a list.')
+
+        super(joint_goals, self).__init__(
+            name=name, value=value, dtype=dtype,
+            reparameterization_type=reparameterization_type,
+            validate_args=validate_args, allow_nan_stats=allow_nan_stats)
+        self._kwargs['goals'] = goals
+
+    def _log_prob(self, value):
+        log_prob_sum = 0.0
+
+        for agent_goal in self.goals:
+            agent_value = tf.gather(value, agent_goal.cols, axis=-1)
+            log_prob_sum += agent_goal.log_prob(agent_value)
+
+        return log_prob_sum
+        # return tf.reduce_sum(goal.log_prob(
+        #     tf.gather(value, goal.cols, axis=-1)) for goal in self.goals)
+
+    def sample_g0(self):
+        return tf.concat([goal.sample_g0() for goal in self.goals], 0,
+                         name='concat_g0')
+
+    def sample_GMM(self, state, g_prev):
+        return tf.concat(
+            [goal.sample_GMM(state, tf.gather(g_prev, goal.cols, axis=-1))
+             for goal in self.goals], 0, name='concat_g')
+
+    # def update_ctrl(self, errors, u_prev):
+    #     return tf.concat(
+    #         [goal.update_ctrl(tf.gather(errors, goal.cols, axis=-1),
+    #                           tf.gather(u_prev, goal.cols, axis=-1))
+    #          for goal in self.goals], 0, name='concat_u')
+
+class joint_ctrls(RandomVariable, Distribution):
+    def __init__(self, ctrls, name='ctrls', value=None, dtype=tf.float32,
+                 reparameterization_type=FULLY_REPARAMETERIZED,
+                 validate_args=True, allow_nan_stats=True):
+        if isinstance(ctrls, list):
+            self.ctrls = ctrls
+            self.n_agents = len(ctrls)
+            self.dim = np.sum(ctrl.dim for ctrl in ctrls)
+            self.ctrl_obs = tf.pad(
+                tf.concat([ctrl.ctrl_obs for ctrl in ctrls],
+                          -1, name='concat_ctrl_obs'),
+                [[0, 0], [0, 1], [0, 0]], name='ctrl_obs')
+        else:
+            raise TypeError('ctrls must be a list.')
+
+        super(joint_ctrls, self).__init__(
+            name=name, value=value, dtype=dtype,
+            reparameterization_type=reparameterization_type,
+            validate_args=validate_args, allow_nan_stats=allow_nan_stats)
+        self._kwargs['ctrls'] = ctrls
+
+    def _log_prob(self, value):
+        log_prob_sum = 0.0
+
+        for agent_ctrl in self.ctrls:
+            agent_value = tf.gather(value, agent_ctrl.cols, axis=-1)
+            log_prob_sum += agent_ctrl.log_prob(agent_value)
+
+        return log_prob_sum
+        # return tf.reduce_sum(ctrl.log_prob(
+        #     tf.gather(value, ctrl.cols, axis=-1)) for ctrl in self.ctrls)
+
+    def update_ctrl(self, errors, u_prev):
+        return tf.concat(
+            [ctrl.update_ctrl(tf.gather(errors, ctrl.cols, axis=-1),
+                              tf.gather(u_prev, ctrl.cols, axis=-1))
+             for ctrl in self.ctrls], 0, name='concat_u')
