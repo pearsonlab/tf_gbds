@@ -333,205 +333,191 @@ def get_agent_params(name, agent_dim, agent_cols, state_dim, extra_dim,
                      penalty_ctrl, ctrl_residual_tolerance,
                      signal_clip, clip_range, clip_tol, eta,
                      penalty_ctrl_error):
-    NN, _ = get_network('GMM_%s' % name, (state_dim + extra_dim),
-                        (GMM_K * agent_dim * 2 + GMM_K), hidden_dim, n_layers,
-                        PKLparams)
-    g0_params = init_g0_params(name, agent_dim, GMM_K)
-    agent_vel = vel[agent_cols]
-    PID_params = get_PID_priors(name, agent_dim, agent_vel)
-    params = dict(name=name, agent_dim=agent_dim, agent_cols=agent_cols,
-                  state_dim=state_dim, extra_dim=extra_dim,
-                  GMM_K=GMM_K, GMM_NN=NN, g0_params=g0_params,
-                  sigma=sigma, bounds_g=boundaries_goal, pen_g=penalty_goal,
-                  agent_vel=agent_vel, PID_params=PID_params, epsilon=epsilon,
-                  pen_u=penalty_ctrl, u_res_tol=ctrl_residual_tolerance,
-                  clip=signal_clip, clip_range=clip_range, clip_tol=clip_tol,
-                  eta=eta, pen_ctrl_error=penalty_ctrl_error)
 
-    return params
+    with tf.name_scope('%s_params' % name):
+        NN, _ = get_network(
+            'GMM_%s' % name, (state_dim + extra_dim),
+            (GMM_K * agent_dim * 2 + GMM_K), hidden_dim, n_layers, PKLparams)
+        g0_params = init_g0_params(agent_dim, GMM_K)
+        agent_vel = vel[agent_cols]
+        PID_params = get_PID_priors(agent_dim, agent_vel)
+
+        params = dict(
+            name=name, agent_dim=agent_dim, agent_cols=agent_cols,
+            state_dim=state_dim, extra_dim=extra_dim, GMM_K=GMM_K, GMM_NN=NN,
+            g0_params=g0_params, sigma=sigma, bounds_g=boundaries_goal,
+            pen_g=penalty_goal, agent_vel=agent_vel, PID_params=PID_params,
+            epsilon=epsilon, pen_u=penalty_ctrl,
+            u_res_tol=ctrl_residual_tolerance, clip=signal_clip,
+            clip_range=clip_range, clip_tol=clip_tol, eta=eta,
+            pen_ctrl_error=penalty_ctrl_error)
+
+        return params
 
 
 def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
-                PKLparams, batchnorm=False, is_shooter=False,
+                PKLparams=None, batchnorm=False, is_shooter=False,
                 row_sparse=False, add_pklayers=False, filt_size=None):
     """Returns a NN with the specified parameters.
     Also returns a list of PKBias layers
     """
-    PKbias_layers = []
-    NN = models.Sequential(name=name)
-    with tf.name_scope('%s_input' % name):
-        NN.add(layers.InputLayer(input_shape=(None, input_dim),
-                                       name='%s_Input' % name))
 
-    with tf.name_scope('%s_batchnorm' % name):
+    with tf.variable_scope(name):
+        M = models.Sequential()
+        PKbias_layers = []
+        M.add(layers.InputLayer(input_shape=(None, input_dim), name='Input'))
         if batchnorm:
-            NN.add(layers.BatchNormalization(name='%s_BatchNorm' % name))
-    with tf.name_scope('%s_filter' % name):
-        if filt_size is not None:  # first layer convolution
-            NN.add(layers.ZeroPadding1D(padding=(filt_size - 1, 0),
-                                              name='%s_ZeroPadding' % name))
-            NN.add(layers.Conv1D(
-                filters=hidden_dim, kernel_size=filt_size, padding='valid',
-                activation=tf.nn.relu, name='%s_Conv1D' % name))
-    with tf.name_scope('%s_layers' % name):
+            M.add(layers.BatchNormalization(name='BatchNorm'))
+        if filt_size is not None:
+            M.add(layers.ZeroPadding1D(padding=(filt_size - 1, 0),
+                                       name='ZeroPadding'))
+            M.add(layers.Conv1D(filters=hidden_dim, kernel_size=filt_size,
+                                padding='valid', activation=tf.nn.relu,
+                                name='Conv1D'))
+
         for i in range(num_layers):
-            with tf.name_scope('%s_PK_Bias' % name):
+            with tf.variable_scope('PK_Bias'):
                 if is_shooter and add_pklayers:
                     if row_sparse:
                         PK_bias = PKRowBiasLayer(
-                            NN, PKLparams,
-                            name='%s_PKRowBias_%s' % (name, i+1))
+                            M, PKLparams,
+                            name='PKRowBias_%s' % (i + 1))
                     else:
                         PK_bias = PKBiasLayer(
-                            NN, PKLparams,
-                            name='%s_PKBias_%s' % (name, i+1))
+                            M, PKLparams,
+                            name='PKBias_%s' % (i + 1))
                     PKbias_layers.append(PK_bias)
-                    NN.add(PK_bias)
+                    M.add(PK_bias)
 
             if i == num_layers - 1:
-                NN.add(layers.Dense(
-                    output_dim, name='%s_Dense_%s' % (name, i+1),
+                M.add(layers.Dense(
+                    output_dim, activation='linear',
                     kernel_initializer=tf.random_normal_initializer(
-                        stddev=0.1)))
-                NN.add(layers.Activation(
-                    activation='linear',
-                    name='%s_Activation_%s' % (name, i+1)))
+                        stddev=0.1), name='Dense_%s' % (i + 1)))
             else:
-                NN.add(layers.Dense(
-                    hidden_dim, name='%s_Dense_%s' % (name, i+1),
-                    kernel_initializer=tf.orthogonal_initializer()))
-                NN.add(layers.Activation(
-                    activation='relu',
-                    name='%s_Activation_%s' % (name, i+1)))
-    return NN, PKbias_layers
+                M.add(layers.Dense(
+                    hidden_dim, activation='relu',
+                    kernel_initializer=tf.orthogonal_initializer(),
+                    name='Dense_%s' % (i + 1)))
+
+        return M, PKbias_layers
 
 
-def get_rec_params(obs_dim, extra_dim, lag, num_layers, hidden_dim,
+def get_rec_params(obs_dim, extra_dim, agent_dim, lag, num_layers, hidden_dim,
                    penalty_Q=None, PKLparams=None, name='recognition'):
     """Return a dictionary of timeseries-specific parameters for recognition
        model
     """
 
-    with tf.name_scope('%s_mu' % name):
+    with tf.name_scope('%s_params' % name):
         mu_net, PKbias_layers_mu = get_network(
-            '%s_mu' % name, (obs_dim * (lag + 1) + extra_dim), obs_dim,
-            hidden_dim, num_layers, PKLparams, batchnorm=False)
-
-    with tf.name_scope('%s_lambda' % name):
+            'Mu_NN', (obs_dim * (lag + 1) + extra_dim), agent_dim,
+            hidden_dim, num_layers, PKLparams)
         lambda_net, PKbias_layers_lambda = get_network(
-            '%s_lambda' % name, obs_dim * (lag + 1) + extra_dim, obs_dim**2,
-            hidden_dim, num_layers, PKLparams, batchnorm=False)
-
-    with tf.name_scope('%s_lambdaX' % name):
+            'Lambda_NN', obs_dim * (lag + 1) + extra_dim,
+            agent_dim ** 2, hidden_dim, num_layers, PKLparams)
         lambdaX_net, PKbias_layers_lambdaX = get_network(
-            '%s_lambdaX' % name, obs_dim * (lag + 1) + extra_dim, obs_dim**2,
-            hidden_dim, num_layers, PKLparams, batchnorm=False)
+            'LambdaX_NN', obs_dim * (lag + 1) + extra_dim,
+            agent_dim ** 2, hidden_dim, num_layers, PKLparams)
 
-    with tf.name_scope('%s_Dyn_params' % name):
-        Dyn_params = dict(
-            A=tf.Variable(.9 * np.eye(obs_dim), name='A', dtype=tf.float32),
-            QinvChol=tf.Variable(np.eye(obs_dim),
-                                 name='QinvChol', dtype=tf.float32),
-            Q0invChol=tf.Variable(np.eye(obs_dim),
-                                  name='Q0invChol', dtype=tf.float32))
+        with tf.name_scope('%s_Dyn_params'):
+            Dyn_params = dict(
+                A=tf.Variable(
+                    .9 * np.eye(obs_dim), name='A', dtype=tf.float32),
+                QinvChol=tf.Variable(
+                    np.eye(obs_dim), name='QinvChol', dtype=tf.float32),
+                Q0invChol=tf.Variable(
+                    np.eye(obs_dim), name='Q0invChol', dtype=tf.float32))
 
-    rec_params = dict(
-        Dyn_params=Dyn_params,
-        NN_Mu=dict(network=mu_net,
-                   PKbias_layers=PKbias_layers_mu),
-        NN_Lambda=dict(network=lambda_net,
-                       PKbias_layers=PKbias_layers_lambda),
-        NN_LambdaX=dict(network=lambdaX_net,
-                        PKbias_layers=PKbias_layers_lambdaX),
-        lag=lag)
+        rec_params = dict(
+            Dyn_params=Dyn_params,
+            NN_Mu=dict(network=mu_net,
+                       PKbias_layers=PKbias_layers_mu),
+            NN_Lambda=dict(network=lambda_net,
+                           PKbias_layers=PKbias_layers_lambda),
+            NN_LambdaX=dict(network=lambdaX_net,
+                            PKbias_layers=PKbias_layers_lambdaX),
+            lag=lag)
 
-    with tf.name_scope('penalty_Q'):
-        if penalty_Q is not None:
-            rec_params['p'] = penalty_Q
+        with tf.name_scope('penalty_Q'):
+            if penalty_Q is not None:
+                rec_params['p'] = penalty_Q
 
-    return rec_params
-
-
-def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
-                            yCols_agent, nlayers_gen, hidden_dim_gen,
-                            K, PKLparams, vel, sigma, eps,
-                            penalty_ctrl_error, boundaries_g, penalty_g,
-                            latent_u, clip, clip_range, clip_tol, eta, name):
-    """Return a dictionary of timeseries-specific parameters for generative
-       model
-    """
-
-    with tf.name_scope('get_states_%s' % name):
-        if add_accel:
-            get_states = get_accel
-            state_dim = obs_dim * 3
-        else:
-            get_states = get_vel
-            state_dim = obs_dim * 2
-
-    with tf.name_scope('gen_GMM_%s' % name):
-        GMM_net, _ = get_network('gen_GMM_%s' % name, (state_dim + extra_dim),
-                                 (K * obs_dim_agent * 2 + K),
-                                 hidden_dim_gen, nlayers_gen, PKLparams)
-
-    with tf.name_scope('PID_%s' % name):
-        PID_params = init_PID_params(name, obs_dim_agent, vel[yCols_agent])
-
-    with tf.name_scope('initial_goal_%s' % name):
-        g0_params = init_g0_params(name, obs_dim_agent, K)
-
-    gen_params = dict(all_vel=vel,
-                      vel=vel[yCols_agent],
-                      yCols=yCols_agent,  # which columns belong to the agent
-                      sigma=sigma,
-                      eps=eps,
-                      pen_ctrl_error=penalty_ctrl_error,
-                      bounds_g=boundaries_g,
-                      pen_g=penalty_g,
-                      latent_u=latent_u,
-                      clip=clip,
-                      clip_range=clip_range,
-                      clip_tol=clip_tol,
-                      eta=eta,
-                      get_states=get_states,
-                      PID_params=PID_params,
-                      g0_params=g0_params,
-                      GMM_net=GMM_net,
-                      GMM_k=K)
-
-    return gen_params
+        return rec_params
 
 
-def get_PID_priors(agent, dim, vel):
+# def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
+#                             yCols_agent, nlayers_gen, hidden_dim_gen,
+#                             K, PKLparams, vel, sigma, eps,
+#                             penalty_ctrl_error, boundaries_g, penalty_g,
+#                             latent_u, clip, clip_range, clip_tol, eta, name):
+#     """Return a dictionary of timeseries-specific parameters for generative
+#        model
+#     """
+
+#     with tf.name_scope('get_states_%s' % name):
+#         if add_accel:
+#             get_states = get_accel
+#             state_dim = obs_dim * 3
+#         else:
+#             get_states = get_vel
+#             state_dim = obs_dim * 2
+
+#     with tf.name_scope('gen_GMM_%s' % name):
+#         GMM_net, _ = get_network('gen_GMM_%s' % name, (state_dim + extra_dim),
+#                                  (K * obs_dim_agent * 2 + K),
+#                                  hidden_dim_gen, nlayers_gen, PKLparams)
+
+#     with tf.name_scope('PID_%s' % name):
+#         PID_params = init_PID_params(name, obs_dim_agent, vel[yCols_agent])
+
+#     with tf.name_scope('initial_goal_%s' % name):
+#         g0_params = init_g0_params(name, obs_dim_agent, K)
+
+#     gen_params = dict(all_vel=vel,
+#                       vel=vel[yCols_agent],
+#                       yCols=yCols_agent,  # which columns belong to the agent
+#                       sigma=sigma,
+#                       eps=eps,
+#                       pen_ctrl_error=penalty_ctrl_error,
+#                       bounds_g=boundaries_g,
+#                       pen_g=penalty_g,
+#                       latent_u=latent_u,
+#                       clip=clip,
+#                       clip_range=clip_range,
+#                       clip_tol=clip_tol,
+#                       eta=eta,
+#                       get_states=get_states,
+#                       PID_params=PID_params,
+#                       g0_params=g0_params,
+#                       GMM_net=GMM_net,
+#                       GMM_k=K)
+
+#     return gen_params
+
+
+def get_PID_priors(dim, vel):
     """Return a dictionary of PID controller parameters
     """
-    PID_priors = {}
-    # PID_params['unc_Kp'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
-    #                                    name='unc_Kp_%s' % player,
-    #                                    dtype=tf.float32)
-    # PID_params['unc_Ki'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
-    #                                    name='unc_Ki_%s' % player,
-    #                                    dtype=tf.float32)
-    # PID_params['unc_Kd'] = tf.Variable(initial_value=np.zeros((Dim, 1)),
-    #                                    name='unc_Kd_%s' % player,
-    #                                    dtype=tf.float32)
-    PID_priors['Kp'] = Gamma(np.ones(dim, np.float32) * 2,
-                             np.ones(dim, np.float32) * vel,
-                             name='Kp_p_%s' % agent,
-                             value=np.ones(dim, np.float32) / vel)
-    PID_priors['Ki'] = Exponential(np.ones(dim, np.float32) / vel,
-                                   name='Ki_p_%s' % agent,
-                                   value=np.zeros(dim, np.float32))
-    PID_priors['Kd'] = Exponential(np.ones(dim, np.float32),
-                                   name='Kd_p_%s' % agent,
-                                   value=np.zeros(dim, np.float32))
+    with tf.name_scope('PID_priors'):
+        PID_priors = {}
 
-    return PID_priors
+        PID_priors['Kp'] = Gamma(
+            np.ones(dim, np.float32) * 2, np.ones(dim, np.float32) * vel,
+            name='Kp_prior', value=np.ones(dim, np.float32) / vel)
+        PID_priors['Ki'] = Exponential(
+            np.ones(dim, np.float32) / vel, name='Ki_prior',
+            value=np.zeros(dim, np.float32))
+        PID_priors['Kd'] = Exponential(
+            np.ones(dim, np.float32), name='Kd_prior',
+            value=np.zeros(dim, np.float32))
+
+        return PID_priors
 
 
 class Point_Mass(PointMass):
     def __init__(self, params, validate_args=True, allow_nan_stats=True,
-                 name="Point_Mass"):
+                 name="PointMass"):
         super(Point_Mass, self).__init__(
             params=params, validate_args=validate_args,
             allow_nan_stats=allow_nan_stats, name=name)
@@ -543,40 +529,38 @@ class Point_Mass(PointMass):
         return tf.zeros([])
 
 
-def get_PID_posteriors(agent, dim):
-    PID_posteriors = {}
+def get_PID_posteriors(dim):
+    with tf.name_scope('PID_posteriors'):
+        PID_posteriors = {}
 
-    unc_Kp_q = tf.Variable(tf.random_normal([dim]),
-                           name='unc_Kp_q_%s' % agent)
-    unc_Ki_q = tf.Variable(tf.random_normal([dim]),
-                           name='unc_Ki_q_%s' % agent)
-    unc_Kd_q = tf.Variable(tf.random_normal([dim]),
-                           name='unc_Kd_q_%s' % agent)
-    PID_posteriors['vars'] = ([unc_Kp_q] + [unc_Ki_q] + [unc_Kd_q])
+        unc_Kp_q = tf.Variable(tf.random_normal([dim]), name='unc_Kp_q')
+        unc_Ki_q = tf.Variable(tf.random_normal([dim]), name='unc_Ki_q')
+        unc_Kd_q = tf.Variable(tf.random_normal([dim]), name='unc_Kd_q')
+        PID_posteriors['vars'] = ([unc_Kp_q] + [unc_Ki_q] + [unc_Kd_q])
 
-    PID_posteriors['Kp'] = Point_Mass(
-        params=tf.nn.softplus(unc_Kp_q), name='Kp_q_%s' % agent)
-    PID_posteriors['Ki'] = Point_Mass(
-        params=tf.nn.softplus(unc_Ki_q), name='Ki_q_%s' % agent)
-    PID_posteriors['Kd'] = Point_Mass(
-        params=tf.nn.softplus(unc_Kd_q), name='Kd_q_%s' % agent)
+        PID_posteriors['Kp'] = Point_Mass(
+            params=tf.nn.softplus(unc_Kp_q), name='Kp_posterior')
+        PID_posteriors['Ki'] = Point_Mass(
+            params=tf.nn.softplus(unc_Ki_q), name='Ki_posterior')
+        PID_posteriors['Kd'] = Point_Mass(
+            params=tf.nn.softplus(unc_Kd_q), name='Kd_posterior')
 
-    return PID_posteriors
+        return PID_posteriors
 
 
-def init_g0_params(agent, dim, K):
-    g0_params = {}
-    g0_params['K'] = K
-    g0_params['mu'] = tf.Variable(tf.random_normal([K, dim]),
-                                  dtype=tf.float32,
-                                  name='g0_mu_%s' % agent)
-    g0_params['unc_lambda'] = tf.Variable(tf.random_normal([K, dim]),
-                                          dtype=tf.float32,
-                                          name='g0_unc_lambda_%s' % agent)
-    g0_params['unc_w'] = tf.Variable(tf.ones([K]), dtype=tf.float32,
-                                     name='g0_unc_w_%s' % agent)
+def init_g0_params(dim, K):
+    with tf.name_scope('g0_params'):
+        g0_params = {}
+        
+        g0_params['K'] = K
+        g0_params['mu'] = tf.Variable(tf.random_normal([K, dim]),
+                                      dtype=tf.float32, name='mu')
+        g0_params['unc_lambda'] = tf.Variable(
+            tf.random_normal([K, dim]), dtype=tf.float32, name='unc_lambda')
+        g0_params['unc_w'] = tf.Variable(
+            tf.ones([K]), dtype=tf.float32, name='unc_w')
 
-    return g0_params
+        return g0_params
 
 
 def batch_generator(arrays, batch_size, randomize=True):

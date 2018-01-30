@@ -51,67 +51,78 @@ class GBDS_u(RandomVariable, Distribution):
           value: The Random Variable sample of control signal
         """
 
-        self.g = tf.identity(goals, name='goals')
-        self.y = positions
-        self.dim = GenerativeParams['agent_dim']
-        self.cols = GenerativeParams['agent_cols']
-        self.B = tf.shape(positions)[0]  # batch size
-        self.Tt = tf.shape(positions)[1]
-        self.pen_u = GenerativeParams['pen_u']
-        self.res_tol = GenerativeParams['u_res_tol']
-        self.clip = GenerativeParams['clip']
-        self.vel = tf.constant(
-            GenerativeParams['agent_vel'], dtype=tf.float32, shape=[self.dim],
-            name='velocity')
+        with tf.name_scope(name):
+            self.g = tf.identity(goals, name='goals')
+            self.y = tf.identity(positions, name='positions')
+            self.dim = GenerativeParams['agent_dim']
+            self.cols = tf.identity(GenerativeParams['agent_cols'],
+                                    name='agent_columns')
+            self.B = tf.identity(tf.shape(positions)[0], name='batch_size')
+            self.Tt = tf.identity(tf.shape(positions)[1], name='trial_length')
+            self.vel = tf.constant(
+                GenerativeParams['agent_vel'], dtype=tf.float32,
+                shape=[self.dim], name='velocity')
+            self.pen_u = tf.constant(
+                GenerativeParams['pen_u'], dtype=tf.float32,
+                name='control_residual_penalty')
+            self.res_tol = tf.constant(
+                GenerativeParams['u_res_tol'], dtype=tf.float32,
+                name='control_residual_tolerance')
 
-        with tf.name_scope('PID_control'):
-            with tf.name_scope('parameters'):
-                # coefficients for PID controller (one for each dimension)
-                # https://en.wikipedia.org/wiki/PID_controller
-                # Discrete_implementation
-                PID_params = GenerativeParams['PID_params']
-                # priors of PID parameters
-                self.Kp = PID_params['Kp']
-                self.Ki = PID_params['Ki']
-                self.Kd = PID_params['Kd']
-            with tf.name_scope('filter'):
-                # calculate coefficients to be placed in convolutional filter
-                t_coeff = self.Kp + self.Ki + self.Kd
-                t1_coeff = -self.Kp - 2 * self.Kd
-                t2_coeff = self.Kd
-                # concatenate coefficients into filter
-                self.L = tf.stack([t2_coeff, t1_coeff, t_coeff], axis=1,
-                                  name='PID_conv_filter')
+            with tf.name_scope('PID_control'):
+                with tf.name_scope('parameters'):
+                    # coefficients for PID controller (one for each dimension)
+                    # https://en.wikipedia.org/wiki/PID_controller
+                    # Discrete_implementation
+                    PID_params = GenerativeParams['PID_params']
+                    # priors of PID parameters
+                    self.Kp = PID_params['Kp']
+                    self.Ki = PID_params['Ki']
+                    self.Kd = PID_params['Kd']
+                    self.params = [self.Kp] + [self.Ki] + [self.Kd]
+                with tf.name_scope('filter'):
+                    # calculate coefficients in convolutional filter
+                    t_coeff = self.Kp + self.Ki + self.Kd
+                    t1_coeff = -self.Kp - 2 * self.Kd
+                    t2_coeff = self.Kd
+                    # concatenate coefficients into filter
+                    self.L = tf.stack([t2_coeff, t1_coeff, t_coeff], axis=1,
+                                      name='PID_convolution_filter')
 
-        with tf.name_scope('control_signal'):
-            if ctrl_obs is not None:
-                self.ctrl_obs = tf.identity(ctrl_obs, name='ctrl_obs')
-            else:
-                self.ctrl_obs = tf.divide(self.y[:, 1:] - self.y[:, :-1],
-                                          self.vel, name='ctrl_obs')
-        with tf.name_scope('control_signal_censoring'):
-            # clipping signal
-            if self.clip:
-                self.clip_range = GenerativeParams['clip_range']
-                self.clip_tol = GenerativeParams['clip_tol']
-                self.eta = GenerativeParams['eta']
-        with tf.name_scope('control_signal_noise'):
-            # noise coefficient on control signals
-            self.eps = tf.constant(
-                GenerativeParams['epsilon'] * np.ones((1, self.dim)),
-                dtype=tf.float32, name='epsilon')
-        with tf.name_scope('control_signal_penalty'):
-            # penalty on control error
-            if GenerativeParams['pen_ctrl_error'] is not None:
-                self.pen_ctrl_error = GenerativeParams['pen_ctrl_error']
-            else:
-                self.pen_ctrl_error = None
+            with tf.name_scope('control_signal'):
+                if ctrl_obs is not None:
+                    self.ctrl_obs = tf.identity(ctrl_obs,
+                                                name='observed_control')
+                else:
+                    self.ctrl_obs = tf.divide(
+                        tf.subtract(self.y[:, 1:], self.y[:, :-1],
+                                    name='distance'),
+                        self.vel, name='observed_control')
+            with tf.name_scope('control_signal_censoring'):
+                # clipping signal
+                self.clip = GenerativeParams['clip']
+                if self.clip:
+                    self.clip_range = GenerativeParams['clip_range']
+                    self.clip_tol = GenerativeParams['clip_tol']
+                    self.eta = GenerativeParams['eta']
+            # with tf.name_scope('control_signal_noise'):
+            #     # noise coefficient on control signals
+            #     self.eps = tf.constant(
+            #         GenerativeParams['epsilon'] * np.ones((1, self.dim)),
+            #         dtype=tf.float32, name='epsilon')
+            with tf.name_scope('control_signal_penalty'):
+                # penalty on control error
+                if GenerativeParams['pen_ctrl_error'] is not None:
+                    self.pen_ctrl_error = tf.constant(
+                        GenerativeParams['pen_ctrl_error'], dtype=tf.float32,
+                        name='control_error_penalty')
+                else:
+                    self.pen_ctrl_error = None
 
         super(GBDS_u, self).__init__(
             name=name, value=value, dtype=dtype,
             reparameterization_type=reparameterization_type,
-            validate_args=validate_args, allow_nan_stats=allow_nan_stats,
-            graph_parents=[self.g])
+            validate_args=validate_args, allow_nan_stats=allow_nan_stats)
 
         self._kwargs['goals'] = goals
         self._kwargs['positions'] = positions
@@ -159,7 +170,8 @@ class GBDS_u(RandomVariable, Distribution):
         """
 
         l_b = tf.add(self.clip_range[0], self.clip_tol, name='lower_bound')
-        u_b = tf.subtract(self.clip_range[1], self.clip_tol, name='upper_bound')
+        u_b = tf.subtract(self.clip_range[1], self.clip_tol,
+                          name='upper_bound')
         eta = self.eta
 
         def z(x, loc, scale):
@@ -195,20 +207,21 @@ class GBDS_u(RandomVariable, Distribution):
 
         LogDensity = 0.0
         # calculate loss on control signal
-        if self.clip:
-            LogDensity += tf.reduce_sum(
-                self.clip_log_prob(self.ctrl_obs, value[:, :-1]), [1, 2],
-                name='clipping_noise')
+        with tf.name_scope('clipping_noise'):
+            if self.clip:
+                LogDensity += tf.reduce_sum(
+                    self.clip_log_prob(self.ctrl_obs, value[:, :-1]), [1, 2])
 
-        u_res = tf.subtract(value[:, :-1], u_pred,
-                            name='control_signal_residual')
-        # LogDensity -= tf.reduce_sum(
-        #     (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
-        #      u_res ** 2 / (2 * self.eps ** 2)), [1, 2])
-        LogDensity -= tf.reduce_sum(self.pen_u * tf.nn.relu(
-            u_res - self.res_tol), axis=[1, 2])
-        LogDensity -= tf.reduce_sum(self.pen_u * tf.nn.relu(
-            -u_res - self.res_tol), axis=[1, 2])
+        with tf.name_scope('control_signal'):
+            u_res = tf.subtract(value[:, :-1], u_pred,
+                                name='control_signal_residual')
+            # LogDensity -= tf.reduce_sum(
+            #     (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
+            #      u_res ** 2 / (2 * self.eps ** 2)), [1, 2])
+            LogDensity -= tf.reduce_sum(self.pen_u * tf.nn.relu(
+                u_res - self.res_tol), axis=[1, 2])
+            LogDensity -= tf.reduce_sum(self.pen_u * tf.nn.relu(
+                -u_res - self.res_tol), axis=[1, 2])
         with tf.name_scope('control_error_penalty'):
             # penalty on ctrl error
             if self.pen_ctrl_error is not None:
@@ -218,11 +231,6 @@ class GBDS_u(RandomVariable, Distribution):
                     tf.nn.relu(-ctrl_error - 1.0), [1, 2])
 
         return tf.reduce_mean(LogDensity) / tf.cast(self.Tt - 1, tf.float32)
-
-    def getParams(self):
-        """Return the learnable parameters of the model
-        """
-        return ([self.Kp] + [self.Ki] + [self.Kd])
 
     def update_ctrl(self, errors, u_prev):
         u_diff = tf.reduce_sum(errors * tf.transpose(self.L), 0,
@@ -236,8 +244,7 @@ class GBDS_g(RandomVariable, Distribution):
     """A customized Random Variable of goal in Goal-Based Dynamical System
     """
 
-    def __init__(self, GenerativeParams, states,
-                 extra_conds=None, ctrl_obs=None,
+    def __init__(self, GenerativeParams, states, extra_conds=None,
                  name='GBDS_g', value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
@@ -275,47 +282,56 @@ class GBDS_g(RandomVariable, Distribution):
           value: The Random Variable sample of goal.
         """
 
-        self.states = states
-        self.dim = GenerativeParams['agent_dim']
-        self.cols = GenerativeParams['agent_cols']
-        self.B = tf.shape(states)[0]  # batch size
-        self.Tt = tf.shape(states)[1]
-        self.extra_conds = extra_conds
-        self.ctrl_obs = ctrl_obs
+        with tf.name_scope(name):
+            self.s = tf.identity(states, name='states')
+            self.dim = GenerativeParams['agent_dim']
+            self.cols = tf.identity(GenerativeParams['agent_cols'],
+                                    name='agent_columns')
+            self.B = tf.identity(tf.shape(states)[0], name='batch_size')
+            self.Tt = tf.identity(tf.shape(states)[1], name='trial_length')
 
-        with tf.name_scope('g0'):
-            g0_params = GenerativeParams['g0_params']
-            self.g0_mu = g0_params['mu']
-            self.g0_unc_lambda = g0_params['unc_lambda']
-            self.g0_lambda = tf.nn.softplus(self.g0_unc_lambda,
-                                            name='softplus_g0_lambda')
-            self.g0_unc_w = g0_params['unc_w']
-            self.g0_w = tf.nn.softmax(self.g0_unc_w,
-                                      name='softmax_g0_w')
-            self.g0_params = ([self.g0_mu] + [self.g0_unc_lambda] +
-                              [self.g0_unc_w])
+            with tf.name_scope('extra_conditions'):
+                if extra_conds is not None:
+                    self.extra_conds = tf.identity(extra_conds,
+                                                   name='extra_conditions')
+                else:
+                    self.extra_conds = None
 
-        with tf.name_scope('GMM_neural_network'):
-            self.GMM_K = GenerativeParams['GMM_K']  # number of GMM components
-            self.GMM_NN = GenerativeParams['GMM_NN']
+            with tf.name_scope('g0'):
+                g0_params = GenerativeParams['g0_params']
+                self.g0_mu = tf.identity(g0_params['mu'], name='mu')
+                self.g0_lambda = tf.nn.softplus(
+                    g0_params['unc_lambda'], name='lambda')
+                self.g0_w = tf.nn.softmax(g0_params['unc_w'], name='w')
+                self.g0_params = ([g0_params['mu']] +
+                                  [g0_params['unc_lambda']] +
+                                  [g0_params['unc_w']])
 
-        with tf.name_scope('goal_state_noise'):
-            # noise coefficient on goal states
-            self.sigma = tf.constant(
-                GenerativeParams['sigma'] * np.ones((1, self.dim)),
-                dtype=tf.float32, name='sigma')
+            with tf.name_scope('GMM_neural_network'):
+                # number of GMM components
+                self.GMM_K = GenerativeParams['GMM_K']
+                self.GMM_NN = GenerativeParams['GMM_NN']
 
-        with tf.name_scope('goal_boundary_penalty'):
-            with tf.name_scope('boundary'):
+            self.params = self.g0_params + self.GMM_NN.variables
+
+            with tf.name_scope('goal_state_noise'):
+                # noise coefficient on goal states
+                self.sigma = tf.constant(
+                    GenerativeParams['sigma'] * np.ones((1, self.dim)),
+                    dtype=tf.float32, name='sigma')
+
+            with tf.name_scope('goal_state_boundary'):
                 # corresponding boundaries for pen_g
                 if GenerativeParams['bounds_g'] is not None:
                     self.bounds_g = GenerativeParams['bounds_g']
                 else:
                     self.bounds_g = [-1., 1.]
-            with tf.name_scope('penalty'):
+            with tf.name_scope('goal_state_penalty'):
                 # penalty on goal state escaping boundaries
                 if GenerativeParams['pen_g'] is not None:
-                    self.pen_g = GenerativeParams['pen_g']
+                    self.pen_g = tf.constant(
+                        GenerativeParams['pen_g'], dtype=tf.float32,
+                        name='goal_boundary_penalty')
                 else:
                     self.pen_g = None
 
@@ -344,9 +360,9 @@ class GBDS_g(RandomVariable, Distribution):
                 2 * self.GMM_K * self.dim)], name='softplus_lambda'),
             [self.B, -1, self.GMM_K, self.dim], name='all_lambda')
 
-        all_w = tf.reshape(tf.nn.softmax(
-            self.GMM_NN(s)[:, :, (2 * self.GMM_K * self.dim):],
-            dim=-1, name='softmax_w'), [self.B, -1, self.GMM_K], name='all_w')
+        all_w = tf.nn.softmax(tf.reshape(self.GMM_NN(s)[:, :, (
+            2 * self.GMM_K * self.dim):], [self.B, -1, self.GMM_K],
+            name='reshape_w'), dim=-1, name='all_w')
 
         next_g = tf.divide(tf.expand_dims(g, 2) + all_mu * all_lambda,
                            1 + all_lambda, name='next_goals')
@@ -356,7 +372,7 @@ class GBDS_g(RandomVariable, Distribution):
     def _log_prob(self, value):
         with tf.name_scope('next_step_prediction'):
             _, all_lambda, all_w, g_pred = self.get_preds(
-                self.states[:, :-1], value[:, :-1], self.extra_conds)
+                self.s[:, :-1], value[:, :-1], self.extra_conds)
 
         LogDensity = 0.0
         with tf.name_scope('goal_states'):
@@ -388,15 +404,7 @@ class GBDS_g(RandomVariable, Distribution):
                 LogDensity -= self.pen_g * tf.reduce_sum(
                     tf.nn.relu(value - self.bounds_g[1]), axis=[1, 2])
 
-        LogDensity = tf.reduce_mean(LogDensity) / tf.cast(self.Tt, tf.float32)
-
-        # with tf.name_scope('control_model'):
-        #     LogDensity += GBDS_u(
-        #         self.GenerativeParams, value,
-        #         tf.gather(self.states, self.cols, axis=-1), name='ctrl_model',
-        #         value=tf.zeros_like(value))._log_prob(value=None)
-
-        return LogDensity
+        return tf.reduce_mean(LogDensity) / tf.cast(self.Tt, tf.float32)
 
     def sample_g0(self):
         with tf.name_scope('select_component'):
@@ -444,16 +452,6 @@ class GBDS_g(RandomVariable, Distribution):
 
         return g
 
-    # def update_ctrl(self, errors, u_prev):
-    #     return GBDS_u(
-    #         self.GenerativeParams, tf.zeros([self.B, self.Tt, self.dim]),
-    #         tf.zeros([self.B, self.Tt, self.dim]), name='ctrl_model',
-    #         value=tf.zeros([self.B, self.Tt, self.dim])).update_ctrl(
-    #         errors, u_prev)
-
-    def getParams(self):
-        return self.GMM_NN.variables + self.g0_params
-
 
 class joint_goals(RandomVariable, Distribution):
     def __init__(self, goals, name='goals', value=None, dtype=tf.float32,
@@ -496,7 +494,8 @@ class joint_goals(RandomVariable, Distribution):
     #     return tf.concat(
     #         [goal.update_ctrl(tf.gather(errors, goal.cols, axis=-1),
     #                           tf.gather(u_prev, goal.cols, axis=-1))
-    #          for goal in self.goals], 0, name='concat_u')
+    #                      for goal in self.goals], 0, name='concat_u')
+
 
 class joint_ctrls(RandomVariable, Distribution):
     def __init__(self, ctrls, name='ctrls', value=None, dtype=tf.float32,

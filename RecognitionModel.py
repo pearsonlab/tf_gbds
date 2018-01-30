@@ -27,7 +27,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
     """
 
     def __init__(self, RecognitionParams, Input, xDim, yDim,
-                 extra_conds=None, nrng=None, name="SmoothingLDSTimeSeries",
+                 extra_conds=None, name="SmoothingLDSTimeSeries",
                  value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
@@ -62,45 +62,53 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                  signal
         """
 
-        self.Input = Input
-        self.Dyn_params = RecognitionParams['Dyn_params']
-        self.extra_conds = extra_conds
-        self.nrng = nrng
+        with tf.name_scope(name):
+            self.y = tf.identity(Input, name='observations')
+            self.Dyn_params = RecognitionParams['Dyn_params']
 
-        with tf.name_scope('dimension'):
-            self.xDim = xDim
-            self.yDim = yDim
-            self.B = tf.shape(Input)[0]
+            with tf.name_scope('latent_space_dimension'):
+                self.xDim = xDim
+            with tf.name_scope('observation_dimension'):
+                self.yDim = yDim
+            with tf.name_scope('batch_size'):
+                self.B = tf.shape(Input)[0]
+            with tf.name_scope('trial_length'):
+                self.Tt = tf.shape(Input)[1]
 
-        with tf.name_scope('length'):
-            self.Tt = tf.shape(Input)[1]
+            with tf.name_scope('pad_extra_conds'):
+                if extra_conds is not None:
+                    self.extra_conds = tf.identity(extra_conds,
+                                                   name='extra_conditions')
+                    self.y = pad_extra_conds(self.y, self.extra_conds)
+                else:
+                    self.extra_conds = None
 
-        with tf.name_scope('pad_extra_conds'):
-            if self.extra_conds is not None:
-                self.Input = pad_extra_conds(self.Input, self.extra_conds)
+            with tf.name_scope('Mu'):
+                # The neural network that parameterizes the state mean, mu
+                self.NN_Mu = RecognitionParams['NN_Mu']['network']
+                # Mu will automatically be of size [Batch_size x T x xDim]
+                self.Mu = self.NN_Mu(self.y)
 
-        with tf.name_scope('Mu'):
-            # This is the neural network that parameterizes the state mean, mu
-            self.NN_Mu = RecognitionParams['NN_Mu']['network']
-            # Mu will automatically be of size [Batch_size x T x xDim]
-            self.Mu = self.NN_Mu(self.Input)
+            with tf.name_scope('LambdaChol'):
+                self.NN_Lambda = RecognitionParams['NN_Lambda']['network']
+                self.NN_Lambda_output = self.NN_Lambda(self.y)
+                # Lambda will automatically be of size
+                # [Batch_size x T x xDim x xDim]
+                self.LambdaChol = tf.reshape(self.NN_Lambda_output,
+                                             [self.B, self.Tt, xDim, xDim])
 
-        with tf.name_scope('LambdaChol'):
-            self.NN_Lambda = RecognitionParams['NN_Lambda']['network']
-            self.lambda_net_out = self.NN_Lambda(self.Input)
-            # Lambda will automatically be of size
-            # [Batch_size x T x xDim x xDim]
-            self.LambdaChol = tf.reshape(self.lambda_net_out,
-                                         [self.B, self.Tt, xDim, xDim])
+            with tf.name_scope('LambdaXChol'):
+                self.NN_LambdaX = RecognitionParams['NN_LambdaX']['network']
+                self.NN_LambdaX_output = self.NN_LambdaX(self.y[:, 1:])
+                self.LambdaXChol = tf.reshape(
+                    self.NN_LambdaX_output, [self.B, self.Tt - 1, xDim, xDim])
 
-        with tf.name_scope('LambdaXChol'):
-            self.NN_LambdaX = RecognitionParams['NN_LambdaX']['network']
-            self.lambdaX_net_out = self.NN_LambdaX(self.Input[:, 1:])
-            self.LambdaXChol = tf.reshape(self.lambdaX_net_out,
-                                          [self.B, self.Tt - 1, xDim, xDim])
+            with tf.name_scope('init_posterior'):
+                self._initialize_posterior_distribution(RecognitionParams)
 
-        with tf.name_scope('init_posterior'):
-            self._initialize_posterior_distribution(RecognitionParams)
+            self.params = (self.NN_Mu.variables + self.NN_Lambda.variables +
+                           self.NN_LambdaX.variables + [self.A] +
+                           [self.QinvChol] + [self.Q0invChol])
 
         super(SmoothingLDSTimeSeries, self).__init__(
             name=name, value=value, dtype=dtype,
@@ -127,10 +135,10 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
 
         # dynamics matrix & initialize the innovations precision,
         # Batch_size x xDim x xDim
-        with tf.name_scope('dynamics_matrix'):
+        with tf.name_scope('Dynamics_matrix'):
             self.A = self.Dyn_params['A']
 
-        with tf.name_scope('init_innovations_prec'):
+        with tf.name_scope('initialize_innovations_precision'):
             with tf.name_scope('Qinv'):
                 self.QinvChol = self.Dyn_params['QinvChol']
                 self.Qinv = tf.matmul(self.QinvChol,
@@ -149,7 +157,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                 self.p = None
 
         # put together the total precision matrix #
-        with tf.name_scope('prec_matrix'):
+        with tf.name_scope('precision_matrix'):
             AQinvA = tf.matmul(tf.matmul(tf.transpose(self.A), self.Qinv),
                                self.A, name='AQinvA')
             # for now we (suboptimally) replicate a bunch of times
@@ -170,12 +178,12 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
 
             # This is our inverse covariance matrix: diagonal (AA)
             # and off-diagonal (BB) blocks.
-            with tf.name_scope('diagonal'):
+            with tf.name_scope('diagonal_blocks'):
                 self.AA = (self.Lambda +
                            tf.concat([tf.zeros([self.B, 1, self.xDim,
                                                 self.xDim]), self.LambdaX],
                                      1) + AQinvArepPlusQ)
-            with tf.name_scope('off-diagonal'):
+            with tf.name_scope('off-diagonal_blocks'):
                 self.BB = (tf.matmul(self.LambdaChol[:, :-1],
                                      tf.transpose(self.LambdaXChol,
                                                   perm=[0, 1, 3, 2])) +
@@ -189,7 +197,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             # self.old_postX = sym.compute_sym_blk_tridiag_inv_b(self.S,
             # self.V, LambdaMu) # apply inverse
 
-            with tf.name_scope('chol_decomp'):
+            with tf.name_scope('cholesky_decomposition'):
                 # compute cholesky decomposition
                 self.the_chol = blk.blk_tridiag_chol(self.AA, self.BB)
                 # intermediary (mult by R^T) -
@@ -222,19 +230,18 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
     def getSample(self, _=None):
         """Generate the sample of recognition goal or control signal
         """
-        normSamps = tf.random_normal([self.B, self.Tt, self.xDim])
-        return self.postX + blk.blk_chol_inv(self.the_chol[0],
-                                             self.the_chol[1],
-                                             tf.expand_dims(normSamps, -1),
-                                             lower=False, transpose=True)
+        norm_samp = tf.random_normal([self.B, self.Tt, self.xDim],
+                                     name='standard_normal_samples')
+        return tf.add(blk.blk_chol_inv(
+            self.the_chol[0], self.the_chol[1], tf.expand_dims(norm_samp, -1),
+            lower=False, transpose=True), self.postX, name='sample')
 
     def _log_prob(self, value):
-        return self.evalEntropy()
+        return tf.reduce_mean(self.evalEntropy())
 
     def evalEntropy(self):
         """Return the Entropy of model
-
-        # we want it to be smooth, this is a prior on being smooth... #
+        prior on smoothness
         """
         entropy = (self.ln_determinant / 2. +
                    tf.cast(self.xDim * self.Tt, tf.float32) / 2. *
@@ -244,18 +251,8 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             entropy += (self.p *
                         (tf.reduce_sum(tf.log(tf.diag_part(self.Qinv))) +
                             tf.reduce_sum(tf.log(tf.diag_part(self.Q0inv)))))
+
         return entropy / tf.cast(self.Tt, tf.float32)
-
-    def getDynParams(self):
-        """Return the dynamical parameters of the model
-        """
-        return [self.A] + [self.QinvChol] + [self.Q0invChol]
-
-    def getParams(self):
-        """Return the learnable parameters of the model
-        """
-        return (self.getDynParams() + self.NN_Mu.variables +
-                self.NN_Lambda.variables + self.NN_LambdaX.variables)
 
 
 class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
@@ -263,8 +260,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
     current to evaluate the latent.
     """
     def __init__(self, RecognitionParams, Input, xDim, yDim,
-                 extra_conds=None, nrng=None,
-                 name='SmoothingPastLDSTimeSeries',
+                 extra_conds=None, name='SmoothingPastLDSTimeSeries',
                  value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
@@ -315,7 +311,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
                 Input_ = tf.concat([Input_, lagged], -1, name='pad')
 
         super(SmoothingPastLDSTimeSeries, self).__init__(
-            RecognitionParams, Input_, xDim, yDim, extra_conds, nrng,
+            RecognitionParams, Input_, xDim, yDim, extra_conds,
             name, value, dtype, reparameterization_type,
             validate_args, allow_nan_stats)
 
