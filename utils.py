@@ -213,9 +213,7 @@ def load_data(hps):
     """
     train_data = []
     val_data = []
-    if hps.synthetic_data:
-        # data, goals = gen_data(
-        #     n_trials=2000, n_obs=100, Kp=0.6, Ki=0.3, Kd=0.1)
+    if hps.syn_data:
         data, goals = gen_data(
             n_trials=2000, n_obs=100, Kp=0.5, Ki=0.2, Kd=0.1)
         np.random.seed(hps.seed)  # set seed for consistent train/val split
@@ -229,76 +227,85 @@ def load_data(hps):
         np.save(hps.model_dir + "/train_data", train_data)
         np.save(hps.model_dir + "/val_data", val_data)
         np.save(hps.model_dir + "/val_goals", val_goals)
+
         train_conds = None
         val_conds = None
         train_ctrls = None
         val_ctrls = None
+
     elif hps.data_dir is not None:
         datafile = h5py.File(hps.data_dir, 'r')
-        trajs = np.array(datafile["trajectories"], np.float32)
+        if "trajectories" in datafile:
+            trajs = np.array(datafile["trajectories"], np.float32)
+        else:
+            raise Exception("Trajectories must be provided.")
         if "conditions" in datafile:
             conds = np.array(datafile["conditions"], np.float32)
         else:
             conds = None
+            train_conds = None
+            val_conds = None
         if "control" in datafile:
             ctrls = np.array(datafile["control"], np.float32)
         else:
             ctrls = None
-        datafile.close()
-        np.random.seed(hps.seed)  # set seed for consistent train/val split
-        train_ind = []
-        val_ind = []
-        np.random.seed(hps.seed)  # set seed for consistent train/val split
-        for i in range(len(trajs)):
-            if np.random.rand() <= hps.train_ratio:
-                train_ind.append(i)
-            else:
-                val_ind.append(i)
-        np.save(hps.model_dir + '/train_indices', train_ind)
-        np.save(hps.model_dir + '/val_indices', val_ind)
-        train_data = trajs[train_ind]
-        val_data = trajs[val_ind]
-        if conds is not None:
-            train_conds = conds[train_ind]
-            val_conds = conds[val_ind]
-        else:
-            train_conds = None
-            val_conds = None
-        if ctrls is not None:
-            train_ctrls = ctrls[train_ind]
-            val_ctrls = ctrls[val_ind]
-        else:
             train_ctrls = None
             val_ctrls = None
+        datafile.close()
+
+        if hps.val:
+            if hps.train_ratio is None:
+                train_ratio = 0.85
+            else:
+                train_ratio = hps.train_ratio
+
+            train_ind = []
+            val_ind = []
+            np.random.seed(hps.seed)  # set seed for consistent train/val split
+            for i in range(len(trajs)):
+                if np.random.rand() <= hps.train_ratio:
+                    train_ind.append(i)
+                else:
+                    val_ind.append(i)
+            np.save(hps.model_dir + '/train_indices', train_ind)
+            np.save(hps.model_dir + '/val_indices', val_ind)
+
+            train_data = trajs[train_ind]
+            val_data = trajs[val_ind]
+            if conds is not None:
+                train_conds = conds[train_ind]
+                val_conds = conds[val_ind]
+            if ctrls is not None:
+                train_ctrls = ctrls[train_ind]
+                val_ctrls = ctrls[val_ind]
+        else:
+            train_data = trajs
+            val_data = None
+            if conds is not None:
+                train_conds = conds
+                val_conds = None
+            if ctrls is not None:
+                train_ctrls = ctrls
+                val_ctrls = None
+
     else:
-        raise Exception("Data must be provided (either real or synthetic)")
+        raise Exception("Data must be provided (either real or synthetic).")
 
     return train_data, train_conds, train_ctrls, val_data, val_conds, val_ctrls
 
 
-def get_max_velocities(y_data, y_val_data):
+def get_max_velocities(datasets, dim):
     """Get the maximium velocities from data
     """
-    goalie_y_vels = []
-    ball_x_vels = []
-    ball_y_vels = []
-    for i in range(len(y_data)):
-        if np.abs(np.diff(y_data[i][:, 0])).max() > 0.001:
-            goalie_y_vels.append(np.abs(np.diff(y_data[i][:, 0])).max())
-        if np.abs(np.diff(y_data[i][:, 1])).max() > 0.001:
-            ball_x_vels.append(np.abs(np.diff(y_data[i][:, 1])).max())
-        if np.abs(np.diff(y_data[i][:, 2])).max() > 0.001:
-            ball_y_vels.append(np.abs(np.diff(y_data[i][:, 2])).max())
-    for i in range(len(y_val_data)):
-        if np.abs(np.diff(y_val_data[i][:, 0])).max() > 0.001:
-            goalie_y_vels.append(np.abs(np.diff(y_val_data[i][:, 0])).max())
-        if np.abs(np.diff(y_val_data[i][:, 1])).max() > 0.001:
-            ball_x_vels.append(np.abs(np.diff(y_val_data[i][:, 1])).max())
-        if np.abs(np.diff(y_val_data[i][:, 2])).max() > 0.001:
-            ball_y_vels.append(np.abs(np.diff(y_val_data[i][:, 2])).max())
+    max_vel = [[] for _ in range(dim)]
+    for d in range(len(datasets)):
+        for i in range(len(datasets[d])):
+            for c in range(dim):
+                if np.abs(np.diff(datasets[d][i][:, c])).max() > 0.001:
+                     max_vel[c].append(
+                        np.abs(np.diff(datasets[d][i][:, c])).max())
 
-    return np.round(np.array([max(goalie_y_vels), max(ball_x_vels),
-                              max(ball_y_vels)]), decimals=3)  # + 0.001
+    return np.round(np.array([max(vel) for vel in max_vel]), decimals=3)
 
 
 def get_vel(traj, max_vel):
@@ -695,8 +702,9 @@ def pad_batch(arrays, mode='edge'):
         return np.array([np.pad(a, ((0, max_len - len(a)), (0, 0)),
                                 'edge') for a in arrays])
     elif mode == 'zero':
-        return np.array([np.pad(a, ((0, max_len-len(a)), (0, 0)), 'constant',
-                                constant_values=0) for a in arrays])
+        return np.array(
+            [np.pad(a, ((0, max_len - len(a)), (0, 0)), 'constant',
+                    constant_values=0) for a in arrays])
 
 
 def pad_extra_conds(data, extra_conds=None):
@@ -822,17 +830,17 @@ class MultiDatasetMiniBatchIterator(object):
             yield tuple(dset[curr_rows, :] for dset in self.data)
 
 
-class hps_dict_to_obj(dict):
-    '''Helper class allowing us to access hps dictionary more easily.
-    '''
-    def __getattr__(self, key):
-        if key in self:
-            return self[key]
-        else:
-            assert False, ('%s does not exist.' % key)
+# class hps_dict_to_obj(dict):
+#     '''Helper class allowing us to access hps dictionary more easily.
+#     '''
+#     def __getattr__(self, key):
+#         if key in self:
+#             return self[key]
+#         else:
+#             assert False, ('%s does not exist.' % key)
 
-    def __setattr__(self, key, value):
-        self[key] = value
+#     def __setattr__(self, key, value):
+#         self[key] = value
 
 
 class KLqp_profile(ed.KLqp):

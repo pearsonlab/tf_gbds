@@ -56,7 +56,7 @@ class agent_model(object):
 
 
 class game_model(object):
-    def __init__(self, agents, inputs, name='penaltykick'):
+    def __init__(self, params, inputs, name='penaltykick'):
 
         self.states = inputs['states']
         self.traj = inputs['trajectories']
@@ -68,9 +68,8 @@ class game_model(object):
 
         with tf.name_scope('model'):
             if isinstance(agents, list):
-                self.agents = [agent_model(
-                    agent['params'], self.states, self.traj)
-                               for agent in agents]
+                self.agents = [agent_model(p, self.states, self.traj)
+                               for p in params]
             else:
                 raise TypeError('agents must be a list object.')
 
