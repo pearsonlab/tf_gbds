@@ -8,11 +8,9 @@ import tf_gbds.RecognitionModel as R
 from tf_gbds.utils import (load_data, get_max_velocities,
                            get_rec_params_GBDS, get_gen_params_GBDS_GMM,
                            batch_generator, batch_generator_pad, pad_batch,
-                           KLqp_profile, add_summary)
+                           hps_dict_to_obj, KLqp_profile, add_summary)
 import time
 from tensorflow.python.client import timeline
-
-# export LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
 
 MODEL_DIR = 'model_gmm'
@@ -23,8 +21,8 @@ LOAD_SAVED_MODEL = False
 SAVED_MODEL_DIR = ''
 PROFILE = False
 
-P1_DIM = 1
-P2_DIM = 2
+N_AGENTS = 1
+OBSERVE_DIM = 1
 
 REC_LAG = 10
 REC_NLAYERS = 3
@@ -35,33 +33,26 @@ GEN_HIDDEN_DIM = 64
 K = 8
 
 ADD_ACCEL = False
-LATENT_CONTROL = True
-CLIP = True
+GOAL_BOUNDARY = 1.0
+GOAL_BOUND_PENALTY = None
+SIGMA_INIT = 1e-3
+SIGMA_TRAINABLE = False
+
+LATENT_CONTROL = False
+CLIP = False
 CLIP_RANGE = 1.
 CLIP_TOL = 1e-5
 ETA = 1e-6
 CONTROL_ERROR_PENALTY = None
-EPS_INIT = 1e-10
-EPS_TRAINABLE = False
-EPS_PENALTY = None
-SIGMA_INIT = 1e-5
-SIGMA_TRAINABLE = False
-SIGMA_PENALTY = None
-# model class allows for having 2 boundaries with different penalties,
-# but we later found that unnecessary, so the CLI only takes on penalty.
-# We left the possibility for 2 penalties in the model class just in case
-# it may be useful on a different dataset/task
-GOAL_BOUNDARY = 1.0
-GOAL_BOUND_PENALTY = None
 
 SEED = 1234
 TRAIN_RATIO = 0.85
-TRAIN_OPTIMIZER = 'Adam'
+OPTIMIZER = 'Adam'
 LEARNING_RATE = 1e-3
-NUM_EPOCHS = 500
+N_EPOCHS = 500
 BATCH_SIZE = 1
-NUM_SAMPLES = 1
-NUM_POSTERIOR_SAMPLES = 30
+N_SAMPLES = 1
+N_POSTERIOR_SAMPLES = 30
 MAX_CKPT_TO_KEEP = 5
 FREQUENCY_SAVING_CKPT = 5
 FREQUENCY_VAL_LOSS = 5
@@ -209,19 +200,6 @@ def build_hyperparameter_dict(flags):
     d['frequency_val_loss'] = flags.frequency_val_loss
 
     return d
-
-
-class hps_dict_to_obj(dict):
-    '''Helper class allowing us to access hps dictionary more easily.
-    '''
-    def __getattr__(self, key):
-        if key in self:
-            return self[key]
-        else:
-            assert False, ('%s does not exist.' % key)
-
-    def __setattr__(self, key, value):
-        self[key] = value
 
 
 def run_model(hps):

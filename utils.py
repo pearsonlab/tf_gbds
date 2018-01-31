@@ -305,52 +305,69 @@ def get_vel(traj, max_vel):
     """Input a time series of positions and include velocities for each
     coordinate in each row
     """
-    vel = tf.pad((traj[:, 1:] - traj[:, :-1]) / max_vel,
-                 [[0, 0], [1, 0], [0, 0]], name='velocities')
-    states = tf.concat([traj, vel], -1, name='states')
-    return states
+    with tf.name_scope('get_velocity'):
+        vel = tf.pad(tf.divide(traj[:, 1:] - traj[:, :-1], max_vel,
+                               name='standardize'),
+                     [[0, 0], [1, 0], [0, 0]], name='pad_zero')
+        states = tf.concat([traj, vel], -1, name='states')
+
+        return states
 
 
-def get_accel(data, max_vel=None):
+def get_accel(traj, max_vel):
     """Input a time series of positions and include velocities and acceleration
     for each coordinate in each row
     """
-    if isinstance(data, tf.Tensor):
-        dims = tf.shape(data)[1]
-    else:
-        dims = data.shape[1]
-    states = get_vel(data, max_vel=None)
-    accel = data[2:] - 2 * data[1:-1] + data[:-2]
-    accel = tf.concat([tf.zeros((2, dims), np.float32), accel], 0,
-                      name='acceleration')
-    states = tf.concat([states, accel], 1, name='position_vel_accel')
-    return states
+    with tf.name_scope('get_acceleration'):
+        states = get_vel(traj, max_vel)
+        accel = traj[:, 2:] - 2 * traj[1:-1] + traj[:-2]
+        accel = tf.pad(accel, [[0, 0], [2, 0], [0, 0]])
+        states = tf.concat([states, accel], -1, name='states')
+
+        return states
 
 
-def get_agent_params(name, agent_dim, agent_cols, state_dim, extra_dim,
-                     n_layers, hidden_dim, PKLparams, GMM_K, sigma,
-                     boundaries_goal, penalty_goal, vel, epsilon,
-                     penalty_ctrl, ctrl_residual_tolerance,
+def get_agent_params(name, agent_dim, agent_cols,
+                     obs_dim, state_dim, extra_dim,
+                     n_layers_gen, hidden_dim_gen, GMM_K, sigma,
+                     boundaries_goal, penalty_goal, PKLparams, vel,
+                     latent_ctrl, lag, n_layers_rec, hidden_dim_rec,
+                     penalty_Q, penalty_ctrl, ctrl_residual_tolerance,
                      signal_clip, clip_range, clip_tol, eta,
                      penalty_ctrl_error):
 
-    with tf.name_scope('%s_params' % name):
-        NN, _ = get_network(
-            'GMM_%s' % name, (state_dim + extra_dim),
-            (GMM_K * agent_dim * 2 + GMM_K), hidden_dim, n_layers, PKLparams)
-        g0_params = init_g0_params(agent_dim, GMM_K)
+    with tf.variable_scope('%s_params' % name):
+        GMM_NN, _ = get_network('goal_GMM', (state_dim + extra_dim),
+                                (GMM_K * agent_dim * 2 + GMM_K),
+                                hidden_dim_gen, n_layers_gen, PKLparams)
+        g0 = init_g0_params(agent_dim, GMM_K)
+
+        g_q_params = get_rec_params(obs_dim, extra_dim, agent_dim, lag,
+                                    n_layers_rec, hidden_dim_rec,
+                                    penalty_Q, PKLparams, 'goal_posterior')
+
+        if latent_ctrl:
+            u_q_params = get_rec_params(obs_dim, extra_dim, agent_dim, lag,
+                                        n_layers_rec, hidden_dim_rec,
+                                        penalty_Q, PKLparams,
+                                        'control_posterior')
+        else:
+            u_q_params = None
+
         agent_vel = vel[agent_cols]
-        PID_params = get_PID_priors(agent_dim, agent_vel)
+        PID_p = get_PID_priors(agent_dim, agent_vel)
+        PID_q = get_PID_posteriors(agent_dim)
 
         params = dict(
             name=name, agent_dim=agent_dim, agent_cols=agent_cols,
-            state_dim=state_dim, extra_dim=extra_dim, GMM_K=GMM_K, GMM_NN=NN,
-            g0_params=g0_params, sigma=sigma, bounds_g=boundaries_goal,
-            pen_g=penalty_goal, agent_vel=agent_vel, PID_params=PID_params,
-            epsilon=epsilon, pen_u=penalty_ctrl,
-            u_res_tol=ctrl_residual_tolerance, clip=signal_clip,
-            clip_range=clip_range, clip_tol=clip_tol, eta=eta,
-            pen_ctrl_error=penalty_ctrl_error)
+            obs_dim=obs_dim, state_dim=state_dim, extra_dim=extra_dim,
+            GMM_K=GMM_K, GMM_NN=GMM_NN, g0=g0, sigma=sigma,
+            bounds_g=boundaries_goal, pen_g=penalty_goal,
+            g_q_params=g_q_params, agent_vel=agent_vel, latent_u=latent_ctrl,
+            u_q_params=u_q_params, PID_priors=PID_p, PID_posteriors=PID_q,
+            pen_u=penalty_ctrl, u_res_tol=ctrl_residual_tolerance,
+            clip=signal_clip, clip_range=clip_range, clip_tol=clip_tol,
+            eta=eta, pen_ctrl_error=penalty_ctrl_error)
 
         return params
 
@@ -363,7 +380,7 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
     """
 
     with tf.variable_scope(name):
-        M = models.Sequential()
+        M = models.Sequential(name='NN')
         PKbias_layers = []
         M.add(layers.InputLayer(input_shape=(None, input_dim), name='Input'))
         if batchnorm:
@@ -403,39 +420,38 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
         return M, PKbias_layers
 
 
-def get_rec_params(obs_dim, extra_dim, agent_dim, lag, num_layers, hidden_dim,
+def get_rec_params(obs_dim, extra_dim, agent_dim, lag, n_layers, hidden_dim,
                    penalty_Q=None, PKLparams=None, name='recognition'):
     """Return a dictionary of timeseries-specific parameters for recognition
        model
     """
 
-    with tf.name_scope('%s_params' % name):
-        mu_net, PKbias_layers_mu = get_network(
-            'Mu_NN', (obs_dim * (lag + 1) + extra_dim), agent_dim,
-            hidden_dim, num_layers, PKLparams)
-        lambda_net, PKbias_layers_lambda = get_network(
-            'Lambda_NN', obs_dim * (lag + 1) + extra_dim,
-            agent_dim ** 2, hidden_dim, num_layers, PKLparams)
-        lambdaX_net, PKbias_layers_lambdaX = get_network(
-            'LambdaX_NN', obs_dim * (lag + 1) + extra_dim,
-            agent_dim ** 2, hidden_dim, num_layers, PKLparams)
+    with tf.variable_scope('%s_params' % name):
+        Mu_net, PKbias_layers_mu = get_network(
+            'Mu_NN', (obs_dim * (lag + 1) + extra_dim), agent_dim, hidden_dim,
+            n_layers, PKLparams)
+        Lambda_net, PKbias_layers_lambda = get_network(
+            'Lambda_NN', obs_dim * (lag + 1) + extra_dim, agent_dim ** 2,
+            hidden_dim, n_layers, PKLparams)
+        LambdaX_net, PKbias_layers_lambdaX = get_network(
+            'LambdaX_NN', obs_dim * (lag + 1) + extra_dim, agent_dim ** 2,
+            hidden_dim, n_layers, PKLparams)
 
-        with tf.name_scope('%s_Dyn_params'):
-            Dyn_params = dict(
-                A=tf.Variable(
-                    .9 * np.eye(obs_dim), name='A', dtype=tf.float32),
-                QinvChol=tf.Variable(
-                    np.eye(obs_dim), name='QinvChol', dtype=tf.float32),
-                Q0invChol=tf.Variable(
-                    np.eye(obs_dim), name='Q0invChol', dtype=tf.float32))
+        Dyn_params = dict(
+            A=tf.Variable(
+                .9 * np.eye(obs_dim), name='A', dtype=tf.float32),
+            QinvChol=tf.Variable(
+                np.eye(obs_dim), name='QinvChol', dtype=tf.float32),
+            Q0invChol=tf.Variable(
+                np.eye(obs_dim), name='Q0invChol', dtype=tf.float32))
 
         rec_params = dict(
             Dyn_params=Dyn_params,
-            NN_Mu=dict(network=mu_net,
+            NN_Mu=dict(network=Mu_net,
                        PKbias_layers=PKbias_layers_mu),
-            NN_Lambda=dict(network=lambda_net,
+            NN_Lambda=dict(network=Lambda_net,
                            PKbias_layers=PKbias_layers_lambda),
-            NN_LambdaX=dict(network=lambdaX_net,
+            NN_LambdaX=dict(network=LambdaX_net,
                             PKbias_layers=PKbias_layers_lambdaX),
             lag=lag)
 
@@ -499,20 +515,20 @@ def get_rec_params(obs_dim, extra_dim, agent_dim, lag, num_layers, hidden_dim,
 def get_PID_priors(dim, vel):
     """Return a dictionary of PID controller parameters
     """
-    with tf.name_scope('PID_priors'):
-        PID_priors = {}
+    with tf.variable_scope('PID_priors'):
+        priors = {}
 
-        PID_priors['Kp'] = Gamma(
+        priors['Kp'] = Gamma(
             np.ones(dim, np.float32) * 2, np.ones(dim, np.float32) * vel,
-            name='Kp_prior', value=np.ones(dim, np.float32) / vel)
-        PID_priors['Ki'] = Exponential(
-            np.ones(dim, np.float32) / vel, name='Ki_prior',
+            name='Kp', value=np.ones(dim, np.float32) / vel)
+        priors['Ki'] = Exponential(
+            np.ones(dim, np.float32) / vel, name='Ki',
             value=np.zeros(dim, np.float32))
-        PID_priors['Kd'] = Exponential(
-            np.ones(dim, np.float32), name='Kd_prior',
+        priors['Kd'] = Exponential(
+            np.ones(dim, np.float32), name='Kd',
             value=np.zeros(dim, np.float32))
 
-        return PID_priors
+        return priors
 
 
 class Point_Mass(PointMass):
@@ -530,37 +546,84 @@ class Point_Mass(PointMass):
 
 
 def get_PID_posteriors(dim):
-    with tf.name_scope('PID_posteriors'):
-        PID_posteriors = {}
+    with tf.variable_scope('PID_posteriors'):
+        posteriors = {}
 
-        unc_Kp_q = tf.Variable(tf.random_normal([dim]), name='unc_Kp_q')
-        unc_Ki_q = tf.Variable(tf.random_normal([dim]), name='unc_Ki_q')
-        unc_Kd_q = tf.Variable(tf.random_normal([dim]), name='unc_Kd_q')
-        PID_posteriors['vars'] = ([unc_Kp_q] + [unc_Ki_q] + [unc_Kd_q])
+        unc_Kp = tf.Variable(tf.random_normal([dim], name='Kp_init_value'),
+                             dtype=tf.float32, name='unc_Kp')
+        unc_Ki = tf.Variable(tf.random_normal([dim], name='Ki_init_value'),
+                             dtype=tf.float32, name='unc_Ki')
+        unc_Kd = tf.Variable(tf.random_normal([dim], name='Kd_init_value'),
+                             dtype=tf.float32, name='unc_Kd')
+        posteriors['vars'] = ([unc_Kp] + [unc_Ki] + [unc_Kd])
 
-        PID_posteriors['Kp'] = Point_Mass(
-            params=tf.nn.softplus(unc_Kp_q), name='Kp_posterior')
-        PID_posteriors['Ki'] = Point_Mass(
-            params=tf.nn.softplus(unc_Ki_q), name='Ki_posterior')
-        PID_posteriors['Kd'] = Point_Mass(
-            params=tf.nn.softplus(unc_Kd_q), name='Kd_posterior')
+        posteriors['Kp'] = Point_Mass(tf.nn.softplus(unc_Kp), name='Kp')
+        posteriors['Ki'] = Point_Mass(tf.nn.softplus(unc_Ki), name='Ki')
+        posteriors['Kd'] = Point_Mass(tf.nn.softplus(unc_Kd), name='Kd')
 
-        return PID_posteriors
+        return posteriors
 
 
 def init_g0_params(dim, K):
-    with tf.name_scope('g0_params'):
-        g0_params = {}
-        
-        g0_params['K'] = K
-        g0_params['mu'] = tf.Variable(tf.random_normal([K, dim]),
-                                      dtype=tf.float32, name='mu')
-        g0_params['unc_lambda'] = tf.Variable(
-            tf.random_normal([K, dim]), dtype=tf.float32, name='unc_lambda')
-        g0_params['unc_w'] = tf.Variable(
-            tf.ones([K]), dtype=tf.float32, name='unc_w')
+    with tf.variable_scope('g0_params'):
+        g0 = {}
 
-        return g0_params
+        g0['K'] = K
+        g0['mu'] = tf.Variable(
+            tf.random_normal([K, dim], name='mu_init_value'),
+            dtype=tf.float32, name='mu')
+        g0['unc_lambda'] = tf.Variable(
+            tf.random_normal([K, dim], name='lambda_init_value'),
+            dtype=tf.float32, name='unc_lambda')
+        g0['unc_w'] = tf.Variable(
+            tf.ones([K], name='w_init_value'), dtype=tf.float32, name='unc_w')
+
+        return g0
+
+
+def generate_trial(goal_model, ctrl_model, y0=None, trial_len=100):
+    with tf.name_scope('generate_trial'):
+        dim = goal_model.dim
+        vel = ctrl_model.max_vel
+
+        with tf.name_scope('initialize'):
+            if y0 is None:
+                y0 = tf.zeros([dim], tf.float32)
+            g = tf.reshape(goal_model.sample_g0(), [1, dim], name='g0')
+            u = tf.zeros([1, dim], tf.float32, name='u0')
+            prev_error = tf.zeros([dim], tf.float32, name='prev_error')
+            prev2_error = tf.zeros([dim], tf.float32, name='prev2_error')
+            y = tf.reshape(y0, [1, dim], name='y0')
+
+        with tf.name_scope('propogate'):
+            for t in range(trial_len - 1):
+                if t == 0:
+                    v_t = tf.zeros_like(y0, tf.float32, name='v_%s' % t)
+                else:
+                    v_t = tf.subtract(y[t], y[t - 1], name='v_%s' % t)
+                s_t = tf.stack([y[t], v_t], 0, name='s_%s' % t)
+                g_new = tf.reshape(goal_model.sample_GMM(s_t, g[t]), [1, dim],
+                                   name='g_%s' % (t + 1))
+                g = tf.concat([g, g_new], 0, name='concat_g_%s' % (t + 1))
+
+                error = tf.subtract(g[t + 1], y[t], name='error_%s' % t)
+                errors = tf.stack([error, prev_error, prev2_error], 0,
+                                  name='errors_%s' % t)
+                u_new = tf.reshape(ctrl_model.update_ctrl(errors, u[t]),
+                                   [1, dim], name='u_%s' % (t + 1))
+                u = tf.concat([u, u_new], 0, name='concat_u_%s' % (t + 1))
+
+                prev2_error = prev_error
+                prev_error = error
+
+                y_new = tf.reshape(tf.clip_by_value(
+                    y[t] + vel * tf.clip_by_value(
+                        u[t + 1], -1., 1., name='clip_u_%s' % (t + 1)),
+                    -1., 1., name='bound_y_%s' % (t + 1)),
+                    [1, dim], name='y_%s' % (t + 1))
+                y = tf.concat([y, y_new], 0, name='concat_y_%s' % (t + 1))
+
+        return y, u, g
 
 
 def batch_generator(arrays, batch_size, randomize=True):
@@ -757,6 +820,19 @@ class MultiDatasetMiniBatchIterator(object):
         for beg, end in zip(beg_indices, end_indices):
             curr_rows = rows[beg:end]
             yield tuple(dset[curr_rows, :] for dset in self.data)
+
+
+class hps_dict_to_obj(dict):
+    '''Helper class allowing us to access hps dictionary more easily.
+    '''
+    def __getattr__(self, key):
+        if key in self:
+            return self[key]
+        else:
+            assert False, ('%s does not exist.' % key)
+
+    def __setattr__(self, key, value):
+        self[key] = value
 
 
 class KLqp_profile(ed.KLqp):

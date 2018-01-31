@@ -225,7 +225,8 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
     def _sample_n(self, n, seed=None):
         with tf.name_scope('samples'):
             result = tf.map_fn(self.getSample, tf.zeros([n, self.B]))
-        return tf.squeeze(result, -1)
+
+            return tf.squeeze(result, -1)
 
     def getSample(self, _=None):
         """Generate the sample of recognition goal or control signal
