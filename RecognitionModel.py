@@ -167,7 +167,6 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             AQinvrep = tf.reshape(AQinvrep,
                                   [self.Tt - 1, self.xDim, self.xDim],
                                   name='AQinvrep')
-            self.AQinvrep = AQinvrep
             AQinvArep = tf.tile(AQinvA + self.Qinv, [self.Tt - 2, 1])
             AQinvArep = tf.reshape(AQinvArep,
                                    [self.Tt - 2, self.xDim, self.xDim],

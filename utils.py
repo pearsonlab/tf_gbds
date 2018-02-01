@@ -134,8 +134,8 @@ def smooth_trial(trial, sigma=4.0, pad_method='extrapolate'):
 #     return p, g
 
 
-def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 3)))),
-             eps=np.log1p(np.exp(-10.)), Kp=1, Ki=0, Kd=0,
+def gen_data(n_trials, n_obs, sigma=1e-3 * np.ones((1, 3)),
+             eps=1e-5, Kp=1, Ki=0, Kd=0,
              vel=1. * np.ones((3))):
 
     p = []
@@ -213,7 +213,7 @@ def load_data(hps):
     """
     train_data = []
     val_data = []
-    if hps.syn_data:
+    if hps.synthetic_data:
         data, goals = gen_data(
             n_trials=2000, n_obs=100, Kp=0.5, Ki=0.2, Kd=0.1)
         np.random.seed(hps.seed)  # set seed for consistent train/val split
@@ -295,17 +295,17 @@ def load_data(hps):
 
 
 def get_max_velocities(datasets, dim):
-    """Get the maximium velocities from data
+    """Get the maximium velocities from datasets
     """
     max_vel = [[] for _ in range(dim)]
     for d in range(len(datasets)):
         for i in range(len(datasets[d])):
             for c in range(dim):
                 if np.abs(np.diff(datasets[d][i][:, c])).max() > 0.001:
-                     max_vel[c].append(
+                    max_vel[c].append(
                         np.abs(np.diff(datasets[d][i][:, c])).max())
 
-    return np.round(np.array([max(vel) for vel in max_vel]), decimals=3)
+    return np.array([max(vel) for vel in max_vel], np.float32)
 
 
 def get_vel(traj, max_vel):
@@ -313,9 +313,10 @@ def get_vel(traj, max_vel):
     coordinate in each row
     """
     with tf.name_scope('get_velocity'):
-        vel = tf.pad(tf.divide(traj[:, 1:] - traj[:, :-1], max_vel,
-                               name='standardize'),
-                     [[0, 0], [1, 0], [0, 0]], name='pad_zero')
+        vel = tf.pad(
+            tf.divide(traj[:, 1:] - traj[:, :-1], max_vel.astype(np.float32),
+                      name='standardize'), [[0, 0], [1, 0], [0, 0]],
+            name='pad_zero')
         states = tf.concat([traj, vel], -1, name='states')
 
         return states
@@ -328,53 +329,59 @@ def get_accel(traj, max_vel):
     with tf.name_scope('get_acceleration'):
         states = get_vel(traj, max_vel)
         accel = traj[:, 2:] - 2 * traj[1:-1] + traj[:-2]
-        accel = tf.pad(accel, [[0, 0], [2, 0], [0, 0]])
+        accel = tf.pad(accel, [[0, 0], [2, 0], [0, 0]], name='pad_zero')
         states = tf.concat([states, accel], -1, name='states')
 
         return states
 
 
-def get_agent_params(name, agent_dim, agent_cols,
+def get_agent_params(agent_name, agent_dim, agent_col,
                      obs_dim, state_dim, extra_dim,
-                     n_layers_gen, hidden_dim_gen, GMM_K, sigma,
-                     boundaries_goal, penalty_goal, PKLparams, vel,
-                     latent_ctrl, lag, n_layers_rec, hidden_dim_rec,
-                     penalty_Q, penalty_ctrl, ctrl_residual_tolerance,
-                     signal_clip, clip_range, clip_tol, eta,
-                     penalty_ctrl_error):
+                     gen_n_layers, gen_hidden_dim, GMM_K, PKLparams,
+                     sigma, sigma_trainable,
+                     goal_boundaries, goal_boundary_penalty,
+                     all_vel, latent_ctrl,
+                     rec_lag, rec_n_layers, rec_hidden_dim, penalty_Q,
+                     control_residual_tolerance, control_residual_penalty,
+                     clip, clip_range, clip_tolerance, clip_penalty,
+                     control_error_penalty):
 
-    with tf.variable_scope('%s_params' % name):
+    with tf.variable_scope('%s_params' % agent_name):
         GMM_NN, _ = get_network('goal_GMM', (state_dim + extra_dim),
                                 (GMM_K * agent_dim * 2 + GMM_K),
-                                hidden_dim_gen, n_layers_gen, PKLparams)
-        g0 = init_g0_params(agent_dim, GMM_K)
+                                gen_hidden_dim, gen_n_layers, PKLparams)
 
-        g_q_params = get_rec_params(obs_dim, extra_dim, agent_dim, lag,
-                                    n_layers_rec, hidden_dim_rec,
-                                    penalty_Q, PKLparams, 'goal_posterior')
+        g0 = get_g0_params(agent_dim, GMM_K)
+
+        g_q_params = get_rec_params(
+            obs_dim, extra_dim, agent_dim, rec_lag, rec_n_layers,
+            rec_hidden_dim, penalty_Q, PKLparams, 'goal_posterior')
 
         if latent_ctrl:
-            u_q_params = get_rec_params(obs_dim, extra_dim, agent_dim, lag,
-                                        n_layers_rec, hidden_dim_rec,
-                                        penalty_Q, PKLparams,
-                                        'control_posterior')
+            u_q_params = get_rec_params(
+                obs_dim, extra_dim, agent_dim, rec_lag, rec_n_layers,
+                rec_hidden_dim, penalty_Q, PKLparams, 'control_posterior')
         else:
             u_q_params = None
 
-        agent_vel = vel[agent_cols]
+        agent_vel = all_vel[agent_col]
+
         PID_p = get_PID_priors(agent_dim, agent_vel)
         PID_q = get_PID_posteriors(agent_dim)
 
         params = dict(
-            name=name, agent_dim=agent_dim, agent_cols=agent_cols,
+            name=agent_name, dim=agent_dim, col=agent_col,
             obs_dim=obs_dim, state_dim=state_dim, extra_dim=extra_dim,
-            GMM_K=GMM_K, GMM_NN=GMM_NN, g0=g0, sigma=sigma,
-            bounds_g=boundaries_goal, pen_g=penalty_goal,
-            g_q_params=g_q_params, agent_vel=agent_vel, latent_u=latent_ctrl,
-            u_q_params=u_q_params, PID_priors=PID_p, PID_posteriors=PID_q,
-            pen_u=penalty_ctrl, u_res_tol=ctrl_residual_tolerance,
-            clip=signal_clip, clip_range=clip_range, clip_tol=clip_tol,
-            eta=eta, pen_ctrl_error=penalty_ctrl_error)
+            GMM_K=GMM_K, GMM_NN=GMM_NN, g0=g0,
+            sigma=sigma, sigma_trainable=sigma_trainable,
+            g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
+            g_q_params=g_q_params, vel=agent_vel, latent_u=latent_ctrl,
+            PID_p=PID_p, PID_q=PID_q,
+            u_res_tol=control_residual_tolerance,
+            u_res_pen=control_residual_penalty,
+            clip=clip, clip_range=clip_range, clip_tol=clip_tolerance,
+            clip_pen=clip_penalty, u_error_pen=control_error_penalty,
+            u_q_params=u_q_params)
 
         return params
 
@@ -446,11 +453,11 @@ def get_rec_params(obs_dim, extra_dim, agent_dim, lag, n_layers, hidden_dim,
 
         Dyn_params = dict(
             A=tf.Variable(
-                .9 * np.eye(obs_dim), name='A', dtype=tf.float32),
+                .9 * np.eye(agent_dim), name='A', dtype=tf.float32),
             QinvChol=tf.Variable(
-                np.eye(obs_dim), name='QinvChol', dtype=tf.float32),
+                np.eye(agent_dim), name='QinvChol', dtype=tf.float32),
             Q0invChol=tf.Variable(
-                np.eye(obs_dim), name='Q0invChol', dtype=tf.float32))
+                np.eye(agent_dim), name='Q0invChol', dtype=tf.float32))
 
         rec_params = dict(
             Dyn_params=Dyn_params,
@@ -467,56 +474,6 @@ def get_rec_params(obs_dim, extra_dim, agent_dim, lag, n_layers, hidden_dim,
                 rec_params['p'] = penalty_Q
 
         return rec_params
-
-
-# def get_gen_params_GBDS_GMM(obs_dim_agent, obs_dim, extra_dim, add_accel,
-#                             yCols_agent, nlayers_gen, hidden_dim_gen,
-#                             K, PKLparams, vel, sigma, eps,
-#                             penalty_ctrl_error, boundaries_g, penalty_g,
-#                             latent_u, clip, clip_range, clip_tol, eta, name):
-#     """Return a dictionary of timeseries-specific parameters for generative
-#        model
-#     """
-
-#     with tf.name_scope('get_states_%s' % name):
-#         if add_accel:
-#             get_states = get_accel
-#             state_dim = obs_dim * 3
-#         else:
-#             get_states = get_vel
-#             state_dim = obs_dim * 2
-
-#     with tf.name_scope('gen_GMM_%s' % name):
-#         GMM_net, _ = get_network('gen_GMM_%s' % name, (state_dim + extra_dim),
-#                                  (K * obs_dim_agent * 2 + K),
-#                                  hidden_dim_gen, nlayers_gen, PKLparams)
-
-#     with tf.name_scope('PID_%s' % name):
-#         PID_params = init_PID_params(name, obs_dim_agent, vel[yCols_agent])
-
-#     with tf.name_scope('initial_goal_%s' % name):
-#         g0_params = init_g0_params(name, obs_dim_agent, K)
-
-#     gen_params = dict(all_vel=vel,
-#                       vel=vel[yCols_agent],
-#                       yCols=yCols_agent,  # which columns belong to the agent
-#                       sigma=sigma,
-#                       eps=eps,
-#                       pen_ctrl_error=penalty_ctrl_error,
-#                       bounds_g=boundaries_g,
-#                       pen_g=penalty_g,
-#                       latent_u=latent_u,
-#                       clip=clip,
-#                       clip_range=clip_range,
-#                       clip_tol=clip_tol,
-#                       eta=eta,
-#                       get_states=get_states,
-#                       PID_params=PID_params,
-#                       g0_params=g0_params,
-#                       GMM_net=GMM_net,
-#                       GMM_k=K)
-
-#     return gen_params
 
 
 def get_PID_priors(dim, vel):
@@ -571,7 +528,7 @@ def get_PID_posteriors(dim):
         return posteriors
 
 
-def init_g0_params(dim, K):
+def get_g0_params(dim, K):
     with tf.variable_scope('g0_params'):
         g0 = {}
 
@@ -588,10 +545,11 @@ def init_g0_params(dim, K):
         return g0
 
 
-def generate_trial(goal_model, ctrl_model, y0=None, trial_len=100):
+# TODO: simplify trial generation
+def generate_trial(goal_model, control_model, y0=None, trial_len=100):
     with tf.name_scope('generate_trial'):
         dim = goal_model.dim
-        vel = ctrl_model.max_vel
+        vel = control_model.max_vel
 
         with tf.name_scope('initialize'):
             if y0 is None:
@@ -616,7 +574,7 @@ def generate_trial(goal_model, ctrl_model, y0=None, trial_len=100):
                 error = tf.subtract(g[t + 1], y[t], name='error_%s' % t)
                 errors = tf.stack([error, prev_error, prev2_error], 0,
                                   name='errors_%s' % t)
-                u_new = tf.reshape(ctrl_model.update_ctrl(errors, u[t]),
+                u_new = tf.reshape(control_model.update_ctrl(errors, u[t]),
                                    [1, dim], name='u_%s' % (t + 1))
                 u = tf.concat([u, u_new], 0, name='concat_u_%s' % (t + 1))
 
@@ -634,9 +592,6 @@ def generate_trial(goal_model, ctrl_model, y0=None, trial_len=100):
 
 
 def batch_generator(arrays, batch_size, randomize=True):
-    """Minibatch generator over one dataset of shape
-    (#observations, #dimensions)
-    """
     n_trials = len(arrays)
     n_batch = math.floor(n_trials / batch_size)
     if randomize:
@@ -660,20 +615,27 @@ def batch_generator(arrays, batch_size, randomize=True):
 def batch_generator_pad(arrays, batch_size, extra_conds=None, ctrl_obs=None,
                         randomize=True):
     n_trials = len(arrays)
-    n_batch = math.floor(n_trials / batch_size)
     if randomize:
         p = np.random.permutation(n_trials)
-        arrays = arrays[p]
+        arrays = np.array([arrays[i] for i in p])
         if extra_conds is not None:
-            extra_conds = extra_conds[p]
+            extra_conds = np.array([extra_conds[i] for i in p])
         if ctrl_obs is not None:
-            ctrl_obs = ctrl_obs[p]
+            ctrl_obs = np.array([ctrl_obs[i] for i in p])
 
+    n_batch = math.floor(n_trials / batch_size)
     start = 0
     while True:
         batches = []
-        conds = []
-        ctrls = []
+        if extra_conds is not None:
+            conds = []
+        else:
+            conds = None
+        if ctrl_obs is not None:
+            ctrls = []
+        else:
+            ctrls = None
+
         for _ in range(n_batch):
             stop = start + batch_size
             diff = stop - n_trials
@@ -685,6 +647,7 @@ def batch_generator_pad(arrays, batch_size, extra_conds=None, ctrl_obs=None,
                 if ctrl_obs is not None:
                     ctrl = np.array(ctrl_obs[start:stop])
                 start = stop
+
             batch = pad_batch(batch)
             batches.append(batch)
             if extra_conds is not None:
@@ -709,15 +672,16 @@ def pad_batch(arrays, mode='edge'):
 
 def pad_extra_conds(data, extra_conds=None):
     if extra_conds is not None:
-        if not isinstance(extra_conds, tf.Tensor):
-            extra_conds = tf.constant(extra_conds, dtype=tf.float32,
-                                      name='extra_conds')
+        extra_conds = tf.constant(extra_conds, dtype=tf.float32,
+                                  name='extra_conds')
         extra_conds_repeat = tf.tile(
             tf.expand_dims(extra_conds, 1), [1, tf.shape(data)[1], 1],
             name='repeat_extra_conds')
         padded_data = tf.concat([data, extra_conds_repeat], axis=-1,
                                 name='pad_extra_conds')
+
         return padded_data
+
     else:
         raise Exception('Must provide extra conditions.')
 
