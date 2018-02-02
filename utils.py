@@ -1,10 +1,8 @@
 import tensorflow as tf
 import math
-from os.path import expanduser
 import h5py
 from scipy.stats import norm
 import numpy as np
-import pandas as pd
 from tensorflow.contrib.keras import layers
 from tensorflow.contrib.keras import constraints, models
 from matplotlib.colors import Normalize
@@ -30,14 +28,14 @@ class set_cbar_zero(Normalize):
         return np.ma.masked_array(np.interp(value, x, y))
 
 
-def gauss_convolve(x, sigma, pad_method='edge_pad'):
+def gauss_convolve(x, sigma, pad_method="edge_pad"):
     """Smoothing with gaussian convolution
     Pad Methods:
         * edge_pad: pad with the values on the edges
         * extrapolate: extrapolate the end pad based on dx at the end
         * zero_pad: pad with zeros
     """
-    method_types = ['edge_pad', 'extrapolate', 'zero_pad']
+    method_types = ["edge_pad", "extrapolate", "zero_pad"]
     if pad_method not in method_types:
         raise Exception("Pad method not recognized")
     edge = int(math.ceil(5 * sigma))
@@ -46,11 +44,11 @@ def gauss_convolve(x, sigma, pad_method='edge_pad'):
 
     szx = x.size
 
-    if pad_method == 'edge_pad':
+    if pad_method == "edge_pad":
         buff = np.ones(edge)
         xx = np.append((buff * x[0]), x)
         xx = np.append(xx, (buff * x[-1]))
-    elif pad_method == 'extrapolate':
+    elif pad_method == "extrapolate":
         buff = np.ones(edge)
         # linear extrapolation for end edge buffer
         end_dx = x[-1] - x[-2]
@@ -63,12 +61,12 @@ def gauss_convolve(x, sigma, pad_method='edge_pad'):
         xx = np.append(buff, x)
         xx = np.append(xx, buff)
 
-    y = np.convolve(xx, fltr, mode='valid')
+    y = np.convolve(xx, fltr, mode="valid")
     y = y[:szx]
     return y
 
 
-def smooth_trial(trial, sigma=4.0, pad_method='extrapolate'):
+def smooth_trial(trial, sigma=4.0, pad_method="extrapolate"):
     """Apply Gaussian convolution Smoothing method to real data
     """
     rtrial = trial.copy()
@@ -234,24 +232,45 @@ def load_data(hps):
         val_ctrls = None
 
     elif hps.data_dir is not None:
-        datafile = h5py.File(hps.data_dir, 'r')
-        if "trajectories" in datafile:
-            trajs = np.array(datafile["trajectories"], np.float32)
+        if hps.data_dir.split(".")[-1] == "npy":
+            data = np.load(hps.data_dir)
+            if len(data) == 1:
+                trajs = data[0]
+                conds = None
+                ctrls = None
+            elif len(data) == 2:
+                trajs = data[0]
+                conds = data[1]
+                ctrls = None
+            elif len(data) == 3:
+                trajs = data[0]
+                conds = data[1]
+                ctrls = data[2]
+            else:
+                raise Exception(
+                    "Number of datasets provided must be 1, 2, or 3 \
+                     but %s in %s" % (len(data), hps.data_dir))
+
+        elif hps.data_dir.split(".")[-1] == ("hdf5" or "hf"):
+            with h5py.File(hps.data_dir, "r") as f:
+                # if "trajectories" in f:
+                #     trajs = np.array(f["trajectories"], np.float32)
+                # else:
+                #     raise Exception("Trajectories must be provided.")
+                # if "conditions" in f:
+                #     conds = np.array(f["conditions"], np.float32)
+                # else:
+                #     conds = None
+                # if "control" in f:
+                #     ctrls = np.array(f["control"], np.float32)
+                # else:
+                #     ctrls = None
+                trajs = np.array([f.get(trial).value for trial in f.keys()])
+                conds = None  # TODO
+                ctrls = None  # TODO
+
         else:
-            raise Exception("Trajectories must be provided.")
-        if "conditions" in datafile:
-            conds = np.array(datafile["conditions"], np.float32)
-        else:
-            conds = None
-            train_conds = None
-            val_conds = None
-        if "control" in datafile:
-            ctrls = np.array(datafile["control"], np.float32)
-        else:
-            ctrls = None
-            train_ctrls = None
-            val_ctrls = None
-        datafile.close()
+            raise Exception("Data type must be either numpy object or HDF5")
 
         if hps.val:
             if hps.train_ratio is None:
@@ -267,17 +286,24 @@ def load_data(hps):
                     train_ind.append(i)
                 else:
                     val_ind.append(i)
-            np.save(hps.model_dir + '/train_indices', train_ind)
-            np.save(hps.model_dir + '/val_indices', val_ind)
+            np.save(hps.model_dir + "/train_indices", train_ind)
+            np.save(hps.model_dir + "/val_indices", val_ind)
 
             train_data = trajs[train_ind]
             val_data = trajs[val_ind]
             if conds is not None:
                 train_conds = conds[train_ind]
                 val_conds = conds[val_ind]
+            else:
+                train_conds = None
+                val_conds = None
             if ctrls is not None:
                 train_ctrls = ctrls[train_ind]
                 val_ctrls = ctrls[val_ind]
+            else:
+                train_ctrls = None
+                val_ctrls = None
+
         else:
             train_data = trajs
             val_data = None
@@ -312,12 +338,12 @@ def get_vel(traj, max_vel):
     """Input a time series of positions and include velocities for each
     coordinate in each row
     """
-    with tf.name_scope('get_velocity'):
+    with tf.name_scope("get_velocity"):
         vel = tf.pad(
             tf.divide(traj[:, 1:] - traj[:, :-1], max_vel.astype(np.float32),
-                      name='standardize'), [[0, 0], [1, 0], [0, 0]],
-            name='pad_zero')
-        states = tf.concat([traj, vel], -1, name='states')
+                      name="standardize"), [[0, 0], [1, 0], [0, 0]],
+            name="pad_zero")
+        states = tf.concat([traj, vel], -1, name="states")
 
         return states
 
@@ -326,11 +352,11 @@ def get_accel(traj, max_vel):
     """Input a time series of positions and include velocities and acceleration
     for each coordinate in each row
     """
-    with tf.name_scope('get_acceleration'):
+    with tf.name_scope("get_acceleration"):
         states = get_vel(traj, max_vel)
         accel = traj[:, 2:] - 2 * traj[1:-1] + traj[:-2]
-        accel = tf.pad(accel, [[0, 0], [2, 0], [0, 0]], name='pad_zero')
-        states = tf.concat([states, accel], -1, name='states')
+        accel = tf.pad(accel, [[0, 0], [2, 0], [0, 0]], name="pad_zero")
+        states = tf.concat([states, accel], -1, name="states")
 
         return states
 
@@ -346,8 +372,8 @@ def get_agent_params(agent_name, agent_dim, agent_col,
                      clip, clip_range, clip_tolerance, clip_penalty,
                      control_error_penalty):
 
-    with tf.variable_scope('%s_params' % agent_name):
-        GMM_NN, _ = get_network('goal_GMM', (state_dim + extra_dim),
+    with tf.variable_scope("%s_params" % agent_name):
+        GMM_NN, _ = get_network("goal_GMM", (state_dim + extra_dim),
                                 (GMM_K * agent_dim * 2 + GMM_K),
                                 gen_hidden_dim, gen_n_layers, PKLparams)
 
@@ -355,12 +381,12 @@ def get_agent_params(agent_name, agent_dim, agent_col,
 
         g_q_params = get_rec_params(
             obs_dim, extra_dim, agent_dim, rec_lag, rec_n_layers,
-            rec_hidden_dim, penalty_Q, PKLparams, 'goal_posterior')
+            rec_hidden_dim, penalty_Q, PKLparams, "goal_posterior")
 
         if latent_ctrl:
             u_q_params = get_rec_params(
                 obs_dim, extra_dim, agent_dim, rec_lag, rec_n_layers,
-                rec_hidden_dim, penalty_Q, PKLparams, 'control_posterior')
+                rec_hidden_dim, penalty_Q, PKLparams, "control_posterior")
         else:
             u_q_params = None
 
@@ -394,70 +420,70 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
     """
 
     with tf.variable_scope(name):
-        M = models.Sequential(name='NN')
+        M = models.Sequential(name="NN")
         PKbias_layers = []
-        M.add(layers.InputLayer(input_shape=(None, input_dim), name='Input'))
+        M.add(layers.InputLayer(input_shape=(None, input_dim), name="Input"))
         if batchnorm:
-            M.add(layers.BatchNormalization(name='BatchNorm'))
+            M.add(layers.BatchNormalization(name="BatchNorm"))
         if filt_size is not None:
             M.add(layers.ZeroPadding1D(padding=(filt_size - 1, 0),
-                                       name='ZeroPadding'))
+                                       name="ZeroPadding"))
             M.add(layers.Conv1D(filters=hidden_dim, kernel_size=filt_size,
-                                padding='valid', activation=tf.nn.relu,
-                                name='Conv1D'))
+                                padding="valid", activation=tf.nn.relu,
+                                name="Conv1D"))
 
         for i in range(num_layers):
-            with tf.variable_scope('PK_Bias'):
+            with tf.variable_scope("PK_Bias"):
                 if is_shooter and add_pklayers:
                     if row_sparse:
                         PK_bias = PKRowBiasLayer(
                             M, PKLparams,
-                            name='PKRowBias_%s' % (i + 1))
+                            name="PKRowBias_%s" % (i + 1))
                     else:
                         PK_bias = PKBiasLayer(
                             M, PKLparams,
-                            name='PKBias_%s' % (i + 1))
+                            name="PKBias_%s" % (i + 1))
                     PKbias_layers.append(PK_bias)
                     M.add(PK_bias)
 
             if i == num_layers - 1:
                 M.add(layers.Dense(
-                    output_dim, activation='linear',
+                    output_dim, activation="linear",
                     kernel_initializer=tf.random_normal_initializer(
-                        stddev=0.1), name='Dense_%s' % (i + 1)))
+                        stddev=0.1), name="Dense_%s" % (i + 1)))
             else:
                 M.add(layers.Dense(
-                    hidden_dim, activation='relu',
+                    hidden_dim, activation="relu",
                     kernel_initializer=tf.orthogonal_initializer(),
-                    name='Dense_%s' % (i + 1)))
+                    name="Dense_%s" % (i + 1)))
 
         return M, PKbias_layers
 
 
 def get_rec_params(obs_dim, extra_dim, agent_dim, lag, n_layers, hidden_dim,
-                   penalty_Q=None, PKLparams=None, name='recognition'):
+                   penalty_Q=None, PKLparams=None, name="recognition"):
     """Return a dictionary of timeseries-specific parameters for recognition
        model
     """
 
-    with tf.variable_scope('%s_params' % name):
+    with tf.variable_scope("%s_params" % name):
         Mu_net, PKbias_layers_mu = get_network(
-            'Mu_NN', (obs_dim * (lag + 1) + extra_dim), agent_dim, hidden_dim,
+            "Mu_NN", (obs_dim * (lag + 1) + extra_dim), agent_dim, hidden_dim,
             n_layers, PKLparams)
         Lambda_net, PKbias_layers_lambda = get_network(
-            'Lambda_NN', obs_dim * (lag + 1) + extra_dim, agent_dim ** 2,
+            "Lambda_NN", obs_dim * (lag + 1) + extra_dim, agent_dim ** 2,
             hidden_dim, n_layers, PKLparams)
         LambdaX_net, PKbias_layers_lambdaX = get_network(
-            'LambdaX_NN', obs_dim * (lag + 1) + extra_dim, agent_dim ** 2,
+            "LambdaX_NN", obs_dim * (lag + 1) + extra_dim, agent_dim ** 2,
             hidden_dim, n_layers, PKLparams)
 
         Dyn_params = dict(
             A=tf.Variable(
-                .9 * np.eye(agent_dim), name='A', dtype=tf.float32),
+                .9 * np.eye(agent_dim), name="A", dtype=tf.float32),
             QinvChol=tf.Variable(
-                np.eye(agent_dim), name='QinvChol', dtype=tf.float32),
+                np.eye(agent_dim), name="QinvChol", dtype=tf.float32),
             Q0invChol=tf.Variable(
-                np.eye(agent_dim), name='Q0invChol', dtype=tf.float32))
+                np.eye(agent_dim), name="Q0invChol", dtype=tf.float32))
 
         rec_params = dict(
             Dyn_params=Dyn_params,
@@ -469,9 +495,9 @@ def get_rec_params(obs_dim, extra_dim, agent_dim, lag, n_layers, hidden_dim,
                             PKbias_layers=PKbias_layers_lambdaX),
             lag=lag)
 
-        with tf.name_scope('penalty_Q'):
+        with tf.name_scope("penalty_Q"):
             if penalty_Q is not None:
-                rec_params['p'] = penalty_Q
+                rec_params["p"] = penalty_Q
 
         return rec_params
 
@@ -479,17 +505,17 @@ def get_rec_params(obs_dim, extra_dim, agent_dim, lag, n_layers, hidden_dim,
 def get_PID_priors(dim, vel):
     """Return a dictionary of PID controller parameters
     """
-    with tf.variable_scope('PID_priors'):
+    with tf.variable_scope("PID_priors"):
         priors = {}
 
-        priors['Kp'] = Gamma(
+        priors["Kp"] = Gamma(
             np.ones(dim, np.float32) * 2, np.ones(dim, np.float32) * vel,
-            name='Kp', value=np.ones(dim, np.float32) / vel)
-        priors['Ki'] = Exponential(
-            np.ones(dim, np.float32) / vel, name='Ki',
+            name="Kp", value=np.ones(dim, np.float32) / vel)
+        priors["Ki"] = Exponential(
+            np.ones(dim, np.float32) / vel, name="Ki",
             value=np.zeros(dim, np.float32))
-        priors['Kd'] = Exponential(
-            np.ones(dim, np.float32), name='Kd',
+        priors["Kd"] = Exponential(
+            np.ones(dim, np.float32), name="Kd",
             value=np.zeros(dim, np.float32))
 
         return priors
@@ -510,83 +536,83 @@ class Point_Mass(PointMass):
 
 
 def get_PID_posteriors(dim):
-    with tf.variable_scope('PID_posteriors'):
+    with tf.variable_scope("PID_posteriors"):
         posteriors = {}
 
-        unc_Kp = tf.Variable(tf.random_normal([dim], name='Kp_init_value'),
-                             dtype=tf.float32, name='unc_Kp')
-        unc_Ki = tf.Variable(tf.random_normal([dim], name='Ki_init_value'),
-                             dtype=tf.float32, name='unc_Ki')
-        unc_Kd = tf.Variable(tf.random_normal([dim], name='Kd_init_value'),
-                             dtype=tf.float32, name='unc_Kd')
-        posteriors['vars'] = ([unc_Kp] + [unc_Ki] + [unc_Kd])
+        unc_Kp = tf.Variable(tf.random_normal([dim], name="Kp_init_value"),
+                             dtype=tf.float32, name="unc_Kp")
+        unc_Ki = tf.Variable(tf.random_normal([dim], name="Ki_init_value"),
+                             dtype=tf.float32, name="unc_Ki")
+        unc_Kd = tf.Variable(tf.random_normal([dim], name="Kd_init_value"),
+                             dtype=tf.float32, name="unc_Kd")
+        posteriors["vars"] = ([unc_Kp] + [unc_Ki] + [unc_Kd])
 
-        posteriors['Kp'] = Point_Mass(tf.nn.softplus(unc_Kp), name='Kp')
-        posteriors['Ki'] = Point_Mass(tf.nn.softplus(unc_Ki), name='Ki')
-        posteriors['Kd'] = Point_Mass(tf.nn.softplus(unc_Kd), name='Kd')
+        posteriors["Kp"] = Point_Mass(tf.nn.softplus(unc_Kp), name="Kp")
+        posteriors["Ki"] = Point_Mass(tf.nn.softplus(unc_Ki), name="Ki")
+        posteriors["Kd"] = Point_Mass(tf.nn.softplus(unc_Kd), name="Kd")
 
         return posteriors
 
 
 def get_g0_params(dim, K):
-    with tf.variable_scope('g0_params'):
+    with tf.variable_scope("g0_params"):
         g0 = {}
 
-        g0['K'] = K
-        g0['mu'] = tf.Variable(
-            tf.random_normal([K, dim], name='mu_init_value'),
-            dtype=tf.float32, name='mu')
-        g0['unc_lambda'] = tf.Variable(
-            tf.random_normal([K, dim], name='lambda_init_value'),
-            dtype=tf.float32, name='unc_lambda')
-        g0['unc_w'] = tf.Variable(
-            tf.ones([K], name='w_init_value'), dtype=tf.float32, name='unc_w')
+        g0["K"] = K
+        g0["mu"] = tf.Variable(
+            tf.random_normal([K, dim], name="mu_init_value"),
+            dtype=tf.float32, name="mu")
+        g0["unc_lambda"] = tf.Variable(
+            tf.random_normal([K, dim], name="lambda_init_value"),
+            dtype=tf.float32, name="unc_lambda")
+        g0["unc_w"] = tf.Variable(
+            tf.ones([K], name="w_init_value"), dtype=tf.float32, name="unc_w")
 
         return g0
 
 
 # TODO: simplify trial generation
 def generate_trial(goal_model, control_model, y0=None, trial_len=100):
-    with tf.name_scope('generate_trial'):
+    with tf.name_scope("generate_trial"):
         dim = goal_model.dim
         vel = control_model.max_vel
 
-        with tf.name_scope('initialize'):
+        with tf.name_scope("initialize"):
             if y0 is None:
                 y0 = tf.zeros([dim], tf.float32)
-            g = tf.reshape(goal_model.sample_g0(), [1, dim], name='g0')
-            u = tf.zeros([1, dim], tf.float32, name='u0')
-            prev_error = tf.zeros([dim], tf.float32, name='prev_error')
-            prev2_error = tf.zeros([dim], tf.float32, name='prev2_error')
-            y = tf.reshape(y0, [1, dim], name='y0')
+            g = tf.reshape(goal_model.sample_g0(), [1, dim], name="g0")
+            u = tf.zeros([1, dim], tf.float32, name="u0")
+            prev_error = tf.zeros([dim], tf.float32, name="prev_error")
+            prev2_error = tf.zeros([dim], tf.float32, name="prev2_error")
+            y = tf.reshape(y0, [1, dim], name="y0")
 
-        with tf.name_scope('propogate'):
+        with tf.name_scope("propogate"):
             for t in range(trial_len - 1):
                 if t == 0:
-                    v_t = tf.zeros_like(y0, tf.float32, name='v_%s' % t)
+                    v_t = tf.zeros_like(y0, tf.float32, name="v_%s" % t)
                 else:
-                    v_t = tf.subtract(y[t], y[t - 1], name='v_%s' % t)
-                s_t = tf.stack([y[t], v_t], 0, name='s_%s' % t)
+                    v_t = tf.subtract(y[t], y[t - 1], name="v_%s" % t)
+                s_t = tf.stack([y[t], v_t], 0, name="s_%s" % t)
                 g_new = tf.reshape(goal_model.sample_GMM(s_t, g[t]), [1, dim],
-                                   name='g_%s' % (t + 1))
-                g = tf.concat([g, g_new], 0, name='concat_g_%s' % (t + 1))
+                                   name="g_%s" % (t + 1))
+                g = tf.concat([g, g_new], 0, name="concat_g_%s" % (t + 1))
 
-                error = tf.subtract(g[t + 1], y[t], name='error_%s' % t)
+                error = tf.subtract(g[t + 1], y[t], name="error_%s" % t)
                 errors = tf.stack([error, prev_error, prev2_error], 0,
-                                  name='errors_%s' % t)
+                                  name="errors_%s" % t)
                 u_new = tf.reshape(control_model.update_ctrl(errors, u[t]),
-                                   [1, dim], name='u_%s' % (t + 1))
-                u = tf.concat([u, u_new], 0, name='concat_u_%s' % (t + 1))
+                                   [1, dim], name="u_%s" % (t + 1))
+                u = tf.concat([u, u_new], 0, name="concat_u_%s" % (t + 1))
 
                 prev2_error = prev_error
                 prev_error = error
 
                 y_new = tf.reshape(tf.clip_by_value(
                     y[t] + vel * tf.clip_by_value(
-                        u[t + 1], -1., 1., name='clip_u_%s' % (t + 1)),
-                    -1., 1., name='bound_y_%s' % (t + 1)),
-                    [1, dim], name='y_%s' % (t + 1))
-                y = tf.concat([y, y_new], 0, name='concat_y_%s' % (t + 1))
+                        u[t + 1], -1., 1., name="clip_u_%s" % (t + 1)),
+                    -1., 1., name="bound_y_%s" % (t + 1)),
+                    [1, dim], name="y_%s" % (t + 1))
+                y = tf.concat([y, y_new], 0, name="concat_y_%s" % (t + 1))
 
         return y, u, g
 
@@ -653,37 +679,37 @@ def batch_generator_pad(arrays, batch_size, extra_conds=None, ctrl_obs=None,
             if extra_conds is not None:
                 conds.append(cond)
             if ctrl_obs is not None:
-                ctrl = pad_batch(ctrl, mode='zero')
+                ctrl = pad_batch(ctrl, mode="zero")
                 ctrls.append(ctrl)
 
         yield batches, conds, ctrls
 
 
-def pad_batch(arrays, mode='edge'):
+def pad_batch(arrays, mode="edge"):
     max_len = np.max([len(a) for a in arrays])
-    if mode == 'edge':
+    if mode == "edge":
         return np.array([np.pad(a, ((0, max_len - len(a)), (0, 0)),
-                                'edge') for a in arrays])
-    elif mode == 'zero':
+                                "edge") for a in arrays])
+    elif mode == "zero":
         return np.array(
-            [np.pad(a, ((0, max_len - len(a)), (0, 0)), 'constant',
+            [np.pad(a, ((0, max_len - len(a)), (0, 0)), "constant",
                     constant_values=0) for a in arrays])
 
 
 def pad_extra_conds(data, extra_conds=None):
     if extra_conds is not None:
         extra_conds = tf.constant(extra_conds, dtype=tf.float32,
-                                  name='extra_conds')
+                                  name="extra_conds")
         extra_conds_repeat = tf.tile(
             tf.expand_dims(extra_conds, 1), [1, tf.shape(data)[1], 1],
-            name='repeat_extra_conds')
+            name="repeat_extra_conds")
         padded_data = tf.concat([data, extra_conds_repeat], axis=-1,
-                                name='pad_extra_conds')
+                                name="pad_extra_conds")
 
         return padded_data
 
     else:
-        raise Exception('Must provide extra conditions.')
+        raise Exception("Must provide extra conditions.")
 
 
 def add_summary(summary_op, inference, session, feed_dict, step):
@@ -795,13 +821,13 @@ class MultiDatasetMiniBatchIterator(object):
 
 
 # class hps_dict_to_obj(dict):
-#     '''Helper class allowing us to access hps dictionary more easily.
-#     '''
+#     """Helper class allowing us to access hps dictionary more easily.
+#     """
 #     def __getattr__(self, key):
 #         if key in self:
 #             return self[key]
 #         else:
-#             assert False, ('%s does not exist.' % key)
+#             assert False, ("%s does not exist." % key)
 
 #     def __setattr__(self, key, value):
 #         self[key] = value
@@ -836,4 +862,4 @@ class KLqp_profile(ed.KLqp):
                 summary = sess.run(self.summarize, feed_dict)
                 self.train_writer.add_summary(summary, t)
 
-        return {'t': t, 'loss': loss}
+        return {"t": t, "loss": loss}
