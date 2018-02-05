@@ -4,8 +4,8 @@ import tensorflow as tf
 import numpy as np
 import edward as ed
 from tf_gbds.agents import game_model
-from tf_gbds.utils import (load_data, get_max_velocities, pad_batch,
-                           get_vel, get_accel, get_agent_params,
+from tf_gbds.utils import (load_data, get_max_velocities, get_vel, get_accel,
+                           get_agent_params, generate_trial, pad_batch,
                            batch_generator, batch_generator_pad,
                            KLqp_profile, add_summary)
 import time
@@ -246,6 +246,16 @@ def run_model(FLAGS):
 
     model = game_model(agent_params, inputs, FLAGS.n_post_samp,
                        name="penaltykick")
+
+    with tf.name_scope("generate_trial"):
+        if extra_conds_present:
+            gen_extra_conds = tf.placeholder(tf.float32,
+                                             name="extra_conditions")
+            generated_trial, _, _ = generate_trial(
+                model.g, model.u, extra_conds=gen_extra_conds)
+        else:
+            generated_trial, _, _ = generate_trial(model.g, model.u)
+
 
     print("Graph constructed.")
 

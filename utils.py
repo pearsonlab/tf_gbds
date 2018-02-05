@@ -571,50 +571,58 @@ def get_g0_params(dim, K):
         return g0
 
 
-# TODO: simplify trial generation
-def generate_trial(goal_model, control_model, y0=None, trial_len=100):
-    with tf.name_scope("generate_trial"):
-        dim = goal_model.dim
-        vel = control_model.max_vel
+# TODO: only accept velocity as state; simplify trial generation
+def generate_trial(goal_model, control_model, y0=None, trial_len=100,
+                   extra_conds=None):
+    dim = goal_model.dim
+    vel = control_model.max_vel
 
-        with tf.name_scope("initialize"):
-            if y0 is None:
-                y0 = tf.zeros([dim], tf.float32)
-            g = tf.reshape(goal_model.sample_g0(), [1, dim], name="g0")
-            u = tf.zeros([1, dim], tf.float32, name="u0")
-            prev_error = tf.zeros([dim], tf.float32, name="prev_error")
-            prev2_error = tf.zeros([dim], tf.float32, name="prev2_error")
-            y = tf.reshape(y0, [1, dim], name="y0")
+    with tf.name_scope("initialize"):
+        if y0 is None:
+            y0 = tf.zeros([dim], tf.float32)
+        g = tf.reshape(goal_model.sample_g0(), [1, dim], name="g0")
+        u = tf.zeros([1, dim], tf.float32, name="u0")
+        prev_error = tf.zeros([dim], tf.float32, name="prev_error")
+        prev2_error = tf.zeros([dim], tf.float32, name="prev2_error")
+        y = tf.reshape(y0, [1, dim], name="y0")
 
-        with tf.name_scope("propogate"):
-            for t in range(trial_len - 1):
-                if t == 0:
-                    v_t = tf.zeros_like(y0, tf.float32, name="v_%s" % t)
-                else:
-                    v_t = tf.subtract(y[t], y[t - 1], name="v_%s" % t)
+    with tf.name_scope("propogate"):
+        for t in range(trial_len - 1):
+            if t == 0:
+                v_t = tf.zeros_like(y0, tf.float32, name="v_%s" % t)
+            else:
+                v_t = tf.subtract(y[t], y[t - 1], name="v_%s" % t)
+            if extra_conds is None:
                 s_t = tf.stack([y[t], v_t], 0, name="s_%s" % t)
-                g_new = tf.reshape(goal_model.sample_GMM(s_t, g[t]), [1, dim],
-                                   name="g_%s" % (t + 1))
-                g = tf.concat([g, g_new], 0, name="concat_g_%s" % (t + 1))
+            else:
+                s_t = tf.stack([y[t], v_t, tf.reshape(extra_conds, [-1])],
+                               0, name="s_%s" % t)
+            g_new = tf.reshape(goal_model.sample_GMM(s_t, g[t]), [1, dim],
+                               name="g_%s" % (t + 1))
+            g = tf.concat([g, g_new], 0, name="concat_g_%s" % (t + 1))
 
-                error = tf.subtract(g[t + 1], y[t], name="error_%s" % t)
-                errors = tf.stack([error, prev_error, prev2_error], 0,
-                                  name="errors_%s" % t)
-                u_new = tf.reshape(control_model.update_ctrl(errors, u[t]),
-                                   [1, dim], name="u_%s" % (t + 1))
-                u = tf.concat([u, u_new], 0, name="concat_u_%s" % (t + 1))
+            error = tf.subtract(g[t + 1], y[t], name="error_%s" % t)
+            errors = tf.stack([error, prev_error, prev2_error], 0,
+                              name="errors_%s" % t)
+            u_new = tf.reshape(control_model.update_ctrl(errors, u[t]),
+                               [1, dim], name="u_%s" % (t + 1))
+            u = tf.concat([u, u_new], 0, name="concat_u_%s" % (t + 1))
 
-                prev2_error = prev_error
-                prev_error = error
+            prev2_error = prev_error
+            prev_error = error
 
-                y_new = tf.reshape(tf.clip_by_value(
-                    y[t] + vel * tf.clip_by_value(
-                        u[t + 1], -1., 1., name="clip_u_%s" % (t + 1)),
-                    -1., 1., name="bound_y_%s" % (t + 1)),
-                    [1, dim], name="y_%s" % (t + 1))
-                y = tf.concat([y, y_new], 0, name="concat_y_%s" % (t + 1))
+            y_new = tf.reshape(tf.clip_by_value(
+                y[t] + vel * tf.clip_by_value(
+                    u[t + 1], -1., 1., name="clip_u_%s" % (t + 1)),
+                -1., 1., name="bound_y_%s" % (t + 1)),
+                [1, dim], name="y_%s" % (t + 1))
+            y = tf.concat([y, y_new], 0, name="concat_y_%s" % (t + 1))
 
-        return y, u, g
+    trajectory = tf.identity(y, name='trajectory')
+    control = tf.identity(u, name='control')
+    goal = tf.identity(g, name='goal')
+
+    return trajectory, control, goal
 
 
 def batch_generator(arrays, batch_size, randomize=True):
@@ -696,7 +704,7 @@ def pad_batch(arrays, mode="edge"):
                     constant_values=0) for a in arrays])
 
 
-def pad_extra_conds(data, extra_conds=None):
+def pad_extra_conds(data, extra_conds):
     if extra_conds is not None:
         extra_conds = tf.constant(extra_conds, dtype=tf.float32,
                                   name="extra_conds")

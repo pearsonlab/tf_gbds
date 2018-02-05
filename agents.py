@@ -70,44 +70,43 @@ class agent_model(object):
 
 class game_model(object):
     def __init__(self, params, inputs, n_samples=50, name="penaltykick"):
-        self.name = name
-        self.latent_vars = {}
-        self.data = {}
-        self.var_list = []
-
         with tf.name_scope("model"):
+            self.name = name
+            self.latent_vars = {}
+            self.data = {}
+            self.var_list = []
+
             if isinstance(params, list):
                 self.agents = [agent_model(p, inputs)
                                for p in params]
             else:
                 raise TypeError("params must be a list object.")
 
-        for agent in self.agents:
-            self.latent_vars.update(agent.goal)
-            self.data.update(agent.ctrl)
-            self.latent_vars.update(agent.PID)
-            self.var_list += agent.vars
+            for agent in self.agents:
+                self.latent_vars.update(agent.goal)
+                self.data.update(agent.ctrl)
+                self.latent_vars.update(agent.PID)
+                self.var_list += agent.vars
 
-        self.g = joint_goals([agent.g_p for agent in self.agents],
-                             [agent.g_q for agent in self.agents],
-                             name="goals")
-        self.g0_samp = tf.identity(self.g.sample_g0(n=n_samples),
-                                   name="initial_goal_samples")
-        self.g_q_mu = tf.identity(self.g.q_mean, name="goal_posterior_mean")
-        self.g_q_samp = tf.identity(
-            self.g.sample_posterior(n=n_samples),
-            name="goal_posterior_samples")
+            self.g = joint_goals([agent.g_p for agent in self.agents],
+                                 [agent.g_q for agent in self.agents],
+                                 name="goals")
+            self.g0_samp = tf.identity(self.g.sample_g0(n=n_samples),
+                                       name="initial_goal_samples")
+            self.g_q_mu = tf.identity(
+                self.g.q_mean, name="goal_posterior_mean")
+            self.g_q_samp = tf.identity(
+                self.g.sample_posterior(n=n_samples),
+                name="goal_posterior_samples")
 
-        self.u = joint_ctrls([agent.u_p for agent in self.agents],
-                             [agent.u_q for agent in self.agents],
-                             name="controls")
-        if hasattr(self.u, "q_mean"):
-            self.u_q_mu = tf.identity(self.u.q_mean,
-                                      name="control_posterior_mean")
-            self.u_q_samp = tf.identity(
-                self.u.sample_posterior(n=n_samples),
-                name="control_posterior_samples")
-
-        self.generated_trial, _, _ = generate_trial(self.g, self.u)
+            self.u = joint_ctrls([agent.u_p for agent in self.agents],
+                                 [agent.u_q for agent in self.agents],
+                                 name="controls")
+            if hasattr(self.u, "q_mean"):
+                self.u_q_mu = tf.identity(self.u.q_mean,
+                                          name="control_posterior_mean")
+                self.u_q_samp = tf.identity(
+                    self.u.sample_posterior(n=n_samples),
+                    name="control_posterior_samples")
 
         super(game_model, self).__init__()
