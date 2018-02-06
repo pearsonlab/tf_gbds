@@ -420,7 +420,7 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
     """
 
     with tf.variable_scope(name):
-        M = models.Sequential(name="NN")
+        M = models.Sequential(name=name)
         PKbias_layers = []
         M.add(layers.InputLayer(input_shape=(None, input_dim), name="Input"))
         if batchnorm:
@@ -593,10 +593,9 @@ def generate_trial(goal_model, control_model, y0=None, trial_len=100,
             else:
                 v_t = tf.subtract(y[t], y[t - 1], name="v_%s" % t)
             if extra_conds is None:
-                s_t = tf.stack([y[t], v_t], 0, name="s_%s" % t)
+                s_t = tf.concat([y[t], v_t], 0, name="s_%s" % t)
             else:
-                s_t = tf.stack([y[t], v_t, tf.reshape(extra_conds, [-1])],
-                               0, name="s_%s" % t)
+                s_t = tf.concat([y[t], v_t, extra_conds], 0, name="s_%s" % t)
             g_new = tf.reshape(goal_model.sample_GMM(s_t, g[t]), [1, dim],
                                name="g_%s" % (t + 1))
             g = tf.concat([g, g_new], 0, name="concat_g_%s" % (t + 1))
@@ -706,8 +705,8 @@ def pad_batch(arrays, mode="edge"):
 
 def pad_extra_conds(data, extra_conds):
     if extra_conds is not None:
-        extra_conds = tf.constant(extra_conds, dtype=tf.float32,
-                                  name="extra_conds")
+        extra_conds = tf.convert_to_tensor(extra_conds, dtype=tf.float32,
+                                           name="extra_conds")
         extra_conds_repeat = tf.tile(
             tf.expand_dims(extra_conds, 1), [1, tf.shape(data)[1], 1],
             name="repeat_extra_conds")

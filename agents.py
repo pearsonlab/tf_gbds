@@ -37,7 +37,7 @@ class agent_model(object):
                 self.vars += self.g_p.params
                 self.g_q = SmoothingPastLDSTimeSeries(
                     params["g_q_params"], self.traj, self.dim, self.obs_dim,
-                    name="posterior")
+                    self.extra_conds, name="posterior")
                 self.vars += self.g_q.params
                 self.goal = {self.g_p: self.g_q}
 
@@ -49,7 +49,7 @@ class agent_model(object):
                 if latent_u:
                     self.u_q = SmoothingPastLDSTimeSeries(
                         params["u_q_params"], self.traj, self.dim,
-                        self.obs_dim, name="posterior")
+                        self.obs_dim, self.extra_conds, name="posterior")
                     self.vars += self.u_q.params
                 else:
                     self.u_q = tf.pad(
@@ -70,7 +70,7 @@ class agent_model(object):
 
 class game_model(object):
     def __init__(self, params, inputs, n_samples=50, name="penaltykick"):
-        with tf.name_scope("model"):
+        with tf.name_scope(name):
             self.name = name
             self.latent_vars = {}
             self.data = {}

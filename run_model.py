@@ -197,7 +197,7 @@ def run_model(FLAGS):
         get_state = get_vel
 
     if extra_conds_present:
-        extra_dim = train_conds.shape[-1].value
+        extra_dim = train_conds.shape[-1]
     else:
         extra_dim = 0
 
@@ -249,15 +249,12 @@ def run_model(FLAGS):
 
     with tf.name_scope("generate_trial"):
         if extra_conds_present:
-            gen_extra_conds = tf.placeholder(tf.float32,
+            gen_extra_conds = tf.placeholder(tf.float32, shape=extra_dim,
                                              name="extra_conditions")
             generated_trial, _, _ = generate_trial(
                 model.g, model.u, extra_conds=gen_extra_conds)
         else:
             generated_trial, _, _ = generate_trial(model.g, model.u)
-
-
-    print("Graph constructed.")
 
     print("--------------Generative Parameters---------------")
     print("Number of GMM components: %i" % FLAGS.GMM_K)
@@ -364,6 +361,8 @@ def run_model(FLAGS):
                          var_list=model.var_list,
                          optimizer=optimizer,
                          logdir=FLAGS.model_dir + "/log")
+
+    print("Graph constructed.")
 
     sess = ed.get_session()
     tf.global_variables_initializer().run()
