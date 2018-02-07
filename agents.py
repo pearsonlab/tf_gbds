@@ -91,7 +91,7 @@ class game_model(object):
             self.g = joint_goals([agent.g_p for agent in self.agents],
                                  [agent.g_q for agent in self.agents],
                                  name="goals")
-            self.g0_samp = tf.identity(self.g.sample_g0(n=n_samples),
+            self.g0_samp = tf.identity(self.g.sample_g0(n=100),
                                        name="initial_goal_samples")
             self.g_q_mu = tf.identity(
                 self.g.q_mean, name="goal_posterior_mean")

@@ -6,7 +6,7 @@ import edward as ed
 from tf_gbds.agents import game_model
 from tf_gbds.utils import (load_data, get_max_velocities, get_vel, get_accel,
                            get_agent_params, generate_trial, pad_batch,
-                           batch_generator, batch_generator_pad,
+                           # batch_generator, batch_generator_pad,
                            KLqp_profile, add_summary)
 import time
 from tensorflow.python.client import timeline
@@ -15,6 +15,7 @@ from tensorflow.python.client import timeline
 # default flag values
 MODEL_DIR = "new_model"
 DATA_DIR = None
+VAL_DIR = None
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
@@ -25,6 +26,9 @@ N_AGENTS = 2
 AGENT_NAME = "goalie,kicker"
 AGENT_COLUMN = "0;1,2"
 OBSERVE_DIM = 3
+EXTRA_CONDITIONS = False
+EXTRA_DIM = 0
+OBSERVED_CONTROL = False
 ADD_ACCEL = False
 
 GMM_K = 8
@@ -51,7 +55,6 @@ CLIP_TOLERANCE = 1e-5
 CLIP_PENALTY = 1e8
 
 SEED = 1234
-VAL_SET = True
 TRAIN_RATIO = 0.85
 OPTIMIZER = "Adam"
 LEARNING_RATE = 1e-3
@@ -68,11 +71,12 @@ flags = tf.app.flags
 
 flags.DEFINE_string("model_dir", MODEL_DIR,
                     "Directory where the model is saved")
-flags.DEFINE_string("data_dir", DATA_DIR, "Directory of input data file")
+flags.DEFINE_string("data_dir", DATA_DIR, "Directory of training data file")
+flags.DEFINE_string("val_dir", VAL_DIR, "Directory of validation data file")
 flags.DEFINE_boolean("synthetic_data", SYNTHETIC_DATA,
                      "Is the model trained on synthetic dataset")
 flags.DEFINE_boolean("save_posterior", SAVE_POSTERIOR, "Will posterior \
-                     samples be saved after training?")
+                     samples be saved after training")
 flags.DEFINE_boolean("load_saved_model", LOAD_SAVED_MODEL, "Is the model \
                      restored from an existing checkpoint")
 flags.DEFINE_string("saved_model_dir", SAVED_MODEL_DIR,
@@ -87,7 +91,12 @@ flags.DEFINE_string("agent_name", AGENT_NAME, "Name of each agent \
                     (separated by ,)")
 flags.DEFINE_string("agent_col", AGENT_COLUMN, "Columns of data \
                     corresponding to each agent (separated by ; and ,)")
-flags.DEFINE_integer("obs_dim", OBSERVE_DIM, "Number of observed dimensions")
+flags.DEFINE_integer("obs_dim", OBSERVE_DIM, "Dimension of observation")
+flags.DEFINE_boolean("extra_conds", EXTRA_CONDITIONS, "Are extra conditions \
+                     included in the dataset")
+flags.DEFINE_integer("extra_dim", EXTRA_DIM, "Dimension of extra conditions")
+flags.DEFINE_boolean("ctrl_obs", OBSERVED_CONTROL, "Are observed control \
+                     signals included in the dataset")
 flags.DEFINE_boolean("add_accel", ADD_ACCEL,
                      "Is acceleration included in state")
 
@@ -131,8 +140,6 @@ flags.DEFINE_float("clip_pen", CLIP_PENALTY,
                    "Penalty on control signal censoring")
 
 flags.DEFINE_integer("seed", SEED, "Random seed for numpy functions")
-flags.DEFINE_boolean("val", VAL_SET, "Is dataset split into training and \
-                     validation sets")
 flags.DEFINE_float("train_ratio", TRAIN_RATIO,
                    "Proportion of data used for training")
 flags.DEFINE_string("opt", OPTIMIZER, "Gradient descent optimizer")
@@ -158,36 +165,33 @@ def run_model(FLAGS):
     if not os.path.exists(FLAGS.model_dir):
         os.makedirs(FLAGS.model_dir)
 
-    (train_data, train_conds, train_ctrls,
-        val_data, val_conds, val_ctrls) = load_data(FLAGS)
-    extra_conds_present = train_conds is not None
-    ctrl_obs_present = train_ctrls is not None
-
-    if val_data is not None:
-        val_data = pad_batch(val_data, mode="edge")
-        if ctrl_obs_present:
-            val_ctrls = pad_batch(val_ctrls, mode="zero")
-
-    print("Data loaded.")
-
     agent_name = FLAGS.agent_name.split(",")
-    assert len(agent_name) == FLAGS.n_agents, "length of name list %i do not \
-        match number of agents %i" % (len(agent_name), FLAGS.n_agents)
+    assert len(agent_name) == FLAGS.n_agents, "The length of name list %i \
+        does not match the number of agents %i" % (len(agent_name),
+                                                   FLAGS.n_agents)
 
     agent_col = [[int(c) for c in a.split(",")]
                  for a in FLAGS.agent_col.split(";")]
-    assert len(agent_col) == FLAGS.n_agents, "length of column list %i \
-        do not match number of agents %i" % (len(agent_col), FLAGS.n_agents)
+    assert len(agent_col) == FLAGS.n_agents, "The length of column list %i \
+        does not match the number of agents %i" % (len(agent_col),
+                                                   FLAGS.n_agents)
 
     agent_dim = [len(a) for a in agent_col]
-    assert sum(agent_dim) <= FLAGS.obs_dim, "modeling dimensions more than \
+    assert sum(agent_dim) <= FLAGS.obs_dim, "The modeling dimensions exceed \
         observed: %i > %i" % (sum(agent_dim), FLAGS.obs_dim)
 
-    train_ntrials = len(train_data)
-    if val_data is not None:
-        val_ntrials = len(val_data)
+    train_data, val_data = load_data(FLAGS)
 
-    all_vel = get_max_velocities([train_data, val_data], FLAGS.obs_dim)
+    print("Data loaded.")
+
+    if val_data is None:
+        all_vel = get_max_velocities([train_data["trajectory"]],
+                                     FLAGS.obs_dim)
+    else:
+        all_vel = get_max_velocities(
+            [train_data["trajectory"], val_data["trajectory"]], FLAGS.obs_dim)
+
+    print("The maximum velocity is %s." % all_vel)
 
     if FLAGS.add_accel:
         state_dim = FLAGS.obs_dim * 3
@@ -195,11 +199,6 @@ def run_model(FLAGS):
     else:
         state_dim = FLAGS.obs_dim * 2
         get_state = get_vel
-
-    if extra_conds_present:
-        extra_dim = train_conds.shape[-1]
-    else:
-        extra_dim = 0
 
     if FLAGS.g_lb is not None and FLAGS.g_ub is not None:
         g_bounds = [FLAGS.g_lb, FLAGS.g_ub]
@@ -219,8 +218,9 @@ def run_model(FLAGS):
     agent_params = []
     for i in range(FLAGS.n_agents):
         params = get_agent_params(
-            agent_name[i], agent_dim[i], agent_col[i], FLAGS.obs_dim,
-            state_dim, extra_dim, FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
+            agent_name[i], agent_dim[i], agent_col[i],
+            FLAGS.obs_dim, state_dim, FLAGS.extra_dim,
+            FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
             FLAGS.GMM_K, PKLparams, FLAGS.sigma, FLAGS.sigma_trainable,
             g_bounds, FLAGS.g_bounds_pen, all_vel, FLAGS.latent_u,
             FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
@@ -234,11 +234,12 @@ def run_model(FLAGS):
                            name="trajectories")
         inputs = {"trajectories": Y, "states": get_state(Y, all_vel)}
 
-        if extra_conds_present:
-            extra_conds = tf.placeholder(tf.float32, shape=(None, extra_dim),
-                                         name="extra_conditions")
+        if FLAGS.extra_conds:
+            extra_conds = tf.placeholder(
+                tf.float32, shape=(None, FLAGS.extra_dim),
+                name="extra_conditions")
             inputs.update({"extra_conds": extra_conds})
-        if ctrl_obs_present:
+        if FLAGS.ctrl_obs:
             ctrl_obs = tf.placeholder(
                 tf.float32, shape=(None, None, FLAGS.obs_dim),
                 name="observed_control")
@@ -248,13 +249,18 @@ def run_model(FLAGS):
                        name="penaltykick")
 
     with tf.name_scope("generate_trial"):
-        if extra_conds_present:
-            gen_extra_conds = tf.placeholder(tf.float32, shape=extra_dim,
-                                             name="extra_conditions")
-            generated_trial, _, _ = generate_trial(
-                model.g, model.u, extra_conds=gen_extra_conds)
+        trial_len = tf.placeholder(tf.int32, shape=(), name="trial_length")
+        y0 = tf.placeholder(tf.float32, shape=(model.g.dim),
+                            name="initial_position")
+        if FLAGS.extra_conds:
+            gen_extra_conds = tf.placeholder(
+                tf.float32, shape=FLAGS.extra_dim, name="extra_conditions")
         else:
-            generated_trial, _, _ = generate_trial(model.g, model.u)
+            gen_extra_conds = None
+
+        generated_trial, _, _ = generate_trial(
+            model.g, model.u, trial_len, y0, gen_extra_conds)
+
 
     print("--------------Generative Parameters---------------")
     print("Number of GMM components: %i" % FLAGS.GMM_K)
@@ -458,13 +464,14 @@ def run_model(FLAGS):
             f.close()
 
     seso_saver.save(sess, FLAGS.model_dir + "/final_model")
+    sess.close()
 
     print("Training completed.")
 
 
 def main(_):
     if FLAGS.device == "CPU":
-        with tf.device("cpu:0"):
+        with tf.device('/cpu:0'):
             run_model(FLAGS)
     elif FLAGS.device == "GPU":
         run_model(FLAGS)

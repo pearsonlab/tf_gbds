@@ -100,6 +100,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
         self._kwargs["Input"] = Input
         self._kwargs["xDim"] = xDim
         self._kwargs["yDim"] = yDim
+        self._kwargs['extra_conds'] = extra_conds
 
     def _initialize_posterior_distribution(self, RecognitionParams):
         # Compute the precisions (from square roots)

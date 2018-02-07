@@ -3,6 +3,7 @@ import math
 import h5py
 from scipy.stats import norm
 import numpy as np
+from tensorflow.contrib.distributions import softplus_inverse
 from tensorflow.contrib.keras import layers
 from tensorflow.contrib.keras import constraints, models
 from matplotlib.colors import Normalize
@@ -209,129 +210,135 @@ def gen_data(n_trials, n_obs, sigma=1e-3 * np.ones((1, 3)),
 def load_data(hps):
     """ Generate synthetic data set or load real data from local directory
     """
-    train_data = []
-    val_data = []
     if hps.synthetic_data:
-        data, goals = gen_data(
+        trajs, goals = gen_data(
             n_trials=2000, n_obs=100, Kp=0.5, Ki=0.2, Kd=0.1)
         np.random.seed(hps.seed)  # set seed for consistent train/val split
+        train_trajs = []
+        val_trajs = []
         val_goals = []
-        for (trial_data, trial_goals) in zip(data, goals):
+        for (traj, goal) in zip(trajs, goals):
             if np.random.rand() <= hps.train_ratio:
-                train_data.append(trial_data)
+                train_trajs.append(traj)
             else:
-                val_data.append(trial_data)
-                val_goals.append(trial_goals)
-        np.save(hps.model_dir + "/train_data", train_data)
-        np.save(hps.model_dir + "/val_data", val_data)
+                val_trajs.append(traj)
+                val_goals.append(goal)
+
+        np.save(hps.model_dir + "/train_trajs", train_trajs)
+        np.save(hps.model_dir + "/val_trajs", val_trajs)
         np.save(hps.model_dir + "/val_goals", val_goals)
 
-        train_conds = None
-        val_conds = None
-        train_ctrls = None
-        val_ctrls = None
+        train_set = tf.data.Dataset.from_tensor_slices(
+            [tf.convert_to_tensor(trial, tf.float32)
+             for trial in train_trajs])
+        train_set = train_set.map(lambda x: {"trajectory": x})
+        train_set = train_set.shuffle(buffer_size=10000)
+        train_set = train_set.apply(
+                tf.contrib.data.batch_and_drop_remainder(hps.B))
+        if hps.B > 1:
+            train_set = train_set.map(_pad_data)
+        train_set = train_set.repeat(hps.n_epochs)
+        train_data = train_set.make_one_shot_iterator().get_next("train_data")
+
+        val_set = tf.data.Dataset.from_tensor_slices(
+            [tf.convert_to_tensor(trial, tf.float32)
+             for trial in val_trajs])
+        val_set = val_set.map(lambda x: {"trajectory": x})
+        val_set = val_set.batch(1)
+        val_data = val_set.make_one_shot_iterator().get_next("val_data")
 
     elif hps.data_dir is not None:
-        if hps.data_dir.split(".")[-1] == "npy":
-            data = np.load(hps.data_dir)
-            if len(data) == 1:
-                trajs = data[0]
-                conds = None
-                ctrls = None
-            elif len(data) == 2:
-                trajs = data[0]
-                conds = data[1]
-                ctrls = None
-            elif len(data) == 3:
-                trajs = data[0]
-                conds = data[1]
-                ctrls = data[2]
-            else:
-                raise Exception(
-                    "Number of datasets provided must be 1, 2, or 3 \
-                     but %s in %s" % (len(data), hps.data_dir))
+        features = {"trajectory": tf.FixedLenFeature((), tf.string)}
+        if hps.extra_conds:
+            # assume extra conditions are of type int64
+            features.update({"extra_conds": tf.FixedLenFeature(
+                (hps.extra_dims), tf.int64)})
+        if hps.ctrl_obs:
+            features.update({"ctrl_obs": tf.FixedLenFeature(
+                (), tf.string)})
 
-        elif hps.data_dir.split(".")[-1] == ("hdf5" or "hf"):
-            with h5py.File(hps.data_dir, "r") as f:
-                # if "trajectories" in f:
-                #     trajs = np.array(f["trajectories"], np.float32)
-                # else:
-                #     raise Exception("Trajectories must be provided.")
-                # if "conditions" in f:
-                #     conds = np.array(f["conditions"], np.float32)
-                # else:
-                #     conds = None
-                # if "control" in f:
-                #     ctrls = np.array(f["control"], np.float32)
-                # else:
-                #     ctrls = None
-                trajs = np.array([f.get(trial).value for trial in f.keys()])
-                conds = None  # TODO
-                ctrls = None  # TODO
+        def _read_data(example):
+            parsed_features = tf.parse_single_example(example, features)
+            entry = {}
+            extry["trajectory"] = tf.reshape(
+                tf.decode_raw(parsed_features["trajectory"], tf.float32),
+                [-1, hps.obs_dim])
 
-        else:
-            raise Exception("Data type must be either numpy object or HDF5")
+            if "extra_conds" in parsed_features:
+                entry["extra_conds"] = parsed_features["extra_conds"]
+            if "ctrl_obs" in parsed_features:
+                entry["ctrl_obs"] = tf.reshape(
+                    tf.decode_raw(parsed_features["ctrl_obs"],
+                                  tf.float32), [-1, hps.obs_dim])
 
-        if hps.val:
-            if hps.train_ratio is None:
-                train_ratio = 0.85
-            else:
-                train_ratio = hps.train_ratio
+            return entry
 
-            train_ind = []
-            val_ind = []
-            np.random.seed(hps.seed)  # set seed for consistent train/val split
-            for i in range(len(trajs)):
-                if np.random.rand() <= hps.train_ratio:
-                    train_ind.append(i)
-                else:
-                    val_ind.append(i)
-            np.save(hps.model_dir + "/train_indices", train_ind)
-            np.save(hps.model_dir + "/val_indices", val_ind)
+        def _pad_data(batch):
+            batch["trajectory"] = pad_batch(batch["trajectory"])
+            if "ctrl_obs" in batch:
+                batch["ctrl_obs"] = pad_batch(batch["ctrl_obs"],
+                                              mode="zero")
 
-            train_data = trajs[train_ind]
-            val_data = trajs[val_ind]
-            if conds is not None:
-                train_conds = conds[train_ind]
-                val_conds = conds[val_ind]
-            else:
-                train_conds = None
-                val_conds = None
-            if ctrls is not None:
-                train_ctrls = ctrls[train_ind]
-                val_ctrls = ctrls[val_ind]
-            else:
-                train_ctrls = None
-                val_ctrls = None
+            return batch
+
+        if hps.data_dir.split(".")[-1] == "tfrecords":
+            train_set = tf.data.TFRecordDataset(hps.data_dir)
+            train_set = train_set.map(_read_data)
+            train_set = train_set.shuffle(buffer_size=10000)
+            train_set = train_set.apply(
+                    tf.contrib.data.batch_and_drop_remainder(hps.B))
+            if hps.B > 1:
+                train_set = train_set.map(_pad_data)
+            train_set = train_set.repeat(hps.n_epochs)
+            train_data = train_set.make_one_shot_iterator().get_next(
+                "train_data")
 
         else:
-            train_data = trajs
+            raise Exception("Data format not recognized.")
+
+        if hps.val_dir.split(".")[-1] == "tfrecords":
+            val_set = tf.data.TFRecordDataset(hps.val_dir)
+            val_set = val_set.map(_read_data)
+            val_set = val_set.batch(1)
+            val_data = val_set.make_one_shot_iterator().get_next("val_data")
+        else:
             val_data = None
-            if conds is not None:
-                train_conds = conds
-                val_conds = None
-            if ctrls is not None:
-                train_ctrls = ctrls
-                val_ctrls = None
 
     else:
         raise Exception("Data must be provided (either real or synthetic).")
 
-    return train_data, train_conds, train_ctrls, val_data, val_conds, val_ctrls
+    return train_data, val_data
 
 
-def get_max_velocities(datasets, dim):
-    """Get the maximium velocities from datasets
-    """
-    max_vel = [[] for _ in range(dim)]
-    for d in range(len(datasets)):
-        for i in range(len(datasets[d])):
-            for c in range(dim):
-                if np.abs(np.diff(datasets[d][i][:, c])).max() > 0.001:
-                    max_vel[c].append(
-                        np.abs(np.diff(datasets[d][i][:, c])).max())
+# def get_max_velocities(datasets, dim):
+#     """Get the maximium velocities from datasets
+#     """
+#     max_vel = [[] for _ in range(dim)]
+#     for d in range(len(datasets)):
+#         for i in range(len(datasets[d])):
+#             for c in range(dim):
+#                 if np.abs(np.diff(datasets[d][i][:, c])).max() > 0.001:
+#                     max_vel[c].append(
+#                         np.abs(np.diff(datasets[d][i][:, c])).max())
 
-    return np.array([max(vel) for vel in max_vel], np.float32)
+#     return np.array([max(vel) for vel in max_vel], np.float32)
+
+
+def get_max_velocities(trajectories, dim):
+    max_vel = np.zeros((dim), np.float32)
+    sess = tf.InteractiveSession()
+    for batch in trajectories:
+        while True:
+            try:
+                max_vel = np.maximum(
+                    tf.reduce_max(tf.abs(batch[:, 1:] - batch[:, :-1]),
+                                  [0, 1]).eval(), max_vel)
+            except tf.errors.OutOfRangeError:
+                break
+
+    sess.close()
+
+    return max_vel
 
 
 def get_vel(traj, max_vel):
@@ -393,7 +400,7 @@ def get_agent_params(agent_name, agent_dim, agent_col,
         agent_vel = all_vel[agent_col]
 
         PID_p = get_PID_priors(agent_dim, agent_vel)
-        PID_q = get_PID_posteriors(agent_dim)
+        PID_q = get_PID_posteriors(agent_dim, agent_vel)
 
         params = dict(
             name=agent_name, dim=agent_dim, col=agent_col,
@@ -535,16 +542,22 @@ class Point_Mass(PointMass):
         return tf.zeros([])
 
 
-def get_PID_posteriors(dim):
+def get_PID_posteriors(dim, vel):
     with tf.variable_scope("PID_posteriors"):
         posteriors = {}
 
-        unc_Kp = tf.Variable(tf.random_normal([dim], name="Kp_init_value"),
-                             dtype=tf.float32, name="unc_Kp")
-        unc_Ki = tf.Variable(tf.random_normal([dim], name="Ki_init_value"),
-                             dtype=tf.float32, name="unc_Ki")
-        unc_Kd = tf.Variable(tf.random_normal([dim], name="Kd_init_value"),
-                             dtype=tf.float32, name="unc_Kd")
+        unc_Kp = tf.Variable(
+            softplus_inverse(np.ones(dim, np.float32) / vel,
+                             name="unc_Kp_init"),
+            dtype=tf.float32, name="unc_Kp")
+        unc_Ki = tf.Variable(
+            softplus_inverse(np.ones(dim, np.float32) * 1e-6,
+                             name="unc_Ki_init"),
+            dtype=tf.float32, name="unc_Ki")
+        unc_Kd = tf.Variable(
+            softplus_inverse(np.ones(dim, np.float32) * 1e-6,
+                             name="unc_Kd_init"),
+            dtype=tf.float32, name="unc_Kd")
         posteriors["vars"] = ([unc_Kp] + [unc_Ki] + [unc_Kd])
 
         posteriors["Kp"] = Point_Mass(tf.nn.softplus(unc_Kp), name="Kp")
@@ -571,8 +584,7 @@ def get_g0_params(dim, K):
         return g0
 
 
-# TODO: only accept velocity as state; simplify trial generation
-def generate_trial(goal_model, control_model, y0=None, trial_len=100,
+def generate_trial(goal_model, control_model, trial_len, y0,
                    extra_conds=None):
     dim = goal_model.dim
     vel = control_model.max_vel
@@ -592,6 +604,7 @@ def generate_trial(goal_model, control_model, y0=None, trial_len=100,
                 v_t = tf.zeros_like(y0, tf.float32, name="v_%s" % t)
             else:
                 v_t = tf.subtract(y[t], y[t - 1], name="v_%s" % t)
+            # assume state includes only position and velocity
             if extra_conds is None:
                 s_t = tf.concat([y[t], v_t], 0, name="s_%s" % t)
             else:
@@ -624,83 +637,99 @@ def generate_trial(goal_model, control_model, y0=None, trial_len=100,
     return trajectory, control, goal
 
 
-def batch_generator(arrays, batch_size, randomize=True):
-    n_trials = len(arrays)
-    n_batch = math.floor(n_trials / batch_size)
-    if randomize:
-        np.random.shuffle(arrays)
+# def batch_generator(arrays, batch_size, randomize=True):
+#     n_trials = len(arrays)
+#     n_batch = math.floor(n_trials / batch_size)
+#     if randomize:
+#         np.random.shuffle(arrays)
 
-    start = 0
-    while True:
-        batches = []
-        for _ in range(n_batch):
-            stop = start + batch_size
-            diff = stop - n_trials
+#     start = 0
+#     while True:
+#         batches = []
+#         for _ in range(n_batch):
+#             stop = start + batch_size
+#             diff = stop - n_trials
 
-            if diff <= 0:
-                batch = np.array(arrays[start:stop])
-                start = stop
-            batches.append(batch)
+#             if diff <= 0:
+#                 batch = np.array(arrays[start:stop])
+#                 start = stop
+#             batches.append(batch)
 
-        yield batches
-
-
-def batch_generator_pad(arrays, batch_size, extra_conds=None, ctrl_obs=None,
-                        randomize=True):
-    n_trials = len(arrays)
-    if randomize:
-        p = np.random.permutation(n_trials)
-        arrays = np.array([arrays[i] for i in p])
-        if extra_conds is not None:
-            extra_conds = np.array([extra_conds[i] for i in p])
-        if ctrl_obs is not None:
-            ctrl_obs = np.array([ctrl_obs[i] for i in p])
-
-    n_batch = math.floor(n_trials / batch_size)
-    start = 0
-    while True:
-        batches = []
-        if extra_conds is not None:
-            conds = []
-        else:
-            conds = None
-        if ctrl_obs is not None:
-            ctrls = []
-        else:
-            ctrls = None
-
-        for _ in range(n_batch):
-            stop = start + batch_size
-            diff = stop - n_trials
-
-            if diff <= 0:
-                batch = arrays[start:stop]
-                if extra_conds is not None:
-                    cond = np.array(extra_conds[start:stop])
-                if ctrl_obs is not None:
-                    ctrl = np.array(ctrl_obs[start:stop])
-                start = stop
-
-            batch = pad_batch(batch)
-            batches.append(batch)
-            if extra_conds is not None:
-                conds.append(cond)
-            if ctrl_obs is not None:
-                ctrl = pad_batch(ctrl, mode="zero")
-                ctrls.append(ctrl)
-
-        yield batches, conds, ctrls
+#         yield batches
 
 
-def pad_batch(arrays, mode="edge"):
-    max_len = np.max([len(a) for a in arrays])
+# def batch_generator_pad(arrays, batch_size, extra_conds=None, ctrl_obs=None,
+#                         randomize=True):
+#     n_trials = len(arrays)
+#     if randomize:
+#         p = np.random.permutation(n_trials)
+#         arrays = np.array([arrays[i] for i in p])
+#         if extra_conds is not None:
+#             extra_conds = np.array([extra_conds[i] for i in p])
+#         if ctrl_obs is not None:
+#             ctrl_obs = np.array([ctrl_obs[i] for i in p])
+
+#     n_batch = math.floor(n_trials / batch_size)
+#     start = 0
+#     while True:
+#         batches = []
+#         if extra_conds is not None:
+#             conds = []
+#         else:
+#             conds = None
+#         if ctrl_obs is not None:
+#             ctrls = []
+#         else:
+#             ctrls = None
+
+#         for _ in range(n_batch):
+#             stop = start + batch_size
+#             diff = stop - n_trials
+
+#             if diff <= 0:
+#                 batch = arrays[start:stop]
+#                 if extra_conds is not None:
+#                     cond = np.array(extra_conds[start:stop])
+#                 if ctrl_obs is not None:
+#                     ctrl = np.array(ctrl_obs[start:stop])
+#                 start = stop
+
+#             batch = pad_batch(batch)
+#             batches.append(batch)
+#             if extra_conds is not None:
+#                 conds.append(cond)
+#             if ctrl_obs is not None:
+#                 ctrl = pad_batch(ctrl, mode="zero")
+#                 ctrls.append(ctrl)
+
+#         yield batches, conds, ctrls
+
+
+# def pad_batch(arrays, mode="edge"):
+#     max_len = np.max([len(a) for a in arrays])
+#     if mode == "edge":
+#         return np.array([np.pad(a, ((0, max_len - len(a)), (0, 0)),
+#                                 "edge") for a in arrays])
+#     elif mode == "zero":
+#         return np.array(
+#             [np.pad(a, ((0, max_len - len(a)), (0, 0)), "constant",
+#                     constant_values=0) for a in arrays])
+
+
+def pad_batch(batch, mode="edge"):
+    max_len = tf.reduce_max(
+        tf.map_fn(lambda x: tf.shape(x)[0], batch, dtype=tf.int32,
+                  name="trial_length"), name="max_length")
+
     if mode == "edge":
-        return np.array([np.pad(a, ((0, max_len - len(a)), (0, 0)),
-                                "edge") for a in arrays])
+        return tf.map_fn(
+            lambda x: tf.concat(
+                [x, tf.tile(tf.expand_dims(x[-1], 0),
+                            [max_len - tf.shape(x)[0], 1])], 0), batch)
     elif mode == "zero":
-        return np.array(
-            [np.pad(a, ((0, max_len - len(a)), (0, 0)), "constant",
-                    constant_values=0) for a in arrays])
+        return tf.map_fn(
+            lambda x: tf.pad(x, [[0, max_len - tf.shape(x)[0]], [0, 0]],
+                             "constant"), batch)
 
 
 def pad_extra_conds(data, extra_conds):

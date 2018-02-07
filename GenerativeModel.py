@@ -99,8 +99,9 @@ class GBDS_g(RandomVariable, Distribution):
             reparameterization_type=reparameterization_type,
             validate_args=validate_args, allow_nan_stats=allow_nan_stats)
 
-        self._kwargs["states"] = states
         self._kwargs["params"] = params
+        self._kwargs["states"] = states
+        self._kwargs['extra_conds'] = extra_conds
 
     def get_preds(self, s, g, extra_conds=None):
         # Return one-step-ahead prediction of goals, given states
@@ -324,9 +325,10 @@ class GBDS_u(RandomVariable, Distribution):
             reparameterization_type=reparameterization_type,
             validate_args=validate_args, allow_nan_stats=allow_nan_stats)
 
+        self._kwargs["params"] = params
         self._kwargs["goals"] = goals
         self._kwargs["positions"] = positions
-        self._kwargs["params"] = params
+        self._kwargs['ctrl_obs'] = ctrl_obs
 
     def get_preds(self, y, post_g, u_prev):
         # Return one-step-ahead prediction of control signal, given current
