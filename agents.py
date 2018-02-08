@@ -28,8 +28,19 @@ class agent_model(object):
                 self.ctrl_obs = None
 
             self.vars = []
-            value_shape = [1, 2, self.dim]
             latent_u = params["latent_u"]
+
+            with tf.name_scope("variable_shape"):
+                traj_shape = self.traj.shape.as_list()
+                if traj_shape[0] is None:
+                    B = 1
+                else:
+                    B = traj_shape[0]
+                if traj_shape[1] is None:
+                    Tt = 2
+                else:
+                    Tt = traj_shape[1]
+                value_shape = [B, Tt, self.dim]
 
             with tf.name_scope("goal"):
                 self.g_p = GBDS_g(params, self.states, self.extra_conds,

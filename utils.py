@@ -228,24 +228,17 @@ def load_data(hps):
         np.save(hps.model_dir + "/val_trajs", val_trajs)
         np.save(hps.model_dir + "/val_goals", val_goals)
 
-        train_set = tf.data.Dataset.from_tensor_slices(
-            [tf.convert_to_tensor(trial, tf.float32)
-             for trial in train_trajs])
-        train_set = train_set.map(lambda x: {"trajectory": x})
-        train_set = train_set.shuffle(buffer_size=10000)
-        train_set = train_set.apply(
-                tf.contrib.data.batch_and_drop_remainder(hps.B))
-        if hps.B > 1:
-            train_set = train_set.map(_pad_data)
-        train_set = train_set.repeat(hps.n_epochs)
-        train_data = train_set.make_one_shot_iterator().get_next("train_data")
+        with tf.name_scope("load_training_set"):
+            train_set = tf.data.Dataset.from_tensor_slices(
+                [tf.convert_to_tensor(trial, tf.float32)
+                 for trial in train_trajs])
+            train_set = train_set.map(lambda x: {"trajectory": x})
 
-        val_set = tf.data.Dataset.from_tensor_slices(
-            [tf.convert_to_tensor(trial, tf.float32)
-             for trial in val_trajs])
-        val_set = val_set.map(lambda x: {"trajectory": x})
-        val_set = val_set.batch(1)
-        val_data = val_set.make_one_shot_iterator().get_next("val_data")
+        with tf.name_scope("load_validation_set"):
+            val_set = tf.data.Dataset.from_tensor_slices(
+                [tf.convert_to_tensor(trial, tf.float32)
+                 for trial in val_trajs])
+            val_set = val_set.map(lambda x: {"trajectory": x})
 
     elif hps.data_dir is not None:
         features = {"trajectory": tf.FixedLenFeature((), tf.string)}
@@ -281,33 +274,24 @@ def load_data(hps):
 
             return batch
 
-        if hps.data_dir.split(".")[-1] == "tfrecords":
-            train_set = tf.data.TFRecordDataset(hps.data_dir)
-            train_set = train_set.map(_read_data)
-            train_set = train_set.shuffle(buffer_size=10000)
-            train_set = train_set.apply(
-                    tf.contrib.data.batch_and_drop_remainder(hps.B))
-            if hps.B > 1:
-                train_set = train_set.map(_pad_data)
-            train_set = train_set.repeat(hps.n_epochs)
-            train_data = train_set.make_one_shot_iterator().get_next(
-                "train_data")
+        with tf.name_scope("load_training_set"):
+            if hps.data_dir.split(".")[-1] == "tfrecords":
+                train_set = tf.data.TFRecordDataset(hps.data_dir)
+                train_set = train_set.map(_read_data)
+            else:
+                raise Exception("Data format not recognized.")
 
-        else:
-            raise Exception("Data format not recognized.")
-
-        if hps.val_dir.split(".")[-1] == "tfrecords":
-            val_set = tf.data.TFRecordDataset(hps.val_dir)
-            val_set = val_set.map(_read_data)
-            val_set = val_set.batch(1)
-            val_data = val_set.make_one_shot_iterator().get_next("val_data")
-        else:
-            val_data = None
+        with tf.name_scope("load_validation_set"):
+            if hps.val_dir.split(".")[-1] == "tfrecords":
+                val_set = tf.data.TFRecordDataset(hps.val_dir)
+                val_set = val_set.map(_read_data)
+            else:
+                val_set = None
 
     else:
         raise Exception("Data must be provided (either real or synthetic).")
 
-    return train_data, val_data
+    return train_set, val_set
 
 
 # def get_max_velocities(datasets, dim):
@@ -324,14 +308,19 @@ def load_data(hps):
 #     return np.array([max(vel) for vel in max_vel], np.float32)
 
 
-def get_max_velocities(trajectories, dim):
+def get_max_velocities(datasets, dim):
     max_vel = np.zeros((dim), np.float32)
+
     sess = tf.InteractiveSession()
-    for batch in trajectories:
+    for dataset in datasets:
+        dataset = dataset.batch(100)
+        item = dataset.make_one_shot_iterator().get_next()
+
         while True:
             try:
+                trajs = item["trajectory"]
                 max_vel = np.maximum(
-                    tf.reduce_max(tf.abs(batch[:, 1:] - batch[:, :-1]),
+                    tf.reduce_max(tf.abs(trajs[:, 1:] - trajs[:, :-1]),
                                   [0, 1]).eval(), max_vel)
             except tf.errors.OutOfRangeError:
                 break
@@ -584,7 +573,7 @@ def get_g0_params(dim, K):
         return g0
 
 
-def generate_trial(goal_model, control_model, trial_len, y0,
+def generate_trial(goal_model, control_model, y0=None, max_trial_len=100,
                    extra_conds=None):
     dim = goal_model.dim
     vel = control_model.max_vel
@@ -597,10 +586,15 @@ def generate_trial(goal_model, control_model, trial_len, y0,
         prev_error = tf.zeros([dim], tf.float32, name="prev_error")
         prev2_error = tf.zeros([dim], tf.float32, name="prev2_error")
         y = tf.reshape(y0, [1, dim], name="y0")
+        t = tf.constant(0, tf.int32, name="step")
 
     with tf.name_scope("propogate"):
-        for t in range(trial_len - 1):
-            if t == 0:
+        cond = lambda y, u, g, t, prev_error, prev2_error: (tf.less(
+            t, max_trial_len) and tf.less_equal(tf.abs(y[-1]), 1.))
+        # TODO: trial termination condition
+
+        def propogate(y, u, g, t, prev_error, prev2_error):
+            if tf.equal(t, 0):
                 v_t = tf.zeros_like(y0, tf.float32, name="v_%s" % t)
             else:
                 v_t = tf.subtract(y[t], y[t - 1], name="v_%s" % t)
@@ -623,16 +617,20 @@ def generate_trial(goal_model, control_model, trial_len, y0,
             prev2_error = prev_error
             prev_error = error
 
-            y_new = tf.reshape(tf.clip_by_value(
-                y[t] + vel * tf.clip_by_value(
-                    u[t + 1], -1., 1., name="clip_u_%s" % (t + 1)),
-                -1., 1., name="bound_y_%s" % (t + 1)),
-                [1, dim], name="y_%s" % (t + 1))
+            y_new = tf.reshape(y[t] + vel * tf.clip_by_value(
+                u[t + 1], -1., 1., name="clip_u_%s" % (t + 1)), [1, dim],
+                name="y_%s" % (t + 1))
             y = tf.concat([y, y_new], 0, name="concat_y_%s" % (t + 1))
+            
+            return y, u, g, tf.add(t, 1), prev_error, prev2_error
 
-    trajectory = tf.identity(y, name='trajectory')
-    control = tf.identity(u, name='control')
-    goal = tf.identity(g, name='goal')
+        y_, u_, g_, _, _, _ = tf.while_loop(
+            cond, propogate, [y, u, g, t, prev_error, prev2_error],
+            name="trial_generation_loop")
+
+    trajectory = tf.identity(y_, name='trajectory')
+    control = tf.identity(u_, name='control')
+    goal = tf.identity(g_, name='goal')
 
     return trajectory, control, goal
 

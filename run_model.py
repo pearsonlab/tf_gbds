@@ -180,18 +180,37 @@ def run_model(FLAGS):
     assert sum(agent_dim) <= FLAGS.obs_dim, "The modeling dimensions exceed \
         observed: %i > %i" % (sum(agent_dim), FLAGS.obs_dim)
 
-    train_data, val_data = load_data(FLAGS)
+    with tf.name_scope("data"):
+        with tf.name_scope("load_data"):
+            train_set, val_set = load_data(FLAGS)
+            print("Data loaded.")
 
-    print("Data loaded.")
+        with tf.name_scope("get_max_velocities"):
+            if val_set is None:
+                all_vel = get_max_velocities([train_set], FLAGS.obs_dim)
+            else:
+                all_vel = get_max_velocities([train_set, val_set],
+                                             FLAGS.obs_dim)
+            print("The maximum velocity is %s." % all_vel)
 
-    if val_data is None:
-        all_vel = get_max_velocities([train_data["trajectory"]],
-                                     FLAGS.obs_dim)
-    else:
-        all_vel = get_max_velocities(
-            [train_data["trajectory"], val_data["trajectory"]], FLAGS.obs_dim)
-
-    print("The maximum velocity is %s." % all_vel)
+        with tf.name_scope("get_iterator"):
+            with tf.name_scope("training_set"):
+                train_set = train_set.shuffle(buffer_size=10000)
+                train_set = train_set.apply(
+                    tf.contrib.data.batch_and_drop_remainder(FLAGS.B))
+                # if FLAGS.B > 1:
+                #     train_set = train_set.map(_pad_data)
+                train_iterator = train_set.make_initializable_iterator(
+                    "training_iterator")
+                train_data = train_iterator.get_next("training_data")
+            with tf.name_scope("validation_set"):
+                if val_set is not None:
+                    val_set = val_set.batch(1)
+                    val_iterator = val_set.make_initializable_iterator(
+                        "validation_iterator")
+                    val_data = val_iterator.get_next("validation_data")
+                else:
+                    val_data = None
 
     if FLAGS.add_accel:
         state_dim = FLAGS.obs_dim * 3
@@ -230,36 +249,34 @@ def run_model(FLAGS):
         agent_params.append(params)
 
     with tf.name_scope("inputs"):
-        Y = tf.placeholder(tf.float32, shape=(None, None, FLAGS.obs_dim),
-                           name="trajectories")
-        inputs = {"trajectories": Y, "states": get_state(Y, all_vel)}
+        with tf.name_scope("trajectories_states"):
+            inputs = {"trajectories": train_data["trajectory"],
+                      "states": get_state(train_data["trajectory"], all_vel)}
 
-        if FLAGS.extra_conds:
-            extra_conds = tf.placeholder(
-                tf.float32, shape=(None, FLAGS.extra_dim),
-                name="extra_conditions")
-            inputs.update({"extra_conds": extra_conds})
-        if FLAGS.ctrl_obs:
-            ctrl_obs = tf.placeholder(
-                tf.float32, shape=(None, None, FLAGS.obs_dim),
-                name="observed_control")
-            inputs.update({"ctrl_obs": ctrl_obs})
+        with tf.name_scope("extra_conditions"):
+            if FLAGS.extra_conds:
+                inputs.update({"extra_conds": train_data["extra_conds"]})
+        
+        with tf.name_scope("observed_control"):
+            if FLAGS.ctrl_obs:
+                inputs.update({"ctrl_obs": train_data["ctrl_obs"]})
 
     model = game_model(agent_params, inputs, FLAGS.n_post_samp,
                        name="penaltykick")
 
-    with tf.name_scope("generate_trial"):
-        trial_len = tf.placeholder(tf.int32, shape=(), name="trial_length")
-        y0 = tf.placeholder(tf.float32, shape=(model.g.dim),
-                            name="initial_position")
-        if FLAGS.extra_conds:
-            gen_extra_conds = tf.placeholder(
-                tf.float32, shape=FLAGS.extra_dim, name="extra_conditions")
-        else:
-            gen_extra_conds = None
+    # with tf.name_scope("generate_trial"):
+    #     y0 = tf.placeholder(tf.float32, shape=(model.g.dim),
+    #                         name="initial_position")
+    #     max_trial_len = tf.placeholder(tf.int32, shape=(),
+    #                                    name="maximum_trial_length")
+    #     if FLAGS.extra_conds:
+    #         gen_extra_conds = tf.placeholder(
+    #             tf.float32, shape=FLAGS.extra_dim, name="extra_conditions")
+    #     else:
+    #         gen_extra_conds = None
 
-        generated_trial, _, _ = generate_trial(
-            model.g, model.u, trial_len, y0, gen_extra_conds)
+    #     generated_trial, _, _ = generate_trial(
+    #         model.g, model.u, y0, max_trial_len, gen_extra_conds)
 
 
     print("--------------Generative Parameters---------------")
@@ -359,96 +376,88 @@ def run_model(FLAGS):
     else:
         inference = ed.KLqp(model.latent_vars, model.data)
 
-    n_batches = math.ceil(train_ntrials / FLAGS.B)
     if FLAGS.opt == "Adam":
         optimizer = tf.train.AdamOptimizer(FLAGS.lr)
-    inference.initialize(n_iter=FLAGS.n_epochs * n_batches,
-                         n_samples=FLAGS.n_samp,
+    inference.initialize(n_samples=FLAGS.n_samp,
                          var_list=model.var_list,
                          optimizer=optimizer,
                          logdir=FLAGS.model_dir + "/log")
 
-    print("Graph constructed.")
+    if val_data is not None:
+        val_inputs = {"trajectories": val_data["trajectory"],
+                      "states": get_state(val_data["trajectory"], all_vel)}
+        if FLAGS.extra_conds:
+            val_inputs.update({"extra_conds": val_data["extra_conds"]})
+        if FLAGS.ctrl_obs:
+            val_inputs.update({"ctrl_obs": val_data["ctrl_obs"]})
+
+        val_model = game_model(agent_params, val_inputs, FLAGS.n_post_samp,
+                               name="validation")
+        val_inference = ed.KLqp(val_model.latent_vars, val_model.data)
+        val_inference.initialize(n_samples=FLAGS.n_samp,
+                                 var_list=val_model.var_list)
+        val_loss = tf.identity(val_inference.loss, name="validation_loss")
+
+        # dict_swap = {train_data["trajectory"]: val_data["trajectory"]}
+        # if FLAGS.extra_conds:
+        #     dict_swap.update(
+        #         {train_data["extra_conds"]: val_data["extra_conds"]})
+        # if FLAGS.ctrl_obs:
+        #     dict_swap.update({train_data["ctrl_obs"]: val_data["ctrl_obs"]})
+
+        # val_loss = ed.copy(inference.loss, dict_swap, "validation_loss")
+
+    print("Computational graph constructed.")
 
     sess = ed.get_session()
     tf.global_variables_initializer().run()
 
-    lowest_ev_cost = np.Inf
     seso_saver = tf.train.Saver(tf.global_variables(),
                                 max_to_keep=FLAGS.max_ckpt,
                                 name="session_saver")
-    if FLAGS.val:
+    if val_data is not None:
         lve_saver = tf.train.Saver(tf.global_variables(),
                                    max_to_keep=2,
                                    name="lowest_validation_loss_saver")
+    lowest_ev_cost = np.Inf
 
     if FLAGS.load_saved_model:
         seso_saver.restore(sess, FLAGS.saved_model_dir)
         print("Model restored from " + FLAGS.saved_model_dir)
 
     for i in range(FLAGS.n_epochs):
-        if FLAGS.synthetic_data:
-            batches = next(batch_generator(train_data, FLAGS.B))
-        else:
-            batches, conds, ctrls = next(batch_generator_pad(
-                train_data, FLAGS.B, train_conds, train_ctrls))
+        sess.run(train_iterator.initializer)
 
-        if extra_conds_present and ctrl_obs_present:
-            for batch, cond, ctrl in zip(batches, conds, ctrls):
-                info_dict = inference.update(
-                    {Y: batch, extra_conds: cond, ctrl_obs: ctrl})
+        while True:
+            try:
+                inference.update()
                 # add_summary(PID_summary, inference, sess, feed_dict,
                 #             info_dict["t"])
-                inference.print_progress(info_dict)
-        elif extra_conds_present:
-            for batch, cond in zip(batches, conds):
-                info_dict = inference.update({Y: batch, extra_conds: cond})
-                # add_summary(PID_summary, inference, sess, feed_dict,
-                #             info_dict["t"])
-                inference.print_progress(info_dict)
-        elif ctrl_obs_present:
-            for batch, ctrl in zip(batches, ctrls):
-                info_dict = inference.update({Y: batch, ctrl_obs: ctrl})
-                # add_summary(PID_summary, inference, sess, feed_dict,
-                #             info_dict["t"])
-                inference.print_progress(info_dict)
-        else:
-            for batch in batches:
-                info_dict = inference.update({Y: batch})
-                # add_summary(PID_summary, inference, sess, feed_dict,
-                #             info_dict["t"])
-                inference.print_progress(info_dict)
+            except tf.errors.OutOfRangeError:
+                break
 
         if (i + 1) % FLAGS.freq_ckpt == 0:
             seso_saver.save(sess, FLAGS.model_dir + "/saved_model",
                             global_step=(i + 1),
                             latest_filename="checkpoint")
 
-        if FLAGS.val:
+        if val_data is not None:
             if (i + 1) % FLAGS.freq_val_loss == 0:
-                if extra_conds_present and ctrl_obs_present:
-                    val_loss = sess.run(
-                        inference.loss,
-                        feed_dict={Y: val_data, extra_conds: val_conds,
-                                   ctrl_obs: val_ctrls})
-                elif extra_conds_present:
-                    val_loss = sess.run(
-                        inference.loss,
-                        feed_dict={Y: val_data, extra_conds: val_conds})
-                elif ctrl_obs_present:
-                    val_loss = sess.run(
-                        inference.loss,
-                        feed_dict={Y: val_data, ctrl_obs: val_ctrls})
-                else:
-                    val_loss = sess.run(
-                        inference.loss, feed_dict={Y: val_data})
+                sess.run(val_iterator.initializer)
+                batch_loss = []
+
+                while True:
+                    try:
+                        batch_loss.append(sess.run(val_loss))
+                    except tf.errors.OutOfRangeError:
+                        break
 
                 print("\n", "Validation loss after epoch %i: %.3f" %
-                      (i + 1, val_loss * FLAGS.B / val_ntrials))
+                      (i + 1, np.mean(batch_loss) / FLAGS.B))
 
-                if val_loss * FLAGS.B / val_ntrials < lowest_ev_cost:
+                if (np.mean(batch_loss) / FLAGS.B) < lowest_ev_cost:
                     print("Saving model with lowest validation loss...")
-                    lowest_ev_cost = val_loss * FLAGS.B / val_ntrials
+                    lowest_ev_cost = np.mean(batch_loss) / FLAGS.B
                     lve_saver.save(sess, FLAGS.model_dir + "/saved_model_lve",
                                    global_step=(i + 1),
                                    latest_filename="checkpoint_lve",
