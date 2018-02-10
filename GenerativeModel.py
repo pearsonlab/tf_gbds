@@ -259,14 +259,14 @@ class GBDS_u(RandomVariable, Distribution):
             self.res_pen = tf.constant(
                 params["u_res_pen"], dtype=tf.float32,
                 name="control_residual_penalty")
+            self.latent_u = params["latent_u"]
 
             with tf.name_scope("PID_control"):
                 with tf.name_scope("parameters"):
-                    # priors of PID parameters (optimal control)
-                    PID_priors = params["PID_p"]
-                    self.Kp = PID_priors["Kp"]
-                    self.Ki = PID_priors["Ki"]
-                    self.Kd = PID_priors["Kd"]
+                    PID_params = params["PID_q"]
+                    self.Kp = PID_params["Kp"]
+                    self.Ki = PID_params["Ki"]
+                    self.Kd = PID_params["Kd"]
                     self.PID = [self.Kp] + [self.Ki] + [self.Kd]
                     # For details of PID control system, refer to
                     # https://en.wikipedia.org/wiki/PID_controller
@@ -279,7 +279,7 @@ class GBDS_u(RandomVariable, Distribution):
                     self.L = tf.stack([t2_coeff, t1_coeff, t_coeff], axis=1,
                                       name="PID_convolution_filter")
 
-            with tf.name_scope("control_signal"):
+            with tf.name_scope("observed_control_signal"):
                 if ctrl_obs is not None:
                     self.ctrl_obs = tf.identity(ctrl_obs,
                                                 name="observed_control")
@@ -401,10 +401,16 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope("next_step_prediction"):
             # Disregard the last time step because we donnot know
             # the next value, thus cannot calculate the error
-            ctrl_error, u_pred = self.get_preds(
-                self.y[:, :-1], self.g[:, 1:],
-                tf.pad(value[:, :-2], [[0, 0], [1, 0], [0, 0]],
-                       name="previous_control"))
+            if self.latent_u:
+                ctrl_error, u_pred = self.get_preds(
+                    self.y[:, :-1], self.g[:, 1:],
+                    tf.pad(value[:, :-2], [[0, 0], [1, 0], [0, 0]],
+                           name="previous_control"))
+            else:
+                ctrl_error, u_pred = self.get_preds(
+                    self.y[:, :-1], self.g[:, 1:],
+                    tf.pad(self.ctrl_obs[:, :-1], [[0, 0], [1, 0], [0, 0]],
+                           name="previous_control"))
 
         LogDensity = 0.0
         with tf.name_scope("clipping_noise"):
@@ -413,8 +419,12 @@ class GBDS_u(RandomVariable, Distribution):
                     self.clip_log_prob(self.ctrl_obs, value[:, :-1]), [1, 2])
 
         with tf.name_scope("control_signal"):
-            u_res = tf.subtract(value[:, :-1], u_pred,
-                                name="control_signal_residual")
+            if self.latent_u:
+                u_res = tf.subtract(value[:, :-1], u_pred,
+                                    name="control_signal_residual")
+            else:
+                u_res = tf.subtract(self.ctrl_obs, u_pred,
+                                    name="control_signal_residual")
             # LogDensity -= tf.reduce_sum(
             #     (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
             #      u_res ** 2 / (2 * self.eps ** 2)), [1, 2])

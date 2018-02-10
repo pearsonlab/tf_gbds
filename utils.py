@@ -234,18 +234,12 @@ def load_data(hps):
                  for trial in train_trajs])
             train_set = train_set.map(lambda x: {"trajectory": x})
 
-        with tf.name_scope("load_validation_set"):
-            val_set = tf.data.Dataset.from_tensor_slices(
-                [tf.convert_to_tensor(trial, tf.float32)
-                 for trial in val_trajs])
-            val_set = val_set.map(lambda x: {"trajectory": x})
-
     elif hps.data_dir is not None:
         features = {"trajectory": tf.FixedLenFeature((), tf.string)}
         if hps.extra_conds:
             # assume extra conditions are of type int64
             features.update({"extra_conds": tf.FixedLenFeature(
-                (hps.extra_dims), tf.int64)})
+                (hps.extra_dim), tf.int64)})
         if hps.ctrl_obs:
             features.update({"ctrl_obs": tf.FixedLenFeature(
                 (), tf.string)})
@@ -253,12 +247,13 @@ def load_data(hps):
         def _read_data(example):
             parsed_features = tf.parse_single_example(example, features)
             entry = {}
-            extry["trajectory"] = tf.reshape(
+            entry["trajectory"] = tf.reshape(
                 tf.decode_raw(parsed_features["trajectory"], tf.float32),
                 [-1, hps.obs_dim])
 
             if "extra_conds" in parsed_features:
-                entry["extra_conds"] = parsed_features["extra_conds"]
+                entry["extra_conds"] = tf.cast(
+                    parsed_features["extra_conds"], tf.float32)
             if "ctrl_obs" in parsed_features:
                 entry["ctrl_obs"] = tf.reshape(
                     tf.decode_raw(parsed_features["ctrl_obs"],
@@ -266,13 +261,13 @@ def load_data(hps):
 
             return entry
 
-        def _pad_data(batch):
-            batch["trajectory"] = pad_batch(batch["trajectory"])
-            if "ctrl_obs" in batch:
-                batch["ctrl_obs"] = pad_batch(batch["ctrl_obs"],
-                                              mode="zero")
+        # def _pad_data(batch):
+        #     batch["trajectory"] = pad_batch(batch["trajectory"])
+        #     if "ctrl_obs" in batch:
+        #         batch["ctrl_obs"] = pad_batch(batch["ctrl_obs"],
+        #                                       mode="zero")
 
-            return batch
+        #     return batch
 
         with tf.name_scope("load_training_set"):
             if hps.data_dir.split(".")[-1] == "tfrecords":
@@ -281,17 +276,10 @@ def load_data(hps):
             else:
                 raise Exception("Data format not recognized.")
 
-        with tf.name_scope("load_validation_set"):
-            if hps.val_dir.split(".")[-1] == "tfrecords":
-                val_set = tf.data.TFRecordDataset(hps.val_dir)
-                val_set = val_set.map(_read_data)
-            else:
-                val_set = None
-
     else:
         raise Exception("Data must be provided (either real or synthetic).")
 
-    return train_set, val_set
+    return train_set
 
 
 # def get_max_velocities(datasets, dim):
@@ -311,21 +299,18 @@ def load_data(hps):
 def get_max_velocities(datasets, dim):
     max_vel = np.zeros((dim), np.float32)
 
-    sess = tf.InteractiveSession()
     for dataset in datasets:
-        dataset = dataset.batch(100)
-        item = dataset.make_one_shot_iterator().get_next()
+        traj = dataset.make_one_shot_iterator().get_next()["trajectory"]
+        trial_max_vel = tf.reduce_max(tf.abs(traj[1:] - traj[:-1]), 0,
+                                      name="trial_maximum_velocity")
 
+        sess = tf.InteractiveSession()
         while True:
             try:
-                trajs = item["trajectory"]
-                max_vel = np.maximum(
-                    tf.reduce_max(tf.abs(trajs[:, 1:] - trajs[:, :-1]),
-                                  [0, 1]).eval(), max_vel)
+                max_vel = np.maximum(trial_max_vel.eval(), max_vel)
             except tf.errors.OutOfRangeError:
                 break
-
-    sess.close()
+        sess.close()
 
     return max_vel
 
@@ -504,15 +489,12 @@ def get_PID_priors(dim, vel):
     with tf.variable_scope("PID_priors"):
         priors = {}
 
-        priors["Kp"] = Gamma(
-            np.ones(dim, np.float32) * 2, np.ones(dim, np.float32) * vel,
-            name="Kp", value=np.ones(dim, np.float32) / vel)
+        priors["Kp"] = Gamma(np.ones(dim, np.float32) * 2,
+                             np.ones(dim, np.float32) * vel, name="Kp")
         priors["Ki"] = Exponential(
-            np.ones(dim, np.float32) / vel, name="Ki",
-            value=np.zeros(dim, np.float32))
+            np.ones(dim, np.float32) / vel, name="Ki")
         priors["Kd"] = Exponential(
-            np.ones(dim, np.float32), name="Kd",
-            value=np.zeros(dim, np.float32))
+            np.ones(dim, np.float32), name="Kd")
 
         return priors
 

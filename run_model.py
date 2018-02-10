@@ -15,7 +15,6 @@ from tensorflow.python.client import timeline
 # default flag values
 MODEL_DIR = "new_model"
 DATA_DIR = None
-VAL_DIR = None
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
@@ -62,9 +61,8 @@ N_EPOCHS = 500
 BATCH_SIZE = 1
 N_VI_SAMPLES = 1
 N_POSTERIOR_SAMPLES = 30
-MAX_CKPT = 5
+MAX_CKPT = 3
 FREQ_CKPT = 5
-FREQ_VAL_LOSS = 5
 
 
 flags = tf.app.flags
@@ -72,7 +70,6 @@ flags = tf.app.flags
 flags.DEFINE_string("model_dir", MODEL_DIR,
                     "Directory where the model is saved")
 flags.DEFINE_string("data_dir", DATA_DIR, "Directory of training data file")
-flags.DEFINE_string("val_dir", VAL_DIR, "Directory of validation data file")
 flags.DEFINE_boolean("synthetic_data", SYNTHETIC_DATA,
                      "Is the model trained on synthetic dataset")
 flags.DEFINE_boolean("save_posterior", SAVE_POSTERIOR, "Will posterior \
@@ -155,8 +152,6 @@ flags.DEFINE_integer("max_ckpt", MAX_CKPT,
                      "Maximum number of checkpoints to keep in the directory")
 flags.DEFINE_integer("freq_ckpt", FREQ_CKPT, "Frequency of saving \
                      checkpoints to the directory")
-flags.DEFINE_integer("freq_val_loss", FREQ_VAL_LOSS, "Frequency of \
-                     evaluating loss of validation set")
 
 FLAGS = flags.FLAGS
 
@@ -182,15 +177,11 @@ def run_model(FLAGS):
 
     with tf.name_scope("data"):
         with tf.name_scope("load_data"):
-            train_set, val_set = load_data(FLAGS)
+            train_set = load_data(FLAGS)
             print("Data loaded.")
 
         with tf.name_scope("get_max_velocities"):
-            if val_set is None:
-                all_vel = get_max_velocities([train_set], FLAGS.obs_dim)
-            else:
-                all_vel = get_max_velocities([train_set, val_set],
-                                             FLAGS.obs_dim)
+            all_vel = get_max_velocities([train_set], FLAGS.obs_dim)
             print("The maximum velocity is %s." % all_vel)
 
         with tf.name_scope("get_iterator"):
@@ -203,14 +194,6 @@ def run_model(FLAGS):
                 train_iterator = train_set.make_initializable_iterator(
                     "training_iterator")
                 train_data = train_iterator.get_next("training_data")
-            with tf.name_scope("validation_set"):
-                if val_set is not None:
-                    val_set = val_set.batch(1)
-                    val_iterator = val_set.make_initializable_iterator(
-                        "validation_iterator")
-                    val_data = val_iterator.get_next("validation_data")
-                else:
-                    val_data = None
 
     if FLAGS.add_accel:
         state_dim = FLAGS.obs_dim * 3
@@ -249,17 +232,20 @@ def run_model(FLAGS):
         agent_params.append(params)
 
     with tf.name_scope("inputs"):
-        with tf.name_scope("trajectories_states"):
-            inputs = {"trajectories": train_data["trajectory"],
-                      "states": get_state(train_data["trajectory"], all_vel)}
+        y_train = tf.identity(train_data["trajectory"],
+                              name="trajectory")
+        s_train = get_state(y_train, all_vel)
+        inputs = {"trajectories": y_train, "states": s_train}
 
-        with tf.name_scope("extra_conditions"):
-            if FLAGS.extra_conds:
-                inputs.update({"extra_conds": train_data["extra_conds"]})
+        if FLAGS.extra_conds:
+            extra_conds_train = tf.identity(train_data["extra_conds"],
+                                            name="extra_conditions")
+            inputs.update({"extra_conds": extra_conds_train})
         
-        with tf.name_scope("observed_control"):
-            if FLAGS.ctrl_obs:
-                inputs.update({"ctrl_obs": train_data["ctrl_obs"]})
+        if FLAGS.ctrl_obs:
+            ctrl_obs_train = tf.identity(train_data["ctrl_obs"],
+                                         name="observed_control")
+            inputs.update({"ctrl_obs": ctrl_obs_train})
 
     model = game_model(agent_params, inputs, FLAGS.n_post_samp,
                        name="penaltykick")
@@ -383,30 +369,6 @@ def run_model(FLAGS):
                          optimizer=optimizer,
                          logdir=FLAGS.model_dir + "/log")
 
-    if val_data is not None:
-        val_inputs = {"trajectories": val_data["trajectory"],
-                      "states": get_state(val_data["trajectory"], all_vel)}
-        if FLAGS.extra_conds:
-            val_inputs.update({"extra_conds": val_data["extra_conds"]})
-        if FLAGS.ctrl_obs:
-            val_inputs.update({"ctrl_obs": val_data["ctrl_obs"]})
-
-        val_model = game_model(agent_params, val_inputs, FLAGS.n_post_samp,
-                               name="validation")
-        val_inference = ed.KLqp(val_model.latent_vars, val_model.data)
-        val_inference.initialize(n_samples=FLAGS.n_samp,
-                                 var_list=val_model.var_list)
-        val_loss = tf.identity(val_inference.loss, name="validation_loss")
-
-        # dict_swap = {train_data["trajectory"]: val_data["trajectory"]}
-        # if FLAGS.extra_conds:
-        #     dict_swap.update(
-        #         {train_data["extra_conds"]: val_data["extra_conds"]})
-        # if FLAGS.ctrl_obs:
-        #     dict_swap.update({train_data["ctrl_obs"]: val_data["ctrl_obs"]})
-
-        # val_loss = ed.copy(inference.loss, dict_swap, "validation_loss")
-
     print("Computational graph constructed.")
 
     sess = ed.get_session()
@@ -415,17 +377,15 @@ def run_model(FLAGS):
     seso_saver = tf.train.Saver(tf.global_variables(),
                                 max_to_keep=FLAGS.max_ckpt,
                                 name="session_saver")
-    if val_data is not None:
-        lve_saver = tf.train.Saver(tf.global_variables(),
-                                   max_to_keep=2,
-                                   name="lowest_validation_loss_saver")
-    lowest_ev_cost = np.Inf
 
     if FLAGS.load_saved_model:
         seso_saver.restore(sess, FLAGS.saved_model_dir)
-        print("Model restored from " + FLAGS.saved_model_dir)
+        print("Parameters saved in %s restored." % FLAGS.saved_model_dir)
 
     for i in range(FLAGS.n_epochs):
+        if i == 0 or (i + 1) % (FLAGS.n_epochs // 10) == 0:
+            print("Entering epoch %i ..." % (i + 1))
+
         sess.run(train_iterator.initializer)
 
         while True:
@@ -440,28 +400,7 @@ def run_model(FLAGS):
             seso_saver.save(sess, FLAGS.model_dir + "/saved_model",
                             global_step=(i + 1),
                             latest_filename="checkpoint")
-
-        if val_data is not None:
-            if (i + 1) % FLAGS.freq_val_loss == 0:
-                sess.run(val_iterator.initializer)
-                batch_loss = []
-
-                while True:
-                    try:
-                        batch_loss.append(sess.run(val_loss))
-                    except tf.errors.OutOfRangeError:
-                        break
-
-                print("\n", "Validation loss after epoch %i: %.3f" %
-                      (i + 1, np.mean(batch_loss) / FLAGS.B))
-
-                if (np.mean(batch_loss) / FLAGS.B) < lowest_ev_cost:
-                    print("Saving model with lowest validation loss...")
-                    lowest_ev_cost = np.mean(batch_loss) / FLAGS.B
-                    lve_saver.save(sess, FLAGS.model_dir + "/saved_model_lve",
-                                   global_step=(i + 1),
-                                   latest_filename="checkpoint_lve",
-                                   write_meta_graph=False)
+            print("Model saved after %i epochs." % (i + 1))
 
     if FLAGS.profile:
         fetched_timeline = timeline.Timeline(run_metadata.step_stats)
