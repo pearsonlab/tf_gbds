@@ -1,13 +1,11 @@
 import os
-import math
 import tensorflow as tf
 import numpy as np
 import edward as ed
 from tf_gbds.agents import game_model
 from tf_gbds.utils import (load_data, get_max_velocities, get_vel, get_accel,
-                           get_agent_params, generate_trial, pad_batch,
-                           # batch_generator, batch_generator_pad,
-                           KLqp_profile, add_summary)
+                           get_agent_params, pad_batch, KLqp_profile,
+                           add_summary)
 import time
 from tensorflow.python.client import timeline
 
@@ -160,20 +158,21 @@ def run_model(FLAGS):
     if not os.path.exists(FLAGS.model_dir):
         os.makedirs(FLAGS.model_dir)
 
+    # Check provided agent information
     agent_name = FLAGS.agent_name.split(",")
-    assert len(agent_name) == FLAGS.n_agents, "The length of name list %i \
-        does not match the number of agents %i" % (len(agent_name),
-                                                   FLAGS.n_agents)
+    assert len(agent_name) == FLAGS.n_agents, "The length of name list \
+        %i does not match the number of agents %i" % (len(agent_name),
+                                                      FLAGS.n_agents)
 
     agent_col = [[int(c) for c in a.split(",")]
                  for a in FLAGS.agent_col.split(";")]
-    assert len(agent_col) == FLAGS.n_agents, "The length of column list %i \
-        does not match the number of agents %i" % (len(agent_col),
-                                                   FLAGS.n_agents)
+    assert len(agent_col) == FLAGS.n_agents, "The length of column list \
+        %i does not match the number of agents %i" % (len(agent_col),
+                                                      FLAGS.n_agents)
 
     agent_dim = [len(a) for a in agent_col]
-    assert sum(agent_dim) <= FLAGS.obs_dim, "The modeling dimensions exceed \
-        observed: %i > %i" % (sum(agent_dim), FLAGS.obs_dim)
+    assert sum(agent_dim) <= FLAGS.obs_dim, "The modeling dimension \
+        exceeds observed: %i > %i" % (sum(agent_dim), FLAGS.obs_dim)
 
     with tf.name_scope("data"):
         with tf.name_scope("load_data"):
@@ -181,8 +180,8 @@ def run_model(FLAGS):
             print("Data loaded.")
 
         with tf.name_scope("get_max_velocities"):
-            all_vel = get_max_velocities([train_set], FLAGS.obs_dim)
-            print("The maximum velocity is %s." % all_vel)
+            max_vel = get_max_velocities([train_set], FLAGS.obs_dim)
+            print("The maximum velocity is %s." % max_vel)
 
         with tf.name_scope("get_iterator"):
             with tf.name_scope("training_set"):
@@ -224,7 +223,7 @@ def run_model(FLAGS):
             FLAGS.obs_dim, state_dim, FLAGS.extra_dim,
             FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
             FLAGS.GMM_K, PKLparams, FLAGS.sigma, FLAGS.sigma_trainable,
-            g_bounds, FLAGS.g_bounds_pen, all_vel, FLAGS.latent_u,
+            g_bounds, FLAGS.g_bounds_pen, max_vel, FLAGS.latent_u,
             FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
             penalty_Q, FLAGS.u_res_tol, FLAGS.u_res_pen,
             FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen,
@@ -234,14 +233,14 @@ def run_model(FLAGS):
     with tf.name_scope("inputs"):
         y_train = tf.identity(train_data["trajectory"],
                               name="trajectory")
-        s_train = get_state(y_train, all_vel)
+        s_train = get_state(y_train, max_vel)
         inputs = {"trajectories": y_train, "states": s_train}
 
         if FLAGS.extra_conds:
             extra_conds_train = tf.identity(train_data["extra_conds"],
                                             name="extra_conditions")
             inputs.update({"extra_conds": extra_conds_train})
-        
+
         if FLAGS.ctrl_obs:
             ctrl_obs_train = tf.identity(train_data["ctrl_obs"],
                                          name="observed_control")
@@ -250,20 +249,45 @@ def run_model(FLAGS):
     model = game_model(agent_params, inputs, FLAGS.n_post_samp,
                        name="penaltykick")
 
-    # with tf.name_scope("generate_trial"):
-    #     y0 = tf.placeholder(tf.float32, shape=(model.g.dim),
-    #                         name="initial_position")
-    #     max_trial_len = tf.placeholder(tf.int32, shape=(),
-    #                                    name="maximum_trial_length")
-    #     if FLAGS.extra_conds:
-    #         gen_extra_conds = tf.placeholder(
-    #             tf.float32, shape=FLAGS.extra_dim, name="extra_conditions")
-    #     else:
-    #         gen_extra_conds = None
+    with tf.name_scope("update_one_step"):
+        prev_y = tf.placeholder(tf.float32, shape=(FLAGS.obs_dim),
+                                name="previous_position")
+        curr_y = tf.placeholder(tf.float32, shape=(FLAGS.obs_dim),
+                                name="current_position")
+        v = tf.divide(curr_y - prev_y, max_vel, name="current_velocity")
+        curr_s = tf.concat([curr_y, v], 0, name="current_state")
 
-    #     generated_trial, _, _ = generate_trial(
-    #         model.g, model.u, y0, max_trial_len, gen_extra_conds)
+        if FLAGS.extra_conds:
+            gen_extra_conds = tf.placeholder(
+                tf.float32, shape=FLAGS.extra_dim, name="extra_conditions")
+        else:
+            gen_extra_conds = None
 
+        with tf.name_scope("goal"):
+            # g0 = tf.identity(model.g.sample_g0(), name="initial")
+            prev_g = tf.placeholder(tf.float32, shape=(model.g.dim),
+                                    name="previous")
+            curr_g = tf.identity(
+                model.g.update_goal(curr_s, prev_g, gen_extra_conds),
+                name="current")
+
+        with tf.name_scope("control"):
+            with tf.name_scope("error"):
+                curr_error = tf.subtract(curr_g, curr_y, name="current")
+                prev_error = tf.placeholder(tf.float32, shape=(model.u.dim),
+                                            name="previous")
+                prev2_error = tf.placeholder(tf.float32, shape=(model.u.dim),
+                                             name="previous2")
+                errors = tf.stack([curr_error, prev_error, prev2_error], 0,
+                                  name="all")
+            prev_u = tf.placeholder(tf.float32, shape=(model.u.dim),
+                                    name="previous")
+            curr_u = tf.identity(model.u.update_ctrl(errors, prev_u),
+                                 name="current")
+
+        next_y = tf.clip_by_value(
+            curr_y + max_vel * tf.clip_by_value(curr_u, -1., 1.), -1., 1.,
+            name="next_position")
 
     print("--------------Generative Parameters---------------")
     print("Number of GMM components: %i" % FLAGS.GMM_K)

@@ -145,8 +145,9 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
 
             with tf.name_scope("diagonal_blocks"):
                 self.AA = tf.add(self.Lambda + tf.pad(
-                    self.LambdaX, [[0, 0], [1, 0], [0, 0], [0, 0]]),
-                                 AQinvArepPlusQ, name='precision_diagonal')
+                    self.LambdaX, [[0, 0], [1, 0], [0, 0], [0, 0]]) +
+                    AQinvArepPlusQ, 1e-6 * tf.eye(self.xDim),
+                    name='precision_diagonal')
             with tf.name_scope("off-diagonal_blocks"):
                 self.BB = tf.add(tf.matmul(self.LambdaChol[:, :-1],
                                            tf.transpose(self.LambdaXChol,

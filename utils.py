@@ -1,6 +1,5 @@
 import tensorflow as tf
 import math
-import h5py
 from scipy.stats import norm
 import numpy as np
 from tensorflow.contrib.distributions import softplus_inverse
@@ -553,68 +552,6 @@ def get_g0_params(dim, K):
             tf.ones([K], name="w_init_value"), dtype=tf.float32, name="unc_w")
 
         return g0
-
-
-def generate_trial(goal_model, control_model, y0=None, max_trial_len=100,
-                   extra_conds=None):
-    dim = goal_model.dim
-    vel = control_model.max_vel
-
-    with tf.name_scope("initialize"):
-        if y0 is None:
-            y0 = tf.zeros([dim], tf.float32)
-        g = tf.reshape(goal_model.sample_g0(), [1, dim], name="g0")
-        u = tf.zeros([1, dim], tf.float32, name="u0")
-        prev_error = tf.zeros([dim], tf.float32, name="prev_error")
-        prev2_error = tf.zeros([dim], tf.float32, name="prev2_error")
-        y = tf.reshape(y0, [1, dim], name="y0")
-        t = tf.constant(0, tf.int32, name="step")
-
-    with tf.name_scope("propogate"):
-        cond = lambda y, u, g, t, prev_error, prev2_error: (tf.less(
-            t, max_trial_len) and tf.less_equal(tf.abs(y[-1]), 1.))
-        # TODO: trial termination condition
-
-        def propogate(y, u, g, t, prev_error, prev2_error):
-            if tf.equal(t, 0):
-                v_t = tf.zeros_like(y0, tf.float32, name="v_%s" % t)
-            else:
-                v_t = tf.subtract(y[t], y[t - 1], name="v_%s" % t)
-            # assume state includes only position and velocity
-            if extra_conds is None:
-                s_t = tf.concat([y[t], v_t], 0, name="s_%s" % t)
-            else:
-                s_t = tf.concat([y[t], v_t, extra_conds], 0, name="s_%s" % t)
-            g_new = tf.reshape(goal_model.sample_GMM(s_t, g[t]), [1, dim],
-                               name="g_%s" % (t + 1))
-            g = tf.concat([g, g_new], 0, name="concat_g_%s" % (t + 1))
-
-            error = tf.subtract(g[t + 1], y[t], name="error_%s" % t)
-            errors = tf.stack([error, prev_error, prev2_error], 0,
-                              name="errors_%s" % t)
-            u_new = tf.reshape(control_model.update_ctrl(errors, u[t]),
-                               [1, dim], name="u_%s" % (t + 1))
-            u = tf.concat([u, u_new], 0, name="concat_u_%s" % (t + 1))
-
-            prev2_error = prev_error
-            prev_error = error
-
-            y_new = tf.reshape(y[t] + vel * tf.clip_by_value(
-                u[t + 1], -1., 1., name="clip_u_%s" % (t + 1)), [1, dim],
-                name="y_%s" % (t + 1))
-            y = tf.concat([y, y_new], 0, name="concat_y_%s" % (t + 1))
-            
-            return y, u, g, tf.add(t, 1), prev_error, prev2_error
-
-        y_, u_, g_, _, _, _ = tf.while_loop(
-            cond, propogate, [y, u, g, t, prev_error, prev2_error],
-            name="trial_generation_loop")
-
-    trajectory = tf.identity(y_, name='trajectory')
-    control = tf.identity(u_, name='control')
-    goal = tf.identity(g_, name='goal')
-
-    return trajectory, control, goal
 
 
 # def batch_generator(arrays, batch_size, randomize=True):

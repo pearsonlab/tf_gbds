@@ -180,10 +180,14 @@ class GBDS_g(RandomVariable, Distribution):
 
             return g0
 
-    def sample_GMM(self, state, g_prev):
+    def sample_GMM(self, state, prev_g, extra_conds=None):
         # Generate new goal given current state and previous goal
         with tf.name_scope("%s_sample_GMM" % self.name):
             state = tf.reshape(state, [1, 1, -1], name="reshape_state")
+            with tf.name_scope("pad_extra_conds"):
+                if extra_conds is not None:
+                    state = pad_extra_conds(
+                        state, tf.reshape(extra_conds, [1, -1]))
 
             with tf.name_scope("mu"):
                 all_mu = tf.reshape(
@@ -205,12 +209,12 @@ class GBDS_g(RandomVariable, Distribution):
                     1, name="draw_sample"), name="k")
             with tf.name_scope("get_sample"):
                 g = tf.add(
-                    tf.divide(g_prev + all_mu[k] * all_lambda[k],
+                    tf.divide(prev_g + all_mu[k] * all_lambda[k],
                               1 + all_lambda[k], name="mean"),
                     (tf.random_normal([self.dim], name="std_normal") *
                      tf.divide(tf.squeeze(self.sigma),
                                tf.sqrt(1 + all_lambda[k]), name="std_dev")),
-                    name="goal")
+                    name="new_goal")
 
             return g
 
@@ -330,7 +334,7 @@ class GBDS_u(RandomVariable, Distribution):
         self._kwargs["positions"] = positions
         self._kwargs['ctrl_obs'] = ctrl_obs
 
-    def get_preds(self, y, post_g, u_prev):
+    def get_preds(self, y, post_g, prev_u):
         # Return one-step-ahead prediction of control signal, given current
         # position, sample from goal posterior, and previous control.
 
@@ -355,7 +359,7 @@ class GBDS_u(RandomVariable, Distribution):
         else:
             u_diff = tf.identity(u_diff[0], name="contrl_signal_change")
 
-        u_pred = tf.add(u_prev, u_diff, name="predicted_control_signal")
+        u_pred = tf.add(prev_u, u_diff, name="predicted_control_signal")
 
         return (error, u_pred)
 
@@ -442,7 +446,7 @@ class GBDS_u(RandomVariable, Distribution):
 
         return tf.reduce_mean(LogDensity) / tf.cast(self.Tt - 1, tf.float32)
 
-    def update_ctrl(self, errors, u_prev):
+    def update_ctrl(self, errors, prev_u):
         # Update control signal given time series of errors and previous
         # control
         with tf.name_scope("%s_update_control" % self.name):
@@ -450,7 +454,7 @@ class GBDS_u(RandomVariable, Distribution):
                 tf.multiply(errors, tf.transpose(self.L),
                             name="convolve_signal"),
                 0, name="control_signal_change")
-            u = tf.add(u_prev, u_diff, name="update_control")
+            u = tf.add(prev_u, u_diff, name="new_control")
 
             return u
 
@@ -476,20 +480,18 @@ class joint_goals(object):
         super(joint_goals, self).__init__()
 
     def sample_g0(self, n=1):
-        with tf.name_scope("%s_g0_samples" % self.name):
-            if n == 1:
-                return tf.concat([g.sample_g0() for g in self.goals_prior],
-                                 0, name="g0")
-            else:
-                return tf.concat([tf.map_fn(g.sample_g0, tf.zeros(n))
-                                  for g in self.goals_prior], -1,
-                                 name="samples")
+        if n == 1:
+            return tf.concat([g.sample_g0() for g in self.goals_prior],
+                             0, name="g0")
+        else:
+            return tf.concat([tf.map_fn(g.sample_g0, tf.zeros(n))
+                              for g in self.goals_prior], -1,
+                             name="g0_samples")
 
-    def sample_GMM(self, state, g_prev):
-        with tf.name_scope("%s_GMM_samples" % self.name):
-            return tf.concat(
-                [g.sample_GMM(state, tf.gather(g_prev, g.col, axis=-1))
-                 for g in self.goals_prior], 0, name="new_goal")
+    def update_goal(self, state, prev_g, extra_conds=None):
+        return tf.concat([g.sample_GMM(
+          state, tf.gather(prev_g, g.col, axis=-1), extra_conds)
+          for g in self.goals_prior], 0, name="new_goal")
 
     def sample_posterior(self, n):
         with tf.name_scope("%s_posterior_samples" % self.name):
@@ -526,12 +528,12 @@ class joint_ctrls(object):
 
         super(joint_ctrls, self).__init__()
 
-    def update_ctrl(self, errors, u_prev):
+    def update_ctrl(self, errors, prev_u):
         with tf.name_scope("%s_update_control" % self.name):
             return tf.concat(
                 [u.update_ctrl(
                     tf.gather(errors, u.col, axis=-1, name="errors"),
-                    tf.gather(u_prev, u.col, axis=-1,
+                    tf.gather(prev_u, u.col, axis=-1,
                               name="previous_control"))
                  for u in self.ctrls_prior], 0, name="new_control")
 

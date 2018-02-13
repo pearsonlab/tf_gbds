@@ -1,7 +1,6 @@
 import tensorflow as tf
 from tf_gbds.GenerativeModel import GBDS_g, GBDS_u, joint_goals, joint_ctrls
 from tf_gbds.RecognitionModel import SmoothingPastLDSTimeSeries
-from tf_gbds.utils import generate_trial
 
 
 class agent_model(object):
@@ -102,7 +101,8 @@ class game_model(object):
             self.g = joint_goals([agent.g_p for agent in self.agents],
                                  [agent.g_q for agent in self.agents],
                                  name="goals")
-            self.g0_samp = tf.identity(self.g.sample_g0(n=100),
+            self.g0 = tf.identity(self.g.sample_g0(), name="initial_goal")
+            self.g0_samp = tf.identity(self.g.sample_g0(n=1000),
                                        name="initial_goal_samples")
             self.g_q_mu = tf.identity(
                 self.g.q_mean, name="goal_posterior_mean")
