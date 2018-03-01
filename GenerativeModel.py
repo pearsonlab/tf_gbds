@@ -122,7 +122,7 @@ class GBDS_g(RandomVariable, Distribution):
 
         all_w = tf.nn.softmax(tf.reshape(
             self.GMM_NN(s)[:, :, (2 * self.K * self.dim):],
-            [self.B, -1, self.K], name="reshape_w"), dim=-1, name="all_w")
+            [self.B, -1, self.K], name="reshape_w"), name="all_w")
 
         next_g = tf.divide(tf.expand_dims(g, 2) + all_mu * all_lambda,
                            1 + all_lambda, name="next_goals")
@@ -201,7 +201,7 @@ class GBDS_g(RandomVariable, Distribution):
             with tf.name_scope("w"):
                 all_w = tf.nn.softmax(tf.reshape(
                     self.GMM_NN(state)[:, :, (2 * self.K * self.dim):],
-                    [1, self.K], name="reshape_w"), dim=-1, name="all_w")
+                    [1, self.K], name="reshape_w"), name="all_w")
 
             with tf.name_scope("select_component"):
                 k = tf.squeeze(tf.multinomial(
@@ -224,7 +224,7 @@ class GBDS_u(RandomVariable, Distribution):
     Goal-Based Dynamical System
     """
 
-    def __init__(self, params, goals, positions, ctrl_obs=None,
+    def __init__(self, params, goals, positions, ctrl_obs,
                  name="U", value=None, dtype=tf.float32,
                  reparameterization_type=FULLY_REPARAMETERIZED,
                  validate_args=True, allow_nan_stats=True):
@@ -243,6 +243,7 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope(name):
             self.g = tf.identity(goals, name="goals")
             self.y = tf.identity(positions, name="positions")
+            self.ctrl_obs = tf.identity(ctrl_obs, name="observed_control")
 
             with tf.name_scope("agent_dimension"):
                 self.dim = params["dim"]
@@ -254,16 +255,12 @@ class GBDS_u(RandomVariable, Distribution):
             with tf.name_scope("trial_length"):
                 self.Tt = tf.shape(self.y)[1]
 
-            self.vel = tf.constant(
-                params["vel"], dtype=tf.float32, shape=[self.dim],
-                name="velocity")
             self.res_tol = tf.constant(
                 params["u_res_tol"], dtype=tf.float32,
                 name="control_residual_tolerance")
             self.res_pen = tf.constant(
                 params["u_res_pen"], dtype=tf.float32,
                 name="control_residual_penalty")
-            self.latent_u = params["latent_u"]
 
             with tf.name_scope("PID_control"):
                 with tf.name_scope("parameters"):
@@ -282,16 +279,6 @@ class GBDS_u(RandomVariable, Distribution):
                     # concatenate coefficients into a filter
                     self.L = tf.stack([t2_coeff, t1_coeff, t_coeff], axis=1,
                                       name="PID_convolution_filter")
-
-            with tf.name_scope("observed_control_signal"):
-                if ctrl_obs is not None:
-                    self.ctrl_obs = tf.identity(ctrl_obs,
-                                                name="observed_control")
-                else:
-                    self.ctrl_obs = tf.divide(
-                        tf.subtract(self.y[:, 1:], self.y[:, :-1],
-                                    name="distance"),
-                        self.vel, name="observed_control")
 
             with tf.name_scope("control_signal_censoring"):
                 # clipping signal
@@ -405,16 +392,10 @@ class GBDS_u(RandomVariable, Distribution):
         with tf.name_scope("next_step_prediction"):
             # Disregard the last time step because we donnot know
             # the next value, thus cannot calculate the error
-            if self.latent_u:
-                ctrl_error, u_pred = self.get_preds(
-                    self.y[:, :-1], self.g[:, 1:],
-                    tf.pad(value[:, :-2], [[0, 0], [1, 0], [0, 0]],
-                           name="previous_control"))
-            else:
-                ctrl_error, u_pred = self.get_preds(
-                    self.y[:, :-1], self.g[:, 1:],
-                    tf.pad(self.ctrl_obs[:, :-1], [[0, 0], [1, 0], [0, 0]],
-                           name="previous_control"))
+            ctrl_error, u_pred = self.get_preds(
+                self.y[:, :-1], self.g[:, 1:],
+                tf.pad(value[:, :-2], [[0, 0], [1, 0], [0, 0]],
+                       name="previous_control"))
 
         LogDensity = 0.0
         with tf.name_scope("clipping_noise"):
@@ -423,15 +404,14 @@ class GBDS_u(RandomVariable, Distribution):
                     self.clip_log_prob(self.ctrl_obs, value[:, :-1]), [1, 2])
 
         with tf.name_scope("control_signal"):
-            if self.latent_u:
-                u_res = tf.subtract(value[:, :-1], u_pred,
-                                    name="control_signal_residual")
-            else:
-                u_res = tf.subtract(self.ctrl_obs, u_pred,
-                                    name="control_signal_residual")
+            u_res = tf.subtract(value[:, :-1], u_pred,
+                                name="control_signal_residual")
             # LogDensity -= tf.reduce_sum(
             #     (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
             #      u_res ** 2 / (2 * self.eps ** 2)), [1, 2])
+            # LogDensity -= tf.reduce_sum(
+            #     (0.5 * tf.log(2 * np.pi) + tf.log(1e-5) * tf.ones([1, self.dim]) +
+            #      u_res ** 2 / (tf.ones([1, self.dim]) * 2 * 1e-5 ** 2)), [1, 2])
             LogDensity -= tf.reduce_sum(self.res_pen * tf.nn.relu(
                 u_res - self.res_tol), axis=[1, 2])
             LogDensity -= tf.reduce_sum(self.res_pen * tf.nn.relu(
@@ -440,9 +420,9 @@ class GBDS_u(RandomVariable, Distribution):
             # penalty on large ctrl error (absolute value > 1)
             if self.error_pen is not None:
                 LogDensity -= self.error_pen * tf.reduce_sum(
-                    tf.nn.relu(ctrl_error - 1.0), [1, 2])
+                    tf.nn.relu(ctrl_error - 1.), [1, 2])
                 LogDensity -= self.error_pen * tf.reduce_sum(
-                    tf.nn.relu(-ctrl_error - 1.0), [1, 2])
+                    tf.nn.relu(-ctrl_error - 1.), [1, 2])
 
         return tf.reduce_mean(LogDensity) / tf.cast(self.Tt - 1, tf.float32)
 
@@ -464,18 +444,17 @@ class joint_goals(object):
     """
 
     def __init__(self, goals_prior, goals_posterior, name="joint_goals"):
-        with tf.name_scope(name):
-            self.name = name
-            if (isinstance(goals_prior, list) and
-                    isinstance(goals_posterior, list)):
-                self.goals_prior = goals_prior
-                self.goals_posterior = goals_posterior
-                self.dim = sum(g.dim for g in goals_prior)
-                self.q_mean = tf.concat(
-                    [tf.squeeze(g.postX, -1) for g in goals_posterior], -1,
-                    name="goals_posterior_mean")
-            else:
-                raise TypeError("goals must be a list.")
+        self.name = name
+        if (isinstance(goals_prior, list) and
+                isinstance(goals_posterior, list)):
+            self.goals_prior = goals_prior
+            self.goals_posterior = goals_posterior
+            self.dim = sum(g.dim for g in goals_prior)
+            self.q_mean = tf.concat(
+                [tf.squeeze(g.postX, -1) for g in goals_posterior], -1,
+                name="goals_posterior_mean")
+        else:
+            raise TypeError("goals must be a list.")
 
         super(joint_goals, self).__init__()
 
@@ -504,27 +483,19 @@ class joint_ctrls(object):
     """
 
     def __init__(self, ctrls_prior, ctrls_posterior, name="joint_controls"):
-        with tf.name_scope(name):
-            self.name = name
-            if (isinstance(ctrls_prior, list) and
-                    isinstance(ctrls_posterior, list)):
-                self.ctrls_prior = ctrls_prior
-                self.ctrls_posterior = ctrls_posterior
-                self.dim = sum(u.dim for u in ctrls_prior)
-                self.max_vel = tf.concat([u.vel for u in ctrls_prior], 0,
-                                         name="max_velocity")
-                self.ctrl_obs = tf.concat([u.ctrl_obs for u in ctrls_prior],
-                                          -1, name="observed_control")
-            else:
-                raise TypeError("ctrls must be a list.")
+        self.name = name
+        if (isinstance(ctrls_prior, list) and
+                isinstance(ctrls_posterior, list)):
+            self.ctrls_prior = ctrls_prior
+            self.ctrls_posterior = ctrls_posterior
+            self.dim = sum(u.dim for u in ctrls_prior)
+        else:
+            raise TypeError("ctrls must be a list.")
 
-            if all(isinstance(u, ed.RandomVariable) for u in ctrls_posterior):
-                self.q_mean = tf.concat(
-                    [tf.squeeze(u.postX, -1) for u in ctrls_posterior], -1,
-                    name="controls_posterior_mean")
-            # elif all(isinstance(u, tf.Tensor) for u in ctrls_posterior):
-            #     self.u_q = tf.pad(self.ctrl_obs, [[0, 0], [0, 1], [0, 0]],
-            #                       name="controls_posterior")
+        if all(hasattr(u, "postX") for u in ctrls_posterior):
+            self.q_mean = tf.concat(
+                [tf.squeeze(u.postX, -1) for u in ctrls_posterior], -1,
+                name="controls_posterior_mean")
 
         super(joint_ctrls, self).__init__()
 

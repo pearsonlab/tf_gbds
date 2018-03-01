@@ -1,30 +1,22 @@
 import tensorflow as tf
 from tf_gbds.GenerativeModel import GBDS_g, GBDS_u, joint_goals, joint_ctrls
 from tf_gbds.RecognitionModel import SmoothingPastLDSTimeSeries
-
+from tf_gbds.utils import Point_Mass
 
 class agent_model(object):
     def __init__(self, params, inputs):
         with tf.name_scope(params["name"]):
             self.name = params["name"]
             self.dim = params["dim"]
-            self.col = tf.identity(params["col"],
-                                   name="agent_columns")
             self.obs_dim = params["obs_dim"]
+            self.col = tf.identity(params["col"], name="agent_columns")
 
             self.states = tf.identity(inputs["states"], name="states")
             self.traj = tf.identity(inputs["trajectories"],
                                     name="trajectories")
-            if "extra_conds" in inputs:
-                self.extra_conds = tf.identity(inputs["extra_conds"],
-                                               name="extra_conditions")
-            else:
-                self.extra_conds = None
-            if "ctrl_obs" in inputs:
-                self.ctrl_obs = tf.identity(inputs["ctrl_obs"],
-                                            name="observed_control")
-            else:
-                self.ctrl_obs = None
+            self.extra_conds = inputs["extra_conds"]
+            self.ctrl_obs = tf.gather(inputs["ctrl_obs"], self.col,
+                                      axis=-1, name="observed_control")
 
             self.vars = []
             latent_u = params["latent_u"]
@@ -62,8 +54,8 @@ class agent_model(object):
                         self.obs_dim, self.extra_conds, name="posterior")
                     self.vars += self.u_q.params
                 else:
-                    self.u_q = tf.pad(
-                        self.u_p.ctrl_obs, [[0, 0], [0, 1], [0, 0]],
+                    self.u_q = Point_Mass(tf.pad(
+                        self.ctrl_obs, [[0, 0], [0, 1], [0, 0]]),
                         name="posterior")
                 self.ctrl = {self.u_p: self.u_q}
 
@@ -87,8 +79,7 @@ class game_model(object):
             self.var_list = []
 
             if isinstance(params, list):
-                self.agents = [agent_model(p, inputs)
-                               for p in params]
+                self.agents = [agent_model(p, inputs) for p in params]
             else:
                 raise TypeError("params must be a list object.")
 
@@ -98,26 +89,26 @@ class game_model(object):
                 self.latent_vars.update(agent.PID)
                 self.var_list += agent.vars
 
-            self.g = joint_goals([agent.g_p for agent in self.agents],
-                                 [agent.g_q for agent in self.agents],
-                                 name="goals")
-            self.g0 = tf.identity(self.g.sample_g0(), name="initial_goal")
-            self.g0_samp = tf.identity(self.g.sample_g0(n=1000),
-                                       name="initial_goal_samples")
-            self.g_q_mu = tf.identity(
-                self.g.q_mean, name="goal_posterior_mean")
-            self.g_q_samp = tf.identity(
-                self.g.sample_posterior(n=n_samples),
-                name="goal_posterior_samples")
+            with tf.name_scope("goals"):
+                self.g = joint_goals([agent.g_p for agent in self.agents],
+                                     [agent.g_q for agent in self.agents])
+                self.g0 = tf.identity(self.g.sample_g0(), name="initial")
+                self.g0_samp = tf.identity(self.g.sample_g0(n=1000),
+                                           name="initial_samples")
+                self.g_q_mu = tf.identity(
+                    self.g.q_mean, name="posterior_mean")
+                self.g_q_samp = tf.identity(
+                    self.g.sample_posterior(n=n_samples),
+                    name="posterior_samples")
 
-            self.u = joint_ctrls([agent.u_p for agent in self.agents],
-                                 [agent.u_q for agent in self.agents],
-                                 name="controls")
-            if hasattr(self.u, "q_mean"):
-                self.u_q_mu = tf.identity(self.u.q_mean,
-                                          name="control_posterior_mean")
-                self.u_q_samp = tf.identity(
-                    self.u.sample_posterior(n=n_samples),
-                    name="control_posterior_samples")
+            with tf.name_scope("controls"):
+                self.u = joint_ctrls([agent.u_p for agent in self.agents],
+                                     [agent.u_q for agent in self.agents])
+                if hasattr(self.u, "q_mean"):
+                    self.u_q_mu = tf.identity(self.u.q_mean,
+                                              name="posterior_mean")
+                    self.u_q_samp = tf.identity(
+                        self.u.sample_posterior(n=n_samples),
+                        name="posterior_samples")
 
         super(game_model, self).__init__()

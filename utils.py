@@ -381,7 +381,7 @@ def get_agent_params(agent_name, agent_dim, agent_col,
             GMM_K=GMM_K, GMM_NN=GMM_NN, g0=g0,
             sigma=sigma, sigma_trainable=sigma_trainable,
             g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
-            g_q_params=g_q_params, vel=agent_vel, latent_u=latent_ctrl,
+            g_q_params=g_q_params, all_vel=all_vel, latent_u=latent_ctrl,
             PID_p=PID_p, PID_q=PID_q,
             u_res_tol=control_residual_tolerance,
             u_res_pen=control_residual_penalty,
@@ -430,11 +430,16 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
                 M.add(layers.Dense(
                     output_dim, activation="linear",
                     kernel_initializer=tf.random_normal_initializer(
-                        stddev=0.1), name="Dense_%s" % (i + 1)))
+                        stddev=0.1),
+                    # kernel_constraint=constraints.max_norm(5.),
+                    # bias_constraint=constraints.max_norm(5.),
+                    name="Dense_%s" % (i + 1)))
             else:
                 M.add(layers.Dense(
                     hidden_dim, activation="relu",
                     kernel_initializer=tf.orthogonal_initializer(),
+                    # kernel_constraint=constraints.max_norm(5.),
+                    # bias_constraint=constraints.max_norm(5.),
                     name="Dense_%s" % (i + 1)))
 
         return M, PKbias_layers
