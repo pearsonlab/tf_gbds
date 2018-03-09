@@ -31,20 +31,23 @@ class GBDS_G(RandomVariable, Distribution):
 
         with tf.name_scope(name):
             self.s = tf.identity(states, "states")
-            with tf.name_scope("columns"):
-                self.col = params["col"]
-            with tf.name_scope("dimension"):
-                self.dim = params["dim"]
+            self.col = params["col"]
+            self.dim = params["dim"]
             with tf.name_scope("batch_size"):
                 self.B = tf.shape(states)[0]
             with tf.name_scope("trial_length"):
                 self.Tt = tf.shape(states)[1]
-            with tf.name_scope("extra_conditions"):
-                if extra_conds is not None:
-                    self.extra_conds = tf.identity(
-                        extra_conds, "extra_conditions")
-                else:
-                    self.extra_conds = None
+
+            if extra_conds is not None:
+                self.extra_conds = tf.identity(
+                    extra_conds, "extra_conditions")
+            else:
+                self.extra_conds = None
+
+            # number of GMM components
+            self.K = params["GMM_K"]
+            # neural network to generate state-dependent goals
+            self.GMM_NN = params["GMM_NN"]
 
             with tf.name_scope("g0"):
                 # initial goal distribution
@@ -54,12 +57,6 @@ class GBDS_G(RandomVariable, Distribution):
                 self.g0_w = tf.nn.softmax(g0["unc_w"], name="w")
                 self.g0_params = ([g0["mu"]] + [g0["unc_lambda"]] +
                                   [g0["unc_w"]])
-
-            with tf.name_scope("GMM_neural_network"):
-                # number of GMM components
-                self.K = params["GMM_K"]
-                # neural network to generate state-dependent goals
-                self.GMM_NN = params["GMM_NN"]
 
             self.params = self.g0_params + self.GMM_NN.variables
 
@@ -243,8 +240,8 @@ class joint_goals(RandomVariable, Distribution):
         self._kwargs['extra_conds'] = extra_conds
 
     def _log_prob(self, value):
-        return tf.add_n([g.log_prob(tf.gather(value, g.col, axis=-1))
-                         for g in self.g])
+        return tf.add_n([g.log_prob(tf.gather(
+            value, g.col, name="%s_val" % g.name, axis=-1)) for g in self.g])
 
     def sample_g0(self, n=1):
         with tf.name_scope("%s_sample_g0" % self.name):
@@ -255,10 +252,9 @@ class joint_goals(RandomVariable, Distribution):
                                   for g in self.g], -1)
 
     def update_goal(self, state, prev_g, extra_conds=None):
-        with tf.name_scope("%s_update_goal" % self.name):
-            return tf.concat([g.sample_GMM(
-              state, tf.gather(prev_g, g.col, axis=-1), extra_conds)
-              for g in self.g], 0, name="new_goal")
+        return tf.concat([g.sample_GMM(
+          state, tf.gather(prev_g, g.col, axis=-1), extra_conds)
+          for g in self.g], 0, "new_goal")
 
 
 class GBDS_U(RandomVariable, Distribution):
@@ -286,10 +282,8 @@ class GBDS_U(RandomVariable, Distribution):
             self.g = tf.identity(goals, "goals")
             self.y = tf.identity(positions, "positions")
             self.ctrl_obs = tf.identity(ctrl_obs, "observed_control")
-            with tf.name_scope("columns"):
-                self.col = params["col"]
-            with tf.name_scope("dimension"):
-                self.dim = params["dim"]
+            self.col = params["col"]
+            self.dim = params["dim"]
             with tf.name_scope("batch_size"):
                 self.B = tf.shape(self.y)[0]
             with tf.name_scope("trial_length"):
@@ -452,19 +446,18 @@ class GBDS_U(RandomVariable, Distribution):
             # penalty on large ctrl error (absolute value > 1)
             if self.error_pen is not None:
                 LogDensity -= self.error_pen * tf.reduce_sum(
-                    tf.nn.relu(ctrl_error - .5), [1, 2])
+                    tf.nn.relu(ctrl_error - 1.), [1, 2])
                 LogDensity -= self.error_pen * tf.reduce_sum(
-                    tf.nn.relu(-ctrl_error - .5), [1, 2])
+                    tf.nn.relu(-ctrl_error - 1.), [1, 2])
 
         return tf.reduce_mean(LogDensity) / tf.cast(self.Tt - 1, tf.float32)
 
     def update_ctrl(self, errors, prev_u):
         # Update control signal given errors and previous control
         u_diff = tf.reduce_sum(
-            tf.multiply(errors, tf.transpose(self.L),
-                        name="convolve_signal"),
+            tf.multiply(errors, tf.transpose(self.L), "convolve_signal"),
             0, name="control_signal_change")
-        u = tf.add(prev_u, u_diff, name="new_control")
+        u = tf.add(prev_u, u_diff, "new_control")
 
         return u
 
@@ -501,11 +494,10 @@ class joint_ctrls(RandomVariable, Distribution):
         self._kwargs['ctrl_obs'] = ctrl_obs
 
     def _log_prob(self, value):
-        return tf.add_n([u.log_prob(tf.gather(value, u.col, axis=-1))
-                         for u in self.u])
+        return tf.add_n([u.log_prob(tf.gather(
+            value, u.col, name="%s_val" % u.name, axis=-1)) for u in self.u])
 
     def update_ctrl(self, errors, prev_u):
-        with tf.name_scope("%s_update_control" % self.name):
-            return tf.concat([u.update_ctrl(tf.gather(errors, u.col, axis=-1),
-                                            tf.gather(prev_u, u.col, axis=-1))
-                              for u in self.u], 0, name="new_control")
+        return tf.concat([u.update_ctrl(tf.gather(errors, u.col, axis=-1),
+                                        tf.gather(prev_u, u.col, axis=-1))
+                          for u in self.u], 0, "new_control")

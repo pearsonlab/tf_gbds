@@ -367,10 +367,12 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                 g0=get_g0_params(a["name"], a["dim"], GMM_K),
                 sigma=sigma, sigma_trainable=sigma_trainable,
                 g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
-                PID=dict(
-                    Kp=tf.gather(PID_q["Kp"], a["col"]),
-                    Ki=tf.gather(PID_q["Ki"], a["col"]),
-                    Kd=tf.gather(PID_q["Kd"], a["col"])),
+                PID=dict(Kp=tf.gather(PID_q["Kp"], a["col"],
+                                      name="%s_Kp" % a["name"]),
+                         Ki=tf.gather(PID_q["Ki"], a["col"],
+                                      name="%s_Ki" % a["name"]),
+                         Kd=tf.gather(PID_q["Kd"], a["col"],
+                                      name="%s_Kd" % a["name"])),
                 u_res_tol=control_residual_tolerance,
                 u_res_pen=control_residual_penalty,
                 clip=clip, clip_range=clip_range, clip_tol=clip_tolerance,
@@ -461,7 +463,7 @@ def get_rec_params(obs_dim, extra_dim, lag, n_layers, hidden_dim,
             "LambdaX_NN", obs_dim * (lag + 1) + extra_dim, obs_dim ** 2,
             hidden_dim, n_layers, PKLparams)
 
-        Dyn_params = dict(
+        dyn_params = dict(
             A=tf.Variable(
                 .9 * np.eye(obs_dim), name="A", dtype=tf.float32),
             QinvChol=tf.Variable(
@@ -470,7 +472,7 @@ def get_rec_params(obs_dim, extra_dim, lag, n_layers, hidden_dim,
                 np.eye(obs_dim), name="Q0invChol", dtype=tf.float32))
 
         rec_params = dict(
-            Dyn_params=Dyn_params,
+            dyn_params=dyn_params,
             NN_Mu=dict(network=Mu_net,
                        PKbias_layers=PKbias_layers_mu),
             NN_Lambda=dict(network=Lambda_net,

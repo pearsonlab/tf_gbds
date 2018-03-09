@@ -18,7 +18,7 @@ class game_model(object):
             self.latent_vars = {}
             self.var_list = []
 
-            with tf.name_scope("variable_shape"):
+            with tf.name_scope("variable_value_shape"):
                 traj_shape = self.traj.shape.as_list()
                 if traj_shape[0] is None:
                     B = 1
@@ -124,5 +124,3 @@ class game_model(object):
             #         self.g_p.log_prob(self.g_q.value()), "goal")
             #     logdensity_u = tf.identity(
             #         self.u_p.log_prob(self.u_q.value()), "control")
-
-        super(game_model, self).__init__()
