@@ -189,7 +189,14 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             lower=False, transpose=True), self.postX)
 
     def _log_prob(self, value):
-        return tf.reduce_mean(self.eval_entropy())
+        with tf.name_scope("weight_norm_sum"):
+            norm = 0.0
+            for layer in (self.NN_Mu.layers + self.NN_Lambda.layers +
+                          self.NN_LambdaX.layers):
+                if "Dense" in layer.name:
+                    norm += tf.norm(layer.kernel)  # + tf.norm(layer.bias)
+
+        return (tf.reduce_mean(self.eval_entropy()) + 1e-3 * norm)
 
     def eval_entropy(self):
         # Compute the entropy of LDS (analogous to prior on smoothness)

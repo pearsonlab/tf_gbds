@@ -87,6 +87,8 @@ class GBDS_G(RandomVariable, Distribution):
                 else:
                     self.pen = None
 
+            # with tf.name_scope("NN_kernel_penalty"):
+
         super(GBDS_G, self).__init__(
             name=name, value=value, dtype=dtype,
             reparameterization_type=reparameterization_type,
@@ -156,7 +158,14 @@ class GBDS_G(RandomVariable, Distribution):
                 LogDensity -= self.pen * tf.reduce_sum(
                     tf.nn.relu(value - self.bounds[1]), [1, 2])
 
-        return tf.reduce_mean(LogDensity) / tf.cast(self.Tt, tf.float32)
+        with tf.name_scope("weight_norm_sum"):
+            norm = 0.0
+            for layer in self.GMM_NN.layers:
+                if "Dense" in layer.name:
+                    norm += tf.norm(layer.kernel)  # + tf.norm(layer.bias)
+
+        return (tf.reduce_mean(LogDensity) / tf.cast(self.Tt, tf.float32) -
+                1e-3 * norm)
 
     def sample_g0(self, _=None):
         # Sample from initial goal distribution
