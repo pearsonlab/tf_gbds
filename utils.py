@@ -4,7 +4,7 @@ from scipy.stats import norm
 import numpy as np
 from tensorflow.contrib.distributions import softplus_inverse
 from tensorflow.contrib.keras import layers
-from tensorflow.contrib.keras import constraints, models
+from tensorflow.contrib.keras import models
 from matplotlib.colors import Normalize
 import edward as ed
 from edward.models import Exponential, Gamma, PointMass
@@ -341,8 +341,7 @@ def get_accel(traj, max_vel):
         return states
 
 
-def get_agent_params(agent_name, agent_dim, agent_col,
-                     obs_dim, state_dim, extra_dim,
+def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                      gen_n_layers, gen_hidden_dim, GMM_K, PKLparams,
                      sigma, sigma_trainable,
                      goal_boundaries, goal_boundary_penalty,
@@ -352,41 +351,45 @@ def get_agent_params(agent_name, agent_dim, agent_col,
                      clip, clip_range, clip_tolerance, clip_penalty,
                      control_error_penalty):
 
-    with tf.variable_scope("%s_params" % agent_name):
-        GMM_NN, _ = get_network("goal_GMM", (state_dim + extra_dim),
-                                (GMM_K * agent_dim * 2 + GMM_K),
-                                gen_hidden_dim, gen_n_layers, PKLparams)
+    with tf.variable_scope("model_parameters"):
+        PID_p = get_PID_priors(obs_dim, all_vel)
+        PID_q = get_PID_posteriors(obs_dim, all_vel)
 
-        g0 = get_g0_params(agent_dim, GMM_K)
+        priors = []
+        for a in agents:
+            priors.append(dict(
+                name=a["name"], col=a["col"], dim=a["dim"],
+                GMM_K=GMM_K,
+                GMM_NN=get_network(
+                    "%s_goal_GMM" % a["name"], (state_dim + extra_dim),
+                    (GMM_K * a["dim"] * 2 + GMM_K),
+                    gen_hidden_dim, gen_n_layers, PKLparams)[0],
+                g0=get_g0_params(a["name"], a["dim"], GMM_K),
+                sigma=sigma, sigma_trainable=sigma_trainable,
+                g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
+                PID=dict(
+                    Kp=tf.gather(PID_q["Kp"], a["col"]),
+                    Ki=tf.gather(PID_q["Ki"], a["col"]),
+                    Kd=tf.gather(PID_q["Kd"], a["col"])),
+                u_res_tol=control_residual_tolerance,
+                u_res_pen=control_residual_penalty,
+                clip=clip, clip_range=clip_range, clip_tol=clip_tolerance,
+                clip_pen=clip_penalty, u_error_pen=control_error_penalty))
 
         g_q_params = get_rec_params(
-            obs_dim, extra_dim, agent_dim, rec_lag, rec_n_layers,
+            obs_dim, extra_dim, rec_lag, rec_n_layers,
             rec_hidden_dim, penalty_Q, PKLparams, "goal_posterior")
 
         if latent_ctrl:
             u_q_params = get_rec_params(
-                obs_dim, extra_dim, agent_dim, rec_lag, rec_n_layers,
+                obs_dim, extra_dim, rec_lag, rec_n_layers,
                 rec_hidden_dim, penalty_Q, PKLparams, "control_posterior")
         else:
             u_q_params = None
 
-        agent_vel = all_vel[agent_col]
-
-        PID_p = get_PID_priors(agent_dim, agent_vel)
-        PID_q = get_PID_posteriors(agent_dim, agent_vel)
-
         params = dict(
-            name=agent_name, dim=agent_dim, col=agent_col,
-            obs_dim=obs_dim, state_dim=state_dim, extra_dim=extra_dim,
-            GMM_K=GMM_K, GMM_NN=GMM_NN, g0=g0,
-            sigma=sigma, sigma_trainable=sigma_trainable,
-            g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
-            g_q_params=g_q_params, all_vel=all_vel, latent_u=latent_ctrl,
-            PID_p=PID_p, PID_q=PID_q,
-            u_res_tol=control_residual_tolerance,
-            u_res_pen=control_residual_penalty,
-            clip=clip, clip_range=clip_range, clip_tol=clip_tolerance,
-            clip_pen=clip_penalty, u_error_pen=control_error_penalty,
+            name=name, obs_dim=obs_dim, agent_priors=priors,
+            g_q_params=g_q_params, PID_p=PID_p, PID_q=PID_q,
             u_q_params=u_q_params)
 
         return params
@@ -431,21 +434,17 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
                     output_dim, activation="linear",
                     kernel_initializer=tf.random_normal_initializer(
                         stddev=0.1),
-                    # kernel_constraint=constraints.max_norm(5.),
-                    # bias_constraint=constraints.max_norm(5.),
                     name="Dense_%s" % (i + 1)))
             else:
                 M.add(layers.Dense(
                     hidden_dim, activation="relu",
                     kernel_initializer=tf.orthogonal_initializer(),
-                    # kernel_constraint=constraints.max_norm(5.),
-                    # bias_constraint=constraints.max_norm(5.),
                     name="Dense_%s" % (i + 1)))
 
         return M, PKbias_layers
 
 
-def get_rec_params(obs_dim, extra_dim, agent_dim, lag, n_layers, hidden_dim,
+def get_rec_params(obs_dim, extra_dim, lag, n_layers, hidden_dim,
                    penalty_Q=None, PKLparams=None, name="recognition"):
     """Return a dictionary of timeseries-specific parameters for recognition
        model
@@ -453,22 +452,22 @@ def get_rec_params(obs_dim, extra_dim, agent_dim, lag, n_layers, hidden_dim,
 
     with tf.variable_scope("%s_params" % name):
         Mu_net, PKbias_layers_mu = get_network(
-            "Mu_NN", (obs_dim * (lag + 1) + extra_dim), agent_dim, hidden_dim,
+            "Mu_NN", (obs_dim * (lag + 1) + extra_dim), obs_dim, hidden_dim,
             n_layers, PKLparams)
         Lambda_net, PKbias_layers_lambda = get_network(
-            "Lambda_NN", obs_dim * (lag + 1) + extra_dim, agent_dim ** 2,
+            "Lambda_NN", obs_dim * (lag + 1) + extra_dim, obs_dim ** 2,
             hidden_dim, n_layers, PKLparams)
         LambdaX_net, PKbias_layers_lambdaX = get_network(
-            "LambdaX_NN", obs_dim * (lag + 1) + extra_dim, agent_dim ** 2,
+            "LambdaX_NN", obs_dim * (lag + 1) + extra_dim, obs_dim ** 2,
             hidden_dim, n_layers, PKLparams)
 
         Dyn_params = dict(
             A=tf.Variable(
-                .9 * np.eye(agent_dim), name="A", dtype=tf.float32),
+                .9 * np.eye(obs_dim), name="A", dtype=tf.float32),
             QinvChol=tf.Variable(
-                np.eye(agent_dim), name="QinvChol", dtype=tf.float32),
+                np.eye(obs_dim), name="QinvChol", dtype=tf.float32),
             Q0invChol=tf.Variable(
-                np.eye(agent_dim), name="Q0invChol", dtype=tf.float32))
+                np.eye(obs_dim), name="Q0invChol", dtype=tf.float32))
 
         rec_params = dict(
             Dyn_params=Dyn_params,
@@ -522,8 +521,9 @@ def get_PID_posteriors(dim, vel):
         posteriors = {}
 
         unc_Kp = tf.Variable(
-            softplus_inverse(np.ones(dim, np.float32) / vel,
-                             name="unc_Kp_init"),
+            # softplus_inverse(np.ones(dim, np.float32) / vel,
+            #                  name="unc_Kp_init"),
+            np.zeros(dim, np.float32),
             dtype=tf.float32, name="unc_Kp")
         unc_Ki = tf.Variable(
             softplus_inverse(np.ones(dim, np.float32) * 1e-6,
@@ -533,7 +533,7 @@ def get_PID_posteriors(dim, vel):
             softplus_inverse(np.ones(dim, np.float32) * 1e-6,
                              name="unc_Kd_init"),
             dtype=tf.float32, name="unc_Kd")
-        posteriors["vars"] = ([unc_Kp] + [unc_Ki] + [unc_Kd])
+        posteriors["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
 
         posteriors["Kp"] = Point_Mass(tf.nn.softplus(unc_Kp), name="Kp")
         posteriors["Ki"] = Point_Mass(tf.nn.softplus(unc_Ki), name="Ki")
@@ -542,8 +542,8 @@ def get_PID_posteriors(dim, vel):
         return posteriors
 
 
-def get_g0_params(dim, K):
-    with tf.variable_scope("g0_params"):
+def get_g0_params(name, dim, K):
+    with tf.variable_scope("%s_g0_params" % name):
         g0 = {}
 
         g0["K"] = K
@@ -821,3 +821,26 @@ class KLqp_profile(ed.KLqp):
                 self.train_writer.add_summary(summary, t)
 
         return {"t": t, "loss": loss}
+
+
+class KLqp_grad_clipnorm(ed.KLqp):
+    def __init__(self, n_samples=1, kl_scaling=None, *args, **kwargs):
+        super(KLqp_grad_clipnorm, self).__init__(*args, **kwargs)
+
+    def initialize(self, var_list, optimizer, global_step=None,
+                   maxnorm=5., *args, **kwargs):
+        super(KLqp_grad_clipnorm, self).initialize(*args, **kwargs)
+
+        self.loss, grads_and_vars = self.build_loss_and_gradients(var_list)
+
+        for grad, var in grads_and_vars:
+            if "kernel" in var.name or "bias" in var.name:
+                grad = tf.clip_by_norm(grad, maxnorm, axes=[0])
+
+        with tf.variable_scope(None, default_name="optimizer") as scope:
+            self.train = optimizer.apply_gradients(grads_and_vars,
+                                                   global_step=global_step)
+
+        self.reset.append(tf.variables_initializer(
+            tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES,
+                              scope=scope.name)))

@@ -1,11 +1,11 @@
 import os
 import tensorflow as tf
-import numpy as np
+# import numpy as np
 import edward as ed
 from tf_gbds.agents import game_model
 from tf_gbds.utils import (load_data, get_max_velocities, get_vel, get_accel,
-                           get_agent_params, pad_batch, KLqp_profile,
-                           add_summary)
+                           get_model_params, pad_batch, add_summary,
+                           KLqp_profile, KLqp_grad_clipnorm)
 import time
 from tensorflow.python.client import timeline
 
@@ -19,6 +19,7 @@ LOAD_SAVED_MODEL = False
 SAVED_MODEL_DIR = None
 PROFILE = False
 
+GAME_NAME = "penaltykick"
 N_AGENTS = 2
 AGENT_NAME = "goalie,shooter"
 AGENT_COLUMN = "0;1,2"
@@ -33,7 +34,7 @@ GEN_N_LAYERS = 3
 GEN_HIDDEN_DIM = 64
 REC_LAG = 10
 REC_N_LAYERS = 3
-REC_HIDDEN_DIM = 25
+REC_HIDDEN_DIM = 32
 
 SIGMA = 1e-3
 SIGMA_TRAINABLE = False
@@ -51,8 +52,6 @@ CLIP_RANGE_U = 1.
 CLIP_TOLERANCE = 1e-5
 CLIP_PENALTY = 1e8
 
-SEED = 1234
-TRAIN_RATIO = 0.85
 OPTIMIZER = "Adam"
 LEARNING_RATE = 1e-3
 N_EPOCHS = 500
@@ -81,6 +80,7 @@ flags.DEFINE_boolean("profile", PROFILE, "Is the model being profiled \
 # flags.DEFINE_string("device", "CPU",
 #                     "The device where the model is trained (CPU or GPU)")
 
+flags.DEFINE_string("game_name", GAME_NAME, "Name of the game")
 flags.DEFINE_integer("n_agents", N_AGENTS, "Number of agents in the model")
 flags.DEFINE_string("agent_name", AGENT_NAME, "Name of each agent \
                     (separated by ,)")
@@ -134,9 +134,6 @@ flags.DEFINE_float("clip_tol", CLIP_TOLERANCE,
 flags.DEFINE_float("clip_pen", CLIP_PENALTY,
                    "Penalty on control signal censoring")
 
-flags.DEFINE_integer("seed", SEED, "Random seed for numpy functions")
-flags.DEFINE_float("train_ratio", TRAIN_RATIO,
-                   "Proportion of data used for training")
 flags.DEFINE_string("opt", OPTIMIZER, "Gradient descent optimizer")
 flags.DEFINE_float("lr", LEARNING_RATE, "Initial learning rate")
 flags.DEFINE_integer("n_epochs", N_EPOCHS, "Number of iterations algorithm \
@@ -173,6 +170,11 @@ def run_model(FLAGS):
     agent_dim = [len(a) for a in agent_col]
     assert sum(agent_dim) <= FLAGS.obs_dim, "The modeling dimension \
         exceeds observed: %i > %i" % (sum(agent_dim), FLAGS.obs_dim)
+
+    agents = []
+    for i in range(FLAGS.n_agents):
+        agents.append(
+            dict(name=agent_name[i], col=agent_col[i], dim=agent_dim[i]))
 
     if FLAGS.add_accel:
         state_dim = FLAGS.obs_dim * 3
@@ -212,13 +214,6 @@ def run_model(FLAGS):
     print("Dimensions of hidden layers: %i" % FLAGS.rec_hidden_dim)
     print("Lag of input: %i" % FLAGS.rec_lag)
 
-    # if FLAGS.device == "CPU":
-    #     device_type = "/cpu:0"
-    # elif FLAGS.device == "GPU":
-    #     device_type = "/device:GPU:0"
-    # else:
-    #     raise Exception("Device type not recognized.")
-
     with tf.device("/cpu:0"):
         with tf.name_scope("data"):
             with tf.name_scope("load_data"):
@@ -240,84 +235,39 @@ def run_model(FLAGS):
                         "training_iterator")
                     train_data = train_iterator.get_next("training_data")
 
-        agent_params = []
-        for i in range(FLAGS.n_agents):
-            params = get_agent_params(
-                agent_name[i], agent_dim[i], agent_col[i],
-                FLAGS.obs_dim, state_dim, FLAGS.extra_dim,
-                FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
-                FLAGS.GMM_K, PKLparams, FLAGS.sigma, FLAGS.sigma_trainable,
-                g_bounds, FLAGS.g_bounds_pen, max_vel, FLAGS.latent_u,
-                FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
-                penalty_Q, FLAGS.u_res_tol, FLAGS.u_res_pen,
-                FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen,
-                FLAGS.u_error_pen)
-            agent_params.append(params)
+        params = get_model_params(
+            FLAGS.game_name, agents, FLAGS.obs_dim, state_dim, FLAGS.extra_dim,
+            FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
+            FLAGS.GMM_K, PKLparams, FLAGS.sigma, FLAGS.sigma_trainable,
+            g_bounds, FLAGS.g_bounds_pen, max_vel, FLAGS.latent_u,
+            FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
+            penalty_Q, FLAGS.u_res_tol, FLAGS.u_res_pen,
+            FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen,
+            FLAGS.u_error_pen)
 
         with tf.name_scope("inputs"):
-            y_train = tf.identity(train_data["trajectory"],
-                                  name="trajectory")
-            s_train = get_state(y_train, max_vel)
+            y_train = tf.identity(train_data["trajectory"], "trajectories")
+            s_train = tf.identity(get_state(y_train, max_vel), "states")
             if FLAGS.extra_conds:
                 extra_conds_train = tf.identity(train_data["extra_conds"],
-                                                name="extra_conditions")
+                                                "extra_conditions")
             else:
                 extra_conds_train = None
             if FLAGS.ctrl_obs:
                 ctrl_obs_train = tf.identity(train_data["ctrl_obs"],
-                                             name="observed_control")
+                                             "observed_control")
             else:
                 with tf.name_scope("observed_control"):
                     ctrl_obs_train = tf.divide(tf.subtract(
-                        y_train[:, 1:], y_train[:, :-1], name="diff"),
-                        max_vel, name="standardize")
+                        y_train[:, 1:], y_train[:, :-1], "diff"),
+                        max_vel, "standardize")
 
             inputs = {"trajectories": y_train, "states": s_train,
                       "extra_conds": extra_conds_train,
                       "ctrl_obs": ctrl_obs_train}
 
-        model = game_model(agent_params, inputs, FLAGS.n_post_samp,
-                           name="penaltykick")
-
-        with tf.name_scope("update_one_step"):
-            prev_y = tf.placeholder(tf.float32, shape=(FLAGS.obs_dim),
-                                    name="previous_position")
-            curr_y = tf.placeholder(tf.float32, shape=(FLAGS.obs_dim),
-                                    name="current_position")
-            v = tf.divide(curr_y - prev_y, max_vel, name="current_velocity")
-            curr_s = tf.concat([curr_y, v], 0, name="current_state")
-
-            if FLAGS.extra_conds:
-                gen_extra_conds = tf.placeholder(
-                    tf.float32, shape=FLAGS.extra_dim, name="extra_conditions")
-            else:
-                gen_extra_conds = None
-
-            with tf.name_scope("goal"):
-                # g0 = tf.identity(model.g.sample_g0(), name="initial")
-                prev_g = tf.placeholder(tf.float32, shape=(model.g.dim),
-                                        name="previous")
-                curr_g = tf.identity(
-                    model.g.update_goal(curr_s, prev_g, gen_extra_conds),
-                    name="current")
-
-            with tf.name_scope("control"):
-                with tf.name_scope("error"):
-                    curr_error = tf.subtract(curr_g, curr_y, name="current")
-                    prev_error = tf.placeholder(tf.float32, shape=(model.u.dim),
-                                                name="previous")
-                    prev2_error = tf.placeholder(tf.float32, shape=(model.u.dim),
-                                                 name="previous2")
-                    errors = tf.stack([curr_error, prev_error, prev2_error], 0,
-                                      name="all")
-                prev_u = tf.placeholder(tf.float32, shape=(model.u.dim),
-                                        name="previous")
-                curr_u = tf.identity(model.u.update_ctrl(errors, prev_u),
-                                     name="current")
-
-            next_y = tf.clip_by_value(
-                curr_y + max_vel * tf.clip_by_value(curr_u, -1., 1.), -1., 1.,
-                name="next_position")
+        model = game_model(params, inputs, max_vel, FLAGS.extra_dim,
+                           FLAGS.n_post_samp)
 
         # with tf.name_scope("PID_params_summary"):
         #     PID_summary_key = tf.get_default_graph().unique_name(
@@ -368,10 +318,10 @@ def run_model(FLAGS):
         if FLAGS.profile:
             options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
             run_metadata = tf.RunMetadata()
-            inference = KLqp_profile(
-                options, run_metadata, model.latent_vars, model.data)
+            inference = KLqp_profile(options, run_metadata, model.latent_vars)
         else:
-            inference = ed.KLqp(model.latent_vars, model.data)
+            # inference = ed.KLqp(model.latent_vars)
+            inference = KLqp_grad_clipnorm(latent_vars=model.latent_vars)
 
         if FLAGS.opt == "Adam":
             optimizer = tf.train.AdamOptimizer(FLAGS.lr)
@@ -423,6 +373,7 @@ def run_model(FLAGS):
             f.close()
 
     seso_saver.save(sess, FLAGS.model_dir + "/final_model")
+    inference.finalize()
     sess.close()
 
     print("Training completed.")
@@ -430,6 +381,7 @@ def run_model(FLAGS):
 
 def main(_):
     run_model(FLAGS)
+
 
 if __name__ == "__main__":
     tf.app.run()
