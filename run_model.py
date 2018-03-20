@@ -44,6 +44,7 @@ GOAL_BOUNDARY_PENALTY = None
 
 CONTROL_RESIDUAL_TOLERANCE = 1e-5
 CONTROL_RESIDUAL_PENALTY = 1e8
+CONTROL_ERROR_TOLERANCE = .5
 CONTROL_ERROR_PENALTY = None
 LATENT_CONTROL = False
 CLIP = False
@@ -120,8 +121,10 @@ flags.DEFINE_float("u_res_tol", CONTROL_RESIDUAL_TOLERANCE,
                    "Tolerance of control signal residual")
 flags.DEFINE_float("u_res_pen", CONTROL_RESIDUAL_PENALTY,
                    "Penalty on control signal residual")
+flags.DEFINE_float("u_error_tol", CONTROL_ERROR_TOLERANCE,
+                   "Tolerance of control error (input to PID control model)")
 flags.DEFINE_float("u_error_pen", CONTROL_ERROR_PENALTY,
-                   "Penalty on large control errors (input to PID control)")
+                   "Penalty on large control errors")
 flags.DEFINE_boolean("latent_u", LATENT_CONTROL, "Is the true control signal \
                      modeled as latent variable")
 flags.DEFINE_boolean("clip", CLIP, "Is the observed control signal censored")
@@ -183,6 +186,12 @@ def run_model(FLAGS):
         state_dim = FLAGS.obs_dim * 2
         get_state = get_vel
 
+    epoch = tf.placeholder(tf.int32, name="epoch")
+    with tf.name_scope("penalty"):
+        u_res_pen_t = tf.multiply(
+            FLAGS.u_res_pen, tf.to_float(10 ** tf.minimum(epoch // 5, 5)),
+            "control_residual_penalty")
+
     if FLAGS.g_lb is not None and FLAGS.g_ub is not None:
         g_bounds = [FLAGS.g_lb, FLAGS.g_ub]
     else:
@@ -236,14 +245,14 @@ def run_model(FLAGS):
                     train_data = train_iterator.get_next("training_data")
 
         params = get_model_params(
-            FLAGS.game_name, agents, FLAGS.obs_dim, state_dim, FLAGS.extra_dim,
-            FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
+            FLAGS.game_name, agents, FLAGS.obs_dim, state_dim,
+            FLAGS.extra_dim, FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
             FLAGS.GMM_K, PKLparams, FLAGS.sigma, FLAGS.sigma_trainable,
             g_bounds, FLAGS.g_bounds_pen, max_vel, FLAGS.latent_u,
             FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
-            penalty_Q, FLAGS.u_res_tol, FLAGS.u_res_pen,
-            FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen,
-            FLAGS.u_error_pen)
+            penalty_Q, FLAGS.u_res_tol, u_res_pen_t,
+            FLAGS.u_error_tol, FLAGS.u_error_pen,
+            FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen)
 
         with tf.name_scope("inputs"):
             y_train = tf.identity(train_data["trajectory"], "trajectories")
@@ -314,7 +323,7 @@ def run_model(FLAGS):
         #                                    collections=PID_summary_key,
         #                                    name="PID_params_summary")
 
-        # Variational inference (Edward KLqp)
+        # Variational Inference (Edward KLqp)
         if FLAGS.profile:
             options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
             run_metadata = tf.RunMetadata()
@@ -351,7 +360,7 @@ def run_model(FLAGS):
 
         while True:
             try:
-                inference.update()
+                inference.update(feed_dict={epoch: i})
                 # add_summary(PID_summary, inference, sess, feed_dict,
                 #             info_dict["t"])
             except tf.errors.OutOfRangeError:

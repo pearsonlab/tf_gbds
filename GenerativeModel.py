@@ -158,14 +158,15 @@ class GBDS_G(RandomVariable, Distribution):
                 LogDensity -= self.pen * tf.reduce_sum(
                     tf.nn.relu(value - self.bounds[1]), [1, 2])
 
-        with tf.name_scope("weight_norm_sum"):
-            norm = 0.0
-            for layer in self.GMM_NN.layers:
-                if "Dense" in layer.name:
-                    norm += tf.norm(layer.kernel)  # + tf.norm(layer.bias)
+        # with tf.name_scope("weight_norm_sum"):
+        #     norm = 0.0
+        #     for layer in self.GMM_NN.layers:
+        #         if "Dense" in layer.name:
+        #             norm += tf.norm(layer.kernel)  # + tf.norm(layer.bias)
 
-        return (tf.reduce_mean(LogDensity) / tf.cast(self.Tt, tf.float32) -
-                1e-3 * norm)
+        # return (tf.reduce_mean(LogDensity) / tf.cast(self.Tt, tf.float32) -
+        #         1e-1 * norm)
+        return tf.reduce_mean(LogDensity) / tf.cast(self.Tt, tf.float32)
 
     def sample_g0(self, _=None):
         # Sample from initial goal distribution
@@ -229,15 +230,15 @@ class joint_goals(RandomVariable, Distribution):
                  validate_args=True, allow_nan_stats=True):
         with tf.name_scope(name):
             if isinstance(params, list):
-                self.g = [GBDS_G(
+                self.agents = [GBDS_G(
                     p, states, extra_conds, p["name"],
                     tf.gather(value, p["col"], axis=-1)) for p in params]
             else:
                 raise TypeError("params must be a list.")
 
             self.params = []
-            for g in self.g:
-                self.params += g.params
+            for agent in self.agents:
+                self.params += agent.params
 
         super(joint_goals, self).__init__(
             name=name, value=value, dtype=dtype,
@@ -249,21 +250,20 @@ class joint_goals(RandomVariable, Distribution):
         self._kwargs['extra_conds'] = extra_conds
 
     def _log_prob(self, value):
-        return tf.add_n([g.log_prob(tf.gather(
-            value, g.col, name="%s_val" % g.name, axis=-1)) for g in self.g])
+        return tf.add_n([agent.log_prob(tf.gather(value, agent.col, axis=-1))
+                         for agent in self.agents])
 
     def sample_g0(self, n=1):
-        with tf.name_scope("%s_sample_g0" % self.name):
-            if n == 1:
-                return tf.concat([g.sample_g0() for g in self.g], 0)
-            else:
-                return tf.concat([tf.map_fn(g.sample_g0, tf.zeros(n))
-                                  for g in self.g], -1)
+        if n == 1:
+            return tf.concat([agent.sample_g0() for agent in self.agents], 0)
+        else:
+            return tf.concat([tf.map_fn(agent.sample_g0, tf.zeros(n))
+                              for agent in self.agents], -1)
 
     def update_goal(self, state, prev_g, extra_conds=None):
-        return tf.concat([g.sample_GMM(
-          state, tf.gather(prev_g, g.col, axis=-1), extra_conds)
-          for g in self.g], 0, "new_goal")
+        return tf.concat([agent.sample_GMM(
+          state, tf.gather(prev_g, agent.col, axis=-1), extra_conds)
+                          for agent in self.agents], 0)
 
 
 class GBDS_U(RandomVariable, Distribution):
@@ -300,8 +300,10 @@ class GBDS_U(RandomVariable, Distribution):
 
             self.res_tol = tf.constant(params["u_res_tol"], tf.float32,
                                        name="control_residual_tolerance")
-            self.res_pen = tf.constant(params["u_res_pen"], tf.float32,
-                                       name="control_residual_penalty")
+            # self.res_pen = tf.constant(params["u_res_pen"], tf.float32,
+            #                            name="control_residual_penalty")
+            self.res_pen = tf.identity(params["u_res_pen"],
+                                       "control_residual_penalty")
 
             with tf.name_scope("PID_control"):
                 PID_params = params["PID"]
@@ -345,6 +347,9 @@ class GBDS_U(RandomVariable, Distribution):
                     self.error_pen = tf.constant(
                         params["u_error_pen"], tf.float32,
                         name="control_error_penalty")
+                    self.error_tol = tf.constant(
+                        params["u_error_tol"], tf.float32,
+                        name="control_error_tolerance")
                 else:
                     self.error_pen = None
 
@@ -455,9 +460,9 @@ class GBDS_U(RandomVariable, Distribution):
             # penalty on large ctrl error (absolute value > 1)
             if self.error_pen is not None:
                 LogDensity -= self.error_pen * tf.reduce_sum(
-                    tf.nn.relu(ctrl_error - 1.), [1, 2])
+                    tf.nn.relu(ctrl_error - self.error_tol), [1, 2])
                 LogDensity -= self.error_pen * tf.reduce_sum(
-                    tf.nn.relu(-ctrl_error - 1.), [1, 2])
+                    tf.nn.relu(-ctrl_error - self.error_tol), [1, 2])
 
         return tf.reduce_mean(LogDensity) / tf.cast(self.Tt - 1, tf.float32)
 
@@ -481,7 +486,7 @@ class joint_ctrls(RandomVariable, Distribution):
                  validate_args=True, allow_nan_stats=True):
         with tf.name_scope(name):
             if isinstance(params, list):
-                self.u = [GBDS_U(
+                self.agents = [GBDS_U(
                     p, tf.gather(goals, p["col"], axis=-1,
                                  name="%s_posterior_goals" % p["name"]),
                     tf.gather(positions, p["col"], axis=-1,
@@ -497,16 +502,18 @@ class joint_ctrls(RandomVariable, Distribution):
             name=name, value=value, dtype=dtype,
             reparameterization_type=reparameterization_type,
             validate_args=validate_args, allow_nan_stats=allow_nan_stats)
+
         self._kwargs["params"] = params
         self._kwargs["goals"] = goals
         self._kwargs["positions"] = positions
         self._kwargs['ctrl_obs'] = ctrl_obs
 
     def _log_prob(self, value):
-        return tf.add_n([u.log_prob(tf.gather(
-            value, u.col, name="%s_val" % u.name, axis=-1)) for u in self.u])
+        return tf.add_n([agent.log_prob(tf.gather(value, agent.col, axis=-1))
+                         for agent in self.agents])
 
     def update_ctrl(self, errors, prev_u):
-        return tf.concat([u.update_ctrl(tf.gather(errors, u.col, axis=-1),
-                                        tf.gather(prev_u, u.col, axis=-1))
-                          for u in self.u], 0, "new_control")
+        return tf.concat([agent.update_ctrl(
+            tf.gather(errors, agent.col, axis=-1),
+            tf.gather(prev_u, agent.col, axis=-1))
+                          for agent in self.agents], 0)

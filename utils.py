@@ -348,11 +348,11 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                      all_vel, latent_ctrl,
                      rec_lag, rec_n_layers, rec_hidden_dim, penalty_Q,
                      control_residual_tolerance, control_residual_penalty,
-                     clip, clip_range, clip_tolerance, clip_penalty,
-                     control_error_penalty):
+                     control_error_tolerance, control_error_penalty,
+                     clip, clip_range, clip_tolerance, clip_penalty):
 
     with tf.variable_scope("model_parameters"):
-        PID_p = get_PID_priors(obs_dim, all_vel)
+        # PID_p = get_PID_priors(obs_dim, all_vel)
         PID_q = get_PID_posteriors(obs_dim, all_vel)
 
         priors = []
@@ -375,8 +375,10 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                                       name="%s_Kd" % a["name"])),
                 u_res_tol=control_residual_tolerance,
                 u_res_pen=control_residual_penalty,
+                u_error_tol=control_error_tolerance,
+                u_error_pen=control_error_penalty,
                 clip=clip, clip_range=clip_range, clip_tol=clip_tolerance,
-                clip_pen=clip_penalty, u_error_pen=control_error_penalty))
+                clip_pen=clip_penalty))
 
         g_q_params = get_rec_params(
             obs_dim, extra_dim, rec_lag, rec_n_layers,
@@ -391,8 +393,8 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
 
         params = dict(
             name=name, obs_dim=obs_dim, agent_priors=priors,
-            g_q_params=g_q_params, PID_p=PID_p, PID_q=PID_q,
-            u_q_params=u_q_params)
+            g_q_params=g_q_params,  # PID_p=PID_p,
+            PID_q=PID_q, u_q_params=u_q_params)
 
         return params
 
@@ -527,9 +529,12 @@ def get_PID_posteriors(dim, vel):
             #                  name="unc_Kp_init"),
             np.zeros(dim, np.float32),
             dtype=tf.float32, name="unc_Kp")
+            # constraint=lambda x: tf.clip_by_value(
+            #     x, softplus_inverse(.1), softplus_inverse(5.))
         unc_Ki = tf.Variable(
-            softplus_inverse(np.ones(dim, np.float32) * 1e-6,
-                             name="unc_Ki_init"),
+            # softplus_inverse(np.ones(dim, np.float32) * 1e-6,
+            #                  name="unc_Ki_init"),
+            np.zeros(dim, np.float32),
             dtype=tf.float32, name="unc_Ki")
         unc_Kd = tf.Variable(
             softplus_inverse(np.ones(dim, np.float32) * 1e-6,
@@ -550,7 +555,8 @@ def get_g0_params(name, dim, K):
 
         g0["K"] = K
         g0["mu"] = tf.Variable(
-            tf.random_normal([K, dim], name="mu_init_value"),
+            # tf.random_normal([K, dim], name="mu_init_value"),
+            tf.zeros([K, dim], name="mu_init_value"),
             dtype=tf.float32, name="mu")
         g0["unc_lambda"] = tf.Variable(
             tf.random_normal([K, dim], name="lambda_init_value"),
