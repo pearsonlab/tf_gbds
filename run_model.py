@@ -186,11 +186,14 @@ def run_model(FLAGS):
         state_dim = FLAGS.obs_dim * 2
         get_state = get_vel
 
-    epoch = tf.placeholder(tf.int32, name="epoch")
-    with tf.name_scope("penalty"):
-        u_res_pen_t = tf.multiply(
-            FLAGS.u_res_pen, tf.to_float(10 ** tf.minimum(epoch // 5, 5)),
-            "control_residual_penalty")
+    # epoch = tf.placeholder(tf.int32, name="epoch")
+    # with tf.name_scope("penalty"):
+    #     u_res_pen_t = tf.multiply(
+    #         FLAGS.u_res_pen, tf.to_float(10 ** tf.minimum(epoch // 20, 3)),
+    #         "control_residual_penalty")
+    #     u_res_tol_t = tf.divide(
+    #         FLAGS.u_res_tol, tf.to_float(10 ** tf.minimum(epoch // 10, 5)),
+    #         "control_residual_tolerance")
 
     if FLAGS.g_lb is not None and FLAGS.g_ub is not None:
         g_bounds = [FLAGS.g_lb, FLAGS.g_ub]
@@ -250,7 +253,7 @@ def run_model(FLAGS):
             FLAGS.GMM_K, PKLparams, FLAGS.sigma, FLAGS.sigma_trainable,
             g_bounds, FLAGS.g_bounds_pen, max_vel, FLAGS.latent_u,
             FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
-            penalty_Q, FLAGS.u_res_tol, u_res_pen_t,
+            penalty_Q, FLAGS.u_res_tol, FLAGS.u_res_pen,
             FLAGS.u_error_tol, FLAGS.u_error_pen,
             FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen)
 
@@ -353,14 +356,14 @@ def run_model(FLAGS):
         print("Parameters saved in %s restored." % FLAGS.saved_model_dir)
 
     for i in range(FLAGS.n_epochs):
-        if i == 0 or (i + 1) % max(FLAGS.n_epochs // 20, 1) == 0:
+        if i == 0 or (i + 1) % 5 == 0:
             print("Entering epoch %i ..." % (i + 1))
 
         train_iterator.initializer.run()
 
         while True:
             try:
-                inference.update(feed_dict={epoch: i})
+                inference.update()
                 # add_summary(PID_summary, inference, sess, feed_dict,
                 #             info_dict["t"])
             except tf.errors.OutOfRangeError:

@@ -300,10 +300,12 @@ class GBDS_U(RandomVariable, Distribution):
 
             self.res_tol = tf.constant(params["u_res_tol"], tf.float32,
                                        name="control_residual_tolerance")
-            # self.res_pen = tf.constant(params["u_res_pen"], tf.float32,
-            #                            name="control_residual_penalty")
-            self.res_pen = tf.identity(params["u_res_pen"],
-                                       "control_residual_penalty")
+            # self.res_tol = tf.identity(params["u_res_tol"],
+            #                            "control_residual_tolerance")
+            self.res_pen = tf.constant(params["u_res_pen"], tf.float32,
+                                       name="control_residual_penalty")
+            # self.res_pen = tf.identity(params["u_res_pen"],
+            #                            "control_residual_penalty")
 
             with tf.name_scope("PID_control"):
                 PID_params = params["PID"]
@@ -331,8 +333,7 @@ class GBDS_U(RandomVariable, Distribution):
                     self.clip_tol = tf.constant(
                         params["clip_tol"], tf.float32, name="clip_tolerance")
                     self.clip_pen = tf.constant(
-                        params["clip_pen"], tf.float32,
-                        name="clip_penalty")
+                        params["clip_pen"], tf.float32, name="clip_penalty")
                     # self.eta = params["eta"]
 
             # Replaced by res_tol and res_pen
@@ -347,6 +348,8 @@ class GBDS_U(RandomVariable, Distribution):
                     self.error_pen = tf.constant(
                         params["u_error_pen"], tf.float32,
                         name="control_error_penalty")
+                    # self.error_pen = tf.identity(
+                    #     params["u_error_pen"], "control_error_penalty")
                     self.error_tol = tf.constant(
                         params["u_error_tol"], tf.float32,
                         name="control_error_tolerance")
@@ -457,7 +460,7 @@ class GBDS_U(RandomVariable, Distribution):
             LogDensity -= self.res_pen * tf.reduce_sum(tf.nn.relu(
                 -u_res - self.res_tol), [1, 2])
         with tf.name_scope("control_error_penalty"):
-            # penalty on large ctrl error (absolute value > 1)
+            # penalty on large ctrl error
             if self.error_pen is not None:
                 LogDensity -= self.error_pen * tf.reduce_sum(
                     tf.nn.relu(ctrl_error - self.error_tol), [1, 2])

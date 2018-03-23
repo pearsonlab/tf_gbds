@@ -63,7 +63,7 @@ def blk_chol_inv(A, B, b, lower=True, transpose=False):
         diagonal matrix
     B - [Batch_size x T-1 x n x n] tensor, where each B[:,i,:,:] is the ith
         (upper or lower) 1st block off-diagonal matrix
-    b - [Batchs_size x T x n] tensor
+    b - [Batch_size x T x n x 1] tensor
 
     lower (default: True) - boolean specifying whether to treat B as the lower
           or upper 1st block off-diagonal of matrix C

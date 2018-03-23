@@ -524,27 +524,33 @@ def get_PID_posteriors(dim, vel):
     with tf.variable_scope("PID_posteriors"):
         posteriors = {}
 
-        unc_Kp = tf.Variable(
-            # softplus_inverse(np.ones(dim, np.float32) / vel,
-            #                  name="unc_Kp_init"),
-            np.zeros(dim, np.float32),
-            dtype=tf.float32, name="unc_Kp")
-            # constraint=lambda x: tf.clip_by_value(
-            #     x, softplus_inverse(.1), softplus_inverse(5.))
-        unc_Ki = tf.Variable(
-            # softplus_inverse(np.ones(dim, np.float32) * 1e-6,
-            #                  name="unc_Ki_init"),
-            np.zeros(dim, np.float32),
-            dtype=tf.float32, name="unc_Ki")
-        unc_Kd = tf.Variable(
-            softplus_inverse(np.ones(dim, np.float32) * 1e-6,
-                             name="unc_Kd_init"),
-            dtype=tf.float32, name="unc_Kd")
-        posteriors["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
+        # unc_Kp = tf.Variable(
+        #     softplus_inverse(np.ones(dim, np.float32),
+        #                      name="unc_Kp_init"),
+        #     dtype=tf.float32, name="unc_Kp")
+        #     # constraint=lambda x: tf.clip_by_value(
+        #     #     x, softplus_inverse(.05), softplus_inverse(2.)))
+        # unc_Ki = tf.Variable(
+        #     softplus_inverse(np.ones(dim, np.float32) * 1e-6,
+        #                      name="unc_Ki_init"),
+        #     dtype=tf.float32, name="unc_Ki")
+        #     # constraint=lambda x: tf.clip_by_value(
+        #     #     x, -np.inf, softplus_inverse(1.)))
+        # unc_Kd = tf.Variable(
+        #     softplus_inverse(np.ones(dim, np.float32) * 1e-6,
+        #                      name="unc_Kd_init"),
+        #     dtype=tf.float32, name="unc_Kd")
+        # posteriors["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
 
-        posteriors["Kp"] = Point_Mass(tf.nn.softplus(unc_Kp), name="Kp")
-        posteriors["Ki"] = Point_Mass(tf.nn.softplus(unc_Ki), name="Ki")
-        posteriors["Kd"] = Point_Mass(tf.nn.softplus(unc_Kd), name="Kd")
+        # posteriors["Kp"] = Point_Mass(tf.nn.softplus(unc_Kp), name="Kp")
+        # posteriors["Ki"] = Point_Mass(tf.nn.softplus(unc_Ki), name="Ki")
+        # posteriors["Kd"] = Point_Mass(tf.nn.softplus(unc_Kd), name="Kd")
+        # posteriors["Kp"] = tf.nn.softplus(unc_Kp, "Kp")
+        # posteriors["Ki"] = tf.nn.softplus(unc_Ki, "Ki")
+        posteriors["Kp"] = tf.ones(dim, tf.float32, "Kp")
+        posteriors["Ki"] = tf.zeros(dim, tf.float32, "Ki")
+        posteriors["Kd"] = tf.zeros(dim, tf.float32, "Kd")
+        # posteriors["vars"] = [unc_Kp] + [unc_Ki]
 
         return posteriors
 

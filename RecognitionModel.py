@@ -142,13 +142,12 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             with tf.name_scope("diagonal_blocks"):
                 self.AA = tf.add(self.Lambda + tf.pad(
                     self.LambdaX, [[0, 0], [1, 0], [0, 0], [0, 0]]) +
-                    AQinvArepPlusQ, 1e-6 * tf.eye(self.xDim),
-                    "precision_diagonal")
+                    AQinvArepPlusQ, 1e-6 * tf.eye(self.xDim), "diagonal")
             with tf.name_scope("off-diagonal_blocks"):
                 self.BB = tf.add(tf.matmul(
                     self.LambdaChol[:, :-1],
                     tf.transpose(self.LambdaXChol, [0, 1, 3, 2])),
-                    AQinvrep, "precision_off_diagonal")
+                    AQinvrep, "off_diagonal")
 
         with tf.name_scope("posterior_mean"):
             # scale by precision
@@ -239,7 +238,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
                 lagged = tf.concat(
                     [tf.reshape(Input_[:, 0, :yDim], [-1, 1, yDim], "t0"),
                      Input_[:, :-1, -yDim:]], 1, "lag")
-                Input_ = tf.concat([Input_, lagged], -1, "pad")
+                Input_ = tf.concat([Input_, lagged], -1)
 
         super(SmoothingPastLDSTimeSeries, self).__init__(
             params, Input_, xDim, yDim, extra_conds,

@@ -73,14 +73,14 @@ class game_model(object):
                         name="posterior")
                 self.latent_vars.update({self.u_p: self.u_q})
 
-            with tf.name_scope("PID"):
-                # self.PID_p = params["PID_p"]
-                self.PID_q = params["PID_q"]
-                # self.latent_vars.update(
-                #     {self.PID_p["Kp"]: self.PID_q["Kp"],
-                #      self.PID_p["Ki"]: self.PID_q["Ki"],
-                #      self.PID_p["Kd"]: self.PID_q["Kd"]})
-                self.var_list += self.PID_q["vars"]
+            # with tf.name_scope("PID"):
+            #     self.PID_p = params["PID_p"]
+            #     self.PID_q = params["PID_q"]
+            #     self.latent_vars.update(
+            #         {self.PID_p["Kp"]: self.PID_q["Kp"],
+            #          self.PID_p["Ki"]: self.PID_q["Ki"],
+            #          self.PID_p["Kd"]: self.PID_q["Kd"]})
+            #     self.var_list += self.PID_q["vars"]
 
             with tf.name_scope("update_one_step"):
                 prev_y = tf.placeholder(tf.float32, self.obs_dim,
