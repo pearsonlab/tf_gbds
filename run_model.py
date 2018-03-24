@@ -34,7 +34,7 @@ GEN_N_LAYERS = 3
 GEN_HIDDEN_DIM = 64
 REC_LAG = 10
 REC_N_LAYERS = 3
-REC_HIDDEN_DIM = 32
+REC_HIDDEN_DIM = 64
 
 SIGMA = 1e-3
 SIGMA_TRAINABLE = False
@@ -42,8 +42,9 @@ GOAL_BOUNDARY_L = -1.
 GOAL_BOUNDARY_U = 1.
 GOAL_BOUNDARY_PENALTY = None
 
-CONTROL_RESIDUAL_TOLERANCE = 1e-5
-CONTROL_RESIDUAL_PENALTY = 1e8
+# CONTROL_RESIDUAL_TOLERANCE = 1e-5
+# CONTROL_RESIDUAL_PENALTY = 1e8
+EPSILON = 1e-4
 CONTROL_ERROR_TOLERANCE = .5
 CONTROL_ERROR_PENALTY = None
 LATENT_CONTROL = False
@@ -117,10 +118,11 @@ flags.DEFINE_float("g_ub", GOAL_BOUNDARY_U, "Goal state upper boundary")
 flags.DEFINE_float("g_bounds_pen", GOAL_BOUNDARY_PENALTY,
                    "Penalty on goal states escaping boundaries")
 
-flags.DEFINE_float("u_res_tol", CONTROL_RESIDUAL_TOLERANCE,
-                   "Tolerance of control signal residual")
-flags.DEFINE_float("u_res_pen", CONTROL_RESIDUAL_PENALTY,
-                   "Penalty on control signal residual")
+# flags.DEFINE_float("u_res_tol", CONTROL_RESIDUAL_TOLERANCE,
+#                    "Tolerance of control signal residual")
+# flags.DEFINE_float("u_res_pen", CONTROL_RESIDUAL_PENALTY,
+#                    "Penalty on control signal residual")
+flags.DEFINE_float("eps", EPSILON, "Noise of control signal")
 flags.DEFINE_float("u_error_tol", CONTROL_ERROR_TOLERANCE,
                    "Tolerance of control error (input to PID control model)")
 flags.DEFINE_float("u_error_pen", CONTROL_ERROR_PENALTY,
@@ -186,15 +188,6 @@ def run_model(FLAGS):
         state_dim = FLAGS.obs_dim * 2
         get_state = get_vel
 
-    # epoch = tf.placeholder(tf.int32, name="epoch")
-    # with tf.name_scope("penalty"):
-    #     u_res_pen_t = tf.multiply(
-    #         FLAGS.u_res_pen, tf.to_float(10 ** tf.minimum(epoch // 20, 3)),
-    #         "control_residual_penalty")
-    #     u_res_tol_t = tf.divide(
-    #         FLAGS.u_res_tol, tf.to_float(10 ** tf.minimum(epoch // 10, 5)),
-    #         "control_residual_tolerance")
-
     if FLAGS.g_lb is not None and FLAGS.g_ub is not None:
         g_bounds = [FLAGS.g_lb, FLAGS.g_ub]
     else:
@@ -209,6 +202,15 @@ def run_model(FLAGS):
         clip_range = [FLAGS.clip_lb, FLAGS.clip_ub]
     else:
         clip_range = None
+
+    # epoch = tf.placeholder(tf.int32, name="epoch")
+    # with tf.name_scope("penalty"):
+    #     u_res_pen_t = tf.multiply(
+    #         FLAGS.u_res_pen, tf.to_float(10 ** tf.minimum(epoch // 20, 3)),
+    #         "control_residual_penalty")
+    #     u_res_tol_t = tf.divide(
+    #         FLAGS.u_res_tol, tf.to_float(10 ** tf.minimum(epoch // 10, 5)),
+    #         "control_residual_tolerance")
 
     print("--------------Generative Parameters---------------")
     print("Number of GMM components: %i" % FLAGS.GMM_K)
@@ -253,12 +255,13 @@ def run_model(FLAGS):
             FLAGS.GMM_K, PKLparams, FLAGS.sigma, FLAGS.sigma_trainable,
             g_bounds, FLAGS.g_bounds_pen, max_vel, FLAGS.latent_u,
             FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
-            penalty_Q, FLAGS.u_res_tol, FLAGS.u_res_pen,
+            penalty_Q, FLAGS.eps,
+            # FLAGS.u_res_tol, FLAGS.u_res_pen,
             FLAGS.u_error_tol, FLAGS.u_error_pen,
             FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen)
 
         with tf.name_scope("inputs"):
-            y_train = tf.identity(train_data["trajectory"], "trajectories")
+            y_train = tf.identity(train_data["trajectory"], "trajectory")
             s_train = tf.identity(get_state(y_train, max_vel), "states")
             if FLAGS.extra_conds:
                 extra_conds_train = tf.identity(train_data["extra_conds"],
@@ -274,57 +277,50 @@ def run_model(FLAGS):
                         y_train[:, 1:], y_train[:, :-1], "diff"),
                         max_vel, "standardize")
 
-            inputs = {"trajectories": y_train, "states": s_train,
+            inputs = {"trajectory": y_train, "states": s_train,
                       "extra_conds": extra_conds_train,
                       "ctrl_obs": ctrl_obs_train}
 
         model = game_model(params, inputs, max_vel, FLAGS.extra_dim,
                            FLAGS.n_post_samp)
 
-        # with tf.name_scope("PID_params_summary"):
-        #     PID_summary_key = tf.get_default_graph().unique_name(
-        #         "PID_params_summary")
+        with tf.name_scope("PID_params_summary"):
+            PID_summary_key = tf.get_default_graph().unique_name(
+                "PID_params_summary")
 
-        #     if FLAGS.latent_u:
-        #         U_goalie = p_U.goalie
-        #         U_ball = p_U.ball
-        #     else:
-        #         U_goalie = p_G.goalie.u
-        #         U_ball = p_G.ball.u
+            Kp_goalie_y = tf.summary.scalar("PID_params/goalie_y/Kp",
+                                            model.u_p.agents[0].Kp[0],
+                                            collections=PID_summary_key)
+            Ki_goalie_y = tf.summary.scalar("PID_params/goalie_y/Ki",
+                                            model.u_p.agents[0].Ki[0],
+                                            collections=PID_summary_key)
+            Kd_goalie_y = tf.summary.scalar("PID_params/goalie_y/Kd",
+                                            model.u_p.agents[0].Kd[0],
+                                            collections=PID_summary_key)
+            Kp_shooter_x = tf.summary.scalar("PID_params/shooter_x/Kp",
+                                             model.u_p.agents[1].Kp[0],
+                                             collections=PID_summary_key)
+            Ki_shooter_x = tf.summary.scalar("PID_params/shooter_x/Ki",
+                                             model.u_p.agents[1].Ki[0],
+                                             collections=PID_summary_key)
+            Kd_shooter_x = tf.summary.scalar("PID_params/shooter_x/Kd",
+                                             model.u_p.agents[1].Kd[0],
+                                             collections=PID_summary_key)
+            Kp_shooter_y = tf.summary.scalar("PID_params/shooter_y/Kp",
+                                             model.u_p.agents[1].Kp[1],
+                                             collections=PID_summary_key)
+            Ki_shooter_y = tf.summary.scalar("PID_params/shooter_y/Ki",
+                                             model.u_p.agents[1].Ki[1],
+                                             collections=PID_summary_key)
+            Kd_shooter_y = tf.summary.scalar("PID_params/shooter_y/Kd",
+                                             model.u_p.agents[1].Kd[1],
+                                             collections=PID_summary_key)
 
-        #     Kp_goalie = tf.summary.scalar("PID_params/goalie/Kp",
-        #                                   U_goalie.Kp[0, 0],
-        #                                   collections=PID_summary_key)
-        #     Ki_goalie = tf.summary.scalar("PID_params/goalie/Ki",
-        #                                   U_goalie.Ki[0, 0],
-        #                                   collections=PID_summary_key)
-        #     Kd_goalie = tf.summary.scalar("PID_params/goalie/Kd",
-        #                                   U_goalie.Kd[0, 0],
-        #                                   collections=PID_summary_key)
-        #     Kp_ball_x = tf.summary.scalar("PID_params/ball_x/Kp",
-        #                                   U_ball.Kp[0, 0],
-        #                                   collections=PID_summary_key)
-        #     Ki_ball_x = tf.summary.scalar("PID_params/ball_x/Ki",
-        #                                   U_ball.Ki[0, 0],
-        #                                   collections=PID_summary_key)
-        #     Kd_ball_x = tf.summary.scalar("PID_params/ball_x/Kd",
-        #                                   U_ball.Kd[0, 0],
-        #                                   collections=PID_summary_key)
-        #     Kp_ball_y = tf.summary.scalar("PID_params/ball_y/Kp",
-        #                                   U_ball.Kp[1, 0],
-        #                                   collections=PID_summary_key)
-        #     Ki_ball_y = tf.summary.scalar("PID_params/ball_y/Ki",
-        #                                   U_ball.Ki[1, 0],
-        #                                   collections=PID_summary_key)
-        #     Kd_ball_y = tf.summary.scalar("PID_params/ball_y/Kd",
-        #                                   U_ball.Kd[1, 0],
-        #                                   collections=PID_summary_key)
-
-        #     PID_summary = tf.summary.merge([Kp_goalie, Ki_goalie, Kd_goalie,
-        #                                     Kp_ball_x, Ki_ball_x, Kd_ball_x,
-        #                                     Kp_ball_y, Ki_ball_y, Kd_ball_y],
-        #                                    collections=PID_summary_key,
-        #                                    name="PID_params_summary")
+            PID_summary = tf.summary.merge(
+                [Kp_goalie_y, Ki_goalie_y, Kd_goalie_y,
+                 Kp_shooter_x, Ki_shooter_x, Kd_shooter_x,
+                 Kp_shooter_y, Ki_shooter_y, Kd_shooter_y],
+                collections=PID_summary_key, name="PID_params_summary")
 
         # Variational Inference (Edward KLqp)
         if FLAGS.profile:
@@ -363,9 +359,10 @@ def run_model(FLAGS):
 
         while True:
             try:
-                inference.update()
-                # add_summary(PID_summary, inference, sess, feed_dict,
-                #             info_dict["t"])
+                feed_dict=None
+                info_dict = inference.update(feed_dict=feed_dict)
+                add_summary(PID_summary, inference, sess, feed_dict,
+                            info_dict["t"])
             except tf.errors.OutOfRangeError:
                 break
 
@@ -373,7 +370,7 @@ def run_model(FLAGS):
             seso_saver.save(sess, FLAGS.model_dir + "/saved_model",
                             global_step=(i + 1),
                             latest_filename="checkpoint")
-            print("Model saved after %i epochs." % (i + 1))
+            print("Model saved after epoch %i." % (i + 1))
 
     if FLAGS.profile:
         fetched_timeline = timeline.Timeline(run_metadata.step_stats)

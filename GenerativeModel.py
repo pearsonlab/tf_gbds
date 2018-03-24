@@ -298,12 +298,12 @@ class GBDS_U(RandomVariable, Distribution):
             with tf.name_scope("trial_length"):
                 self.Tt = tf.shape(self.y)[1]
 
-            self.res_tol = tf.constant(params["u_res_tol"], tf.float32,
-                                       name="control_residual_tolerance")
+            # self.res_tol = tf.constant(params["u_res_tol"], tf.float32,
+            #                            name="control_residual_tolerance")
             # self.res_tol = tf.identity(params["u_res_tol"],
             #                            "control_residual_tolerance")
-            self.res_pen = tf.constant(params["u_res_pen"], tf.float32,
-                                       name="control_residual_penalty")
+            # self.res_pen = tf.constant(params["u_res_pen"], tf.float32,
+            #                            name="control_residual_penalty")
             # self.res_pen = tf.identity(params["u_res_pen"],
             #                            "control_residual_penalty")
 
@@ -337,11 +337,11 @@ class GBDS_U(RandomVariable, Distribution):
                     # self.eta = params["eta"]
 
             # Replaced by res_tol and res_pen
-            # with tf.name_scope("control_signal_noise"):
-            #     # noise coefficient on control signals
-            #     self.eps = tf.constant(
-            #         params["eps"] * np.ones((1, self.dim)),
-            #         dtype=tf.float32, name="epsilon")
+            with tf.name_scope("control_signal_noise"):
+                # noise coefficient on control signals
+                self.eps = tf.constant(
+                    params["eps"] * np.ones((1, self.dim)),
+                    dtype=tf.float32, name="epsilon")
             with tf.name_scope("control_signal_penalty"):
                 # penalty on large control error
                 if params["u_error_pen"] is not None:
@@ -449,16 +449,16 @@ class GBDS_U(RandomVariable, Distribution):
 
         with tf.name_scope("control_signal"):
             u_res = tf.subtract(value[:, :-1], u_pred, "residual")
-            # LogDensity -= tf.reduce_sum(
-            #     (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
-            #      u_res ** 2 / (2 * self.eps ** 2)), [1, 2])
+            LogDensity -= tf.reduce_sum(
+                (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
+                 u_res ** 2 / (2 * self.eps ** 2)), [1, 2])
             # LogDensity -= tf.reduce_sum(
             #     (0.5 * tf.log(2 * np.pi) + tf.log(1e-5) * tf.ones([1, self.dim]) +
             #      u_res ** 2 / (tf.ones([1, self.dim]) * 2 * 1e-5 ** 2)), [1, 2])
-            LogDensity -= self.res_pen * tf.reduce_sum(tf.nn.relu(
-                u_res - self.res_tol), [1, 2])
-            LogDensity -= self.res_pen * tf.reduce_sum(tf.nn.relu(
-                -u_res - self.res_tol), [1, 2])
+            # LogDensity -= self.res_pen * tf.reduce_sum(tf.nn.relu(
+            #     u_res - self.res_tol), [1, 2])
+            # LogDensity -= self.res_pen * tf.reduce_sum(tf.nn.relu(
+            #     -u_res - self.res_tol), [1, 2])
         with tf.name_scope("control_error_penalty"):
             # penalty on large ctrl error
             if self.error_pen is not None:
