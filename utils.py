@@ -531,11 +531,11 @@ def get_PID_posteriors(dim, vel):
                              name="unc_Kp_init"),
             dtype=tf.float32, name="unc_Kp")
         unc_Ki = tf.Variable(
-            softplus_inverse(np.ones(dim, np.float32) * 1e-6,
+            softplus_inverse(np.ones(dim, np.float32) * 1e-3,
                              name="unc_Ki_init"),
             dtype=tf.float32, name="unc_Ki")
         unc_Kd = tf.Variable(
-            softplus_inverse(np.ones(dim, np.float32) * 1e-6,
+            softplus_inverse(np.ones(dim, np.float32) * 1e-3,
                              name="unc_Kd_init"),
             dtype=tf.float32, name="unc_Kd")
         posteriors["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
@@ -552,10 +552,15 @@ def get_g0_params(name, dim, K):
         g0 = {}
 
         g0["K"] = K
-        g0["mu"] = tf.Variable(
-            # tf.random_normal([K, dim], name="mu_init_value"),
-            tf.zeros([K, dim], name="mu_init_value"),
-            dtype=tf.float32, name="mu")
+        if dim == 1:
+            g0["mu"] = tf.Variable(
+                tf.random_normal([K, 1], name="mu_init_value"),
+                dtype=tf.float32, name="mu")
+        elif dim == 2:
+            g0["mu"] = tf.Variable(
+                tf.concat([tf.ones([K, 1]), tf.random_normal([K, 1])], 1,
+                          name="mu_init_value"),
+                dtype=tf.float32, name="mu")
         g0["unc_lambda"] = tf.Variable(
             tf.random_normal([K, dim], name="lambda_init_value"),
             dtype=tf.float32, name="unc_lambda")
