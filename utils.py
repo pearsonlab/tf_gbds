@@ -348,7 +348,7 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                      all_vel, latent_ctrl,
                      rec_lag, rec_n_layers, rec_hidden_dim, penalty_Q,
                      # control_residual_tolerance, control_residual_penalty,
-                     epsilon,
+                     epsilon, epsilon_trainable, epsilon_penalty,
                      control_error_tolerance, control_error_penalty,
                      clip, clip_range, clip_tolerance, clip_penalty):
 
@@ -376,7 +376,8 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                                       name="%s_Kd" % a["name"])),
                 # u_res_tol=control_residual_tolerance,
                 # u_res_pen=control_residual_penalty,
-                eps=epsilon,
+                eps=epsilon, eps_trainable=epsilon_trainable,
+                eps_pen=epsilon_penalty,
                 u_error_tol=control_error_tolerance,
                 u_error_pen=control_error_penalty,
                 clip=clip, clip_range=clip_range, clip_tol=clip_tolerance,
@@ -558,7 +559,7 @@ def get_g0_params(name, dim, K):
                 dtype=tf.float32, name="mu")
         elif dim == 2:
             g0["mu"] = tf.Variable(
-                tf.concat([tf.ones([K, 1]), tf.random_normal([K, 1])], 1,
+                tf.concat([tf.ones([K, 1]) * .8, tf.random_normal([K, 1])], 1,
                           name="mu_init_value"),
                 dtype=tf.float32, name="mu")
         g0["unc_lambda"] = tf.Variable(

@@ -63,10 +63,11 @@ class GBDS_G(RandomVariable, Distribution):
             with tf.name_scope("goal_state_noise"):
                 # noise coefficient on goal states
                 if params["sigma_trainable"]:
-                    self.sigma = tf.Variable(
+                    self.unc_sigma = tf.Variable(
                         params["sigma"] * np.ones((1, self.dim)),
-                        name="sigma", dtype=tf.float32)
-                    self.params += [self.sigma]
+                        name="unc_sigma", dtype=tf.float32)
+                    self.sigma = tf.nn.softplus(self.unc_sigma, "sigma")
+                    self.params += [self.unc_sigma]
                 else:
                     self.sigma = tf.constant(
                         params["sigma"] * np.ones((1, self.dim)),
@@ -339,9 +340,20 @@ class GBDS_U(RandomVariable, Distribution):
             # Replaced by res_tol and res_pen
             with tf.name_scope("control_signal_noise"):
                 # noise coefficient on control signals
-                self.eps = tf.constant(
-                    params["eps"] * np.ones((1, self.dim)),
-                    dtype=tf.float32, name="epsilon")
+                if params["eps_trainable"]:
+                    self.unc_eps = tf.Variable(
+                        params["eps"] * np.ones((1, self.dim)),
+                        name="unc_eps", dtype=tf.float32)
+                    self.eps = tf.nn.softplus(self.unc_eps, "epsilon")
+                    self.params = [self.unc_eps]
+                    self.eps_pen = tf.constant(
+                        params["eps_pen"], tf.float32, name="epsilon_penalty")
+                else:
+                    self.eps = tf.constant(
+                        params["eps"] * np.ones((1, self.dim)), tf.float32,
+                        name="epsilon")
+                    self.params = []
+                    self.eps_pen = None
             with tf.name_scope("control_signal_penalty"):
                 # penalty on large control error
                 if params["u_error_pen"] is not None:
@@ -467,7 +479,13 @@ class GBDS_U(RandomVariable, Distribution):
                 LogDensity -= self.error_pen * tf.reduce_sum(
                     tf.nn.relu(-ctrl_error - self.error_tol), [1, 2])
 
-        return tf.reduce_mean(LogDensity) / tf.cast(self.Tt - 1, tf.float32)
+        if self.eps_pen is not None:
+            return (tf.reduce_mean(LogDensity) / tf.cast(
+                self.Tt - 1, tf.float32) - self.eps_pen * tf.reduce_sum(
+                self.unc_eps))
+        else:
+            return tf.reduce_mean(LogDensity) / tf.cast(
+                self.Tt - 1, tf.float32)
 
     def update_ctrl(self, errors, prev_u):
         # Update control signal given errors and previous control
@@ -500,6 +518,10 @@ class joint_ctrls(RandomVariable, Distribution):
                     for p in params]
             else:
                 raise TypeError("params must be a list.")
+
+            self.params = []
+            for agent in self.agents:
+                self.params += agent.params
 
         super(joint_ctrls, self).__init__(
             name=name, value=value, dtype=dtype,

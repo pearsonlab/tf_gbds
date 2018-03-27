@@ -44,7 +44,9 @@ GOAL_BOUNDARY_PENALTY = None
 
 # CONTROL_RESIDUAL_TOLERANCE = 1e-5
 # CONTROL_RESIDUAL_PENALTY = 1e8
-EPSILON = 1e-4
+EPSILON = 1e-5
+EPSILON_TRAINABLE = False
+EPSILON_PENALTY = 1e5
 CONTROL_ERROR_TOLERANCE = .5
 CONTROL_ERROR_PENALTY = None
 LATENT_CONTROL = False
@@ -111,7 +113,7 @@ flags.DEFINE_integer("rec_hidden_dim", REC_HIDDEN_DIM,
                      "Number of hidden units in each dense layer of \
                      neural networks (recognition model)")
 
-flags.DEFINE_float("sigma", SIGMA, "Initial value of goal state variance")
+flags.DEFINE_float("sigma", SIGMA, "(Initial) value of goal state variance")
 flags.DEFINE_boolean("sigma_trainable", SIGMA_TRAINABLE, "Is sigma trainable")
 flags.DEFINE_float("g_lb", GOAL_BOUNDARY_L, "Goal state lower boundary")
 flags.DEFINE_float("g_ub", GOAL_BOUNDARY_U, "Goal state upper boundary")
@@ -122,7 +124,10 @@ flags.DEFINE_float("g_bounds_pen", GOAL_BOUNDARY_PENALTY,
 #                    "Tolerance of control signal residual")
 # flags.DEFINE_float("u_res_pen", CONTROL_RESIDUAL_PENALTY,
 #                    "Penalty on control signal residual")
-flags.DEFINE_float("eps", EPSILON, "Noise of control signal")
+flags.DEFINE_float("eps", EPSILON, "(Initial) value of control signal noise")
+flags.DEFINE_boolean("eps_trainable", EPSILON_TRAINABLE,
+                     "Is epsilon trainable")
+flags.DEFINE_float("eps_pen", EPSILON_PENALTY, "Penalty on large epsilon")
 flags.DEFINE_float("u_error_tol", CONTROL_ERROR_TOLERANCE,
                    "Tolerance of control error (input to PID control model)")
 flags.DEFINE_float("u_error_pen", CONTROL_ERROR_PENALTY,
@@ -255,7 +260,7 @@ def run_model(FLAGS):
             FLAGS.GMM_K, PKLparams, FLAGS.sigma, FLAGS.sigma_trainable,
             g_bounds, FLAGS.g_bounds_pen, max_vel, FLAGS.latent_u,
             FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
-            penalty_Q, FLAGS.eps,
+            penalty_Q, FLAGS.eps, FLAGS.eps_trainable, FLAGS.eps_pen,
             # FLAGS.u_res_tol, FLAGS.u_res_pen,
             FLAGS.u_error_tol, FLAGS.u_error_pen,
             FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen)
@@ -297,6 +302,9 @@ def run_model(FLAGS):
             Kd_goalie_y = tf.summary.scalar("PID_params/goalie_y/Kd",
                                             model.u_p.agents[0].Kd[0],
                                             collections=PID_summary_key)
+            eps_goalie_y = tf.summary.scalar("PID_params/goalie_y/eps",
+                                             model.u_p.agents[0].eps[0, 0],
+                                             collections=PID_summary_key)
             Kp_shooter_x = tf.summary.scalar("PID_params/shooter_x/Kp",
                                              model.u_p.agents[1].Kp[0],
                                              collections=PID_summary_key)
@@ -306,6 +314,9 @@ def run_model(FLAGS):
             Kd_shooter_x = tf.summary.scalar("PID_params/shooter_x/Kd",
                                              model.u_p.agents[1].Kd[0],
                                              collections=PID_summary_key)
+            eps_shooter_x = tf.summary.scalar("PID_params/shooter_x/eps",
+                                              model.u_p.agents[1].eps[0, 0],
+                                              collections=PID_summary_key)
             Kp_shooter_y = tf.summary.scalar("PID_params/shooter_y/Kp",
                                              model.u_p.agents[1].Kp[1],
                                              collections=PID_summary_key)
@@ -315,11 +326,14 @@ def run_model(FLAGS):
             Kd_shooter_y = tf.summary.scalar("PID_params/shooter_y/Kd",
                                              model.u_p.agents[1].Kd[1],
                                              collections=PID_summary_key)
+            eps_shooter_y = tf.summary.scalar("PID_params/shooter_y/eps",
+                                              model.u_p.agents[1].eps[0, 1],
+                                              collections=PID_summary_key)
 
             PID_summary = tf.summary.merge(
-                [Kp_goalie_y, Ki_goalie_y, Kd_goalie_y,
-                 Kp_shooter_x, Ki_shooter_x, Kd_shooter_x,
-                 Kp_shooter_y, Ki_shooter_y, Kd_shooter_y],
+                [Kp_goalie_y, Ki_goalie_y, Kd_goalie_y, eps_goalie_y,
+                 Kp_shooter_x, Ki_shooter_x, Kd_shooter_x, eps_shooter_x,
+                 Kp_shooter_y, Ki_shooter_y, Kd_shooter_y, eps_shooter_y],
                 collections=PID_summary_key, name="PID_params_summary")
 
         # Variational Inference (Edward KLqp)

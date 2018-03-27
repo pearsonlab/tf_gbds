@@ -56,6 +56,7 @@ class game_model(object):
                 self.u_p = joint_ctrls(
                     params["agent_priors"], self.g_q.value(), self.traj,
                     self.ctrl_obs, "prior", tf.zeros(value_shape))
+                self.var_list += self.u_p.params
                 if params["u_q_params"] is not None:
                     self.u_q = SmoothingPastLDSTimeSeries(
                         params["u_q_params"], self.traj, self.obs_dim,
