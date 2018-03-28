@@ -341,17 +341,13 @@ class GBDS_U(RandomVariable, Distribution):
             with tf.name_scope("control_signal_noise"):
                 # noise coefficient on control signals
                 if params["eps_trainable"]:
-                    self.unc_eps = tf.Variable(
-                        params["eps"] * np.ones((1, self.dim)),
-                        name="unc_eps", dtype=tf.float32)
+                    self.unc_eps = params["eps"]
                     self.eps = tf.nn.softplus(self.unc_eps, "epsilon")
                     self.params = [self.unc_eps]
                     self.eps_pen = tf.constant(
                         params["eps_pen"], tf.float32, name="epsilon_penalty")
                 else:
-                    self.eps = tf.constant(
-                        params["eps"] * np.ones((1, self.dim)), tf.float32,
-                        name="epsilon")
+                    self.eps = tf.identity(params["eps"], name="epsilon")
                     self.params = []
                     self.eps_pen = None
             with tf.name_scope("control_signal_penalty"):

@@ -358,6 +358,15 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
 
         priors = []
         for a in agents:
+            if epsilon_trainable:
+                agent_eps = tf.Variable(
+                    epsilon * np.ones((1, a["dim"])),
+                    name="%s_unc_eps" % a["name"], dtype=tf.float32)
+            else:
+                agent_eps = tf.constant(
+                    epsilon * np.ones((1, a["dim"])), tf.float32,
+                    name="%s_epsilon" % a["name"])
+
             priors.append(dict(
                 name=a["name"], col=a["col"], dim=a["dim"],
                 GMM_K=GMM_K,
@@ -376,7 +385,7 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                                       name="%s_Kd" % a["name"])),
                 # u_res_tol=control_residual_tolerance,
                 # u_res_pen=control_residual_penalty,
-                eps=epsilon, eps_trainable=epsilon_trainable,
+                eps=agent_eps, eps_trainable=epsilon_trainable,
                 eps_pen=epsilon_penalty,
                 u_error_tol=control_error_tolerance,
                 u_error_pen=control_error_penalty,
