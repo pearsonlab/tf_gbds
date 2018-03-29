@@ -119,8 +119,8 @@ class game_model(object):
                                          "current")
 
                 next_y = tf.clip_by_value(
-                    curr_y + max_vel * tf.clip_by_value(curr_u, -1., 1.),
-                    -1., 1., name="next_position")
+                    curr_y + max_vel * tf.tanh(curr_u), -1., 1.,
+                    name="next_position")
 
             # with tf.name_scope("loss"):
             #     logdensity_g = tf.identity(

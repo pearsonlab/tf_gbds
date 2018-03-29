@@ -278,9 +278,9 @@ def run_model(FLAGS):
                                              "observed_control")
             else:
                 with tf.name_scope("observed_control"):
-                    ctrl_obs_train = tf.divide(tf.subtract(
+                    ctrl_obs_train = tf.atanh(tf.divide(tf.subtract(
                         y_train[:, 1:], y_train[:, :-1], "diff"),
-                        max_vel, "standardize")
+                        max_vel + 1e-8, "standardize"), "arctanh")
 
             inputs = {"trajectory": y_train, "states": s_train,
                       "extra_conds": extra_conds_train,

@@ -387,7 +387,7 @@ class GBDS_U(RandomVariable, Distribution):
                 signal = error[:, :, i]
                 # pad the beginning of control signal with zero
                 signal = tf.expand_dims(
-                    tf.pad(signal, [[0, 0], [2, 0]], name="pad_zero"),
+                    tf.pad(signal, [[0, 0], [1, 0]], name="pad_zero"),
                     -1, name="reshape_signal")
                 filt = tf.reshape(self.L[i], [-1, 1, 1], "reshape_filter")
                 res = tf.nn.convolution(signal, filt, padding="VALID",
@@ -445,7 +445,8 @@ class GBDS_U(RandomVariable, Distribution):
             # Disregard the last time step because we donnot know
             # the next value, thus cannot calculate the error
             ctrl_error, u_pred = self.get_preds(
-                self.y[:, :-1], self.g[:, 1:],
+                tf.concat([tf.expand_dims(self.y[:, 0], 1, "y0"),
+                    self.y[:, :-1]], 1), self.g,
                 tf.pad(value[:, :-2], [[0, 0], [1, 0], [0, 0]],
                        name="previous_control"))
 
