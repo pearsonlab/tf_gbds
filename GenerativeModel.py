@@ -26,6 +26,7 @@ class GBDS_G(RandomVariable, Distribution):
             name: Optional name for the random variable. Default to "G".
         """
 
+        name = kwargs.get("name", "G")
         with tf.name_scope(name):
             self.s = tf.identity(states, "states")
             self.col = params["col"]
@@ -86,7 +87,7 @@ class GBDS_G(RandomVariable, Distribution):
                     self.pen = None
 
         if "name" not in kwargs:
-            kwargs["name"] = "G"
+            kwargs["name"] = name
         if "dtype" not in kwargs:
             kwargs["dtype"] = tf.float32
         if "reparameterization_type" not in kwargs:
@@ -227,9 +228,10 @@ class joint_goals(RandomVariable, Distribution):
     """
 
     def __init__(self, params, states, extra_conds=None, *args, **kwargs):
+        name = kwargs.get("name", "goal")
         with tf.name_scope(name):
             if isinstance(params, list):
-                value = kwargs.pop("value", None)
+                value = kwargs.get("value", None)
                 self.agents = [GBDS_G(
                     p, states, extra_conds, name=p["name"],
                     value=tf.gather(value, p["col"], axis=-1))
@@ -242,7 +244,7 @@ class joint_goals(RandomVariable, Distribution):
                 self.params += agent.params
 
         if "name" not in kwargs:
-            kwargs["name"] = "goal"
+            kwargs["name"] = name
         if "dtype" not in kwargs:
             kwargs["dtype"] = tf.float32
         if "reparameterization_type" not in kwargs:
@@ -291,6 +293,7 @@ class GBDS_U(RandomVariable, Distribution):
             name: Optional name for the random variable. Default to "U".
         """
 
+        name = kwargs.get("name", "U")
         with tf.name_scope(name):
             self.g = tf.identity(goals, "goals")
             self.y = tf.identity(positions, "positions")
@@ -368,7 +371,7 @@ class GBDS_U(RandomVariable, Distribution):
                     self.error_pen = None
 
         if "name" not in kwargs:
-            kwargs["name"] = "U"
+            kwargs["name"] = name
         if "dtype" not in kwargs:
             kwargs["dtype"] = tf.float32
         if "reparameterization_type" not in kwargs:
@@ -507,9 +510,10 @@ class joint_ctrls(RandomVariable, Distribution):
     """
 
     def __init__(self, params, goals, positions, ctrl_obs, *args, **kwargs):
+        name = kwargs.get("name", "control")
         with tf.name_scope(name):
             if isinstance(params, list):
-                value = kwargs.pop("value", None)
+                value = kwargs.get("value", None)
                 self.agents = [GBDS_U(
                     p, tf.gather(goals, p["col"], axis=-1,
                                  name="%s_posterior_goals" % p["name"]),
@@ -527,7 +531,7 @@ class joint_ctrls(RandomVariable, Distribution):
                 self.params += agent.params
 
         if "name" not in kwargs:
-            kwargs["name"] = "control"
+            kwargs["name"] = name
         if "dtype" not in kwargs:
             kwargs["dtype"] = tf.float32
         if "reparameterization_type" not in kwargs:

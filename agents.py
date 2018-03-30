@@ -54,7 +54,7 @@ class game_model(object):
 
             with tf.name_scope("control"):
                 self.u_p = joint_ctrls(
-                    params["agent_priors"], self.g_q.value(), self.traj,
+                    params["agent_priors"], self.g_q, self.traj,
                     self.ctrl_obs, name="prior", value=tf.zeros(value_shape))
                 self.var_list += self.u_p.params
                 if params["u_q_params"] is not None:

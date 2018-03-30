@@ -44,6 +44,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                   Default to "SmoothingLDSTimeSeries".
         """
 
+        name = kwargs.get("name", "SmoothingLDSTimeSeries")
         with tf.name_scope(name):
             self.y = tf.identity(Input, "observations")
             self.dyn_params = params["dyn_params"]
@@ -86,7 +87,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                            [self.QinvChol] + [self.Q0invChol])
 
         if "name" not in kwargs:
-            kwargs["name"] = "SmoothingLDSTimeSeries"
+            kwargs["name"] = name
         if "dtype" not in kwargs:
             kwargs["dtype"] = tf.float32
         if "reparameterization_type" not in kwargs:
@@ -249,5 +250,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
         if "allow_nan_stats" not in kwargs:
             kwargs["allow_nan_stats"] = False
 
-        super(SmoothingPastLDSTimeSeries, self).__init__(
-            Input=Input_, *args, **kwargs)
+        super(SmoothingPastLDSTimeSeries, self).__init__(params, Input_, xDim,
+            yDim, extra_conds, *args, **kwargs)
+
+        self._args = (params, Input, xDim, yDim, extra_conds)
