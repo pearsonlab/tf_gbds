@@ -23,11 +23,8 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
 
     """
 
-    def __init__(self, params, Input, xDim, yDim,
-                 extra_conds=None, name="SmoothingLDSTimeSeries",
-                 value=None, dtype=tf.float32,
-                 reparameterization_type=FULLY_REPARAMETERIZED,
-                 validate_args=True, allow_nan_stats=True):
+    def __init__(self, params, Input, xDim, yDim, extra_conds=None, *args,
+                 **kwargs):
         """Initialize SmoothingLDSTimeSeries random variable (batch)
 
         Args:
@@ -88,16 +85,20 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                            self.NN_LambdaX.variables + [self.A] +
                            [self.QinvChol] + [self.Q0invChol])
 
-        super(SmoothingLDSTimeSeries, self).__init__(
-            name=name, value=value, dtype=dtype,
-            reparameterization_type=reparameterization_type,
-            validate_args=validate_args, allow_nan_stats=allow_nan_stats)
+        if "name" not in kwargs:
+            kwargs["name"] = "SmoothingLDSTimeSeries"
+        if "dtype" not in kwargs:
+            kwargs["dtype"] = tf.float32
+        if "reparameterization_type" not in kwargs:
+            kwargs["reparameterization_type"] = FULLY_REPARAMETERIZED
+        if "validate_args" not in kwargs:
+            kwargs["validate_args"] = True
+        if "allow_nan_stats" not in kwargs:
+            kwargs["allow_nan_stats"] = False
 
-        self._kwargs["params"] = params
-        self._kwargs["Input"] = Input
-        self._kwargs["xDim"] = xDim
-        self._kwargs["yDim"] = yDim
-        self._kwargs["extra_conds"] = extra_conds
+        super(SmoothingLDSTimeSeries, self).__init__(*args, **kwargs)
+
+        self._args = (params, Input, xDim, yDim, extra_conds)
 
     def _initialize_posterior_distribution(self, params):
         # Compute the precisions (from square roots)
@@ -218,11 +219,8 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
     current to evaluate the latent.
     """
 
-    def __init__(self, params, Input, xDim, yDim,
-                 extra_conds=None, name="SmoothingPastLDSTimeSeries",
-                 value=None, dtype=tf.float32,
-                 reparameterization_type=FULLY_REPARAMETERIZED,
-                 validate_args=True, allow_nan_stats=True):
+    def __init__(self, params, Input, xDim, yDim, extra_conds=None, *args,
+                 **kwargs):
         """Initialize SmoothingPastLDSTimeSeries random variable (batch)
         """
 
@@ -240,10 +238,16 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
                      Input_[:, :-1, -yDim:]], 1, "lag")
                 Input_ = tf.concat([Input_, lagged], -1)
 
-        super(SmoothingPastLDSTimeSeries, self).__init__(
-            params, Input_, xDim, yDim, extra_conds,
-            name, value, dtype, reparameterization_type,
-            validate_args, allow_nan_stats)
+        if "name" not in kwargs:
+            kwargs["name"] = "SmoothingPastLDSTimeSeries"
+        if "dtype" not in kwargs:
+            kwargs["dtype"] = tf.float32
+        if "reparameterization_type" not in kwargs:
+            kwargs["reparameterization_type"] = FULLY_REPARAMETERIZED
+        if "validate_args" not in kwargs:
+            kwargs["validate_args"] = True
+        if "allow_nan_stats" not in kwargs:
+            kwargs["allow_nan_stats"] = False
 
-        self.Input = Input
-        self._kwargs["Input"] = Input
+        super(SmoothingPastLDSTimeSeries, self).__init__(
+            Input=Input_, *args, **kwargs)

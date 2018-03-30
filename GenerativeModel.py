@@ -13,10 +13,7 @@ class GBDS_G(RandomVariable, Distribution):
     Goal-Based Dynamical System
     """
 
-    def __init__(self, params, states, extra_conds=None,
-                 name="G", value=None, dtype=tf.float32,
-                 reparameterization_type=FULLY_REPARAMETERIZED,
-                 validate_args=True, allow_nan_stats=True):
+    def __init__(self, params, states, extra_conds=None, *args, **kwargs):
         """Initialize GBDS_g random variable (batch) for an agent
 
         Args:
@@ -88,16 +85,20 @@ class GBDS_G(RandomVariable, Distribution):
                 else:
                     self.pen = None
 
-            # with tf.name_scope("NN_kernel_penalty"):
+        if "name" not in kwargs:
+            kwargs["name"] = "G"
+        if "dtype" not in kwargs:
+            kwargs["dtype"] = tf.float32
+        if "reparameterization_type" not in kwargs:
+            kwargs["reparameterization_type"] = FULLY_REPARAMETERIZED
+        if "validate_args" not in kwargs:
+            kwargs["validate_args"] = True
+        if "allow_nan_stats" not in kwargs:
+            kwargs["allow_nan_stats"] = False
 
-        super(GBDS_G, self).__init__(
-            name=name, value=value, dtype=dtype,
-            reparameterization_type=reparameterization_type,
-            validate_args=validate_args, allow_nan_stats=allow_nan_stats)
+        super(GBDS_G, self).__init__(*args, **kwargs)
 
-        self._kwargs["params"] = params
-        self._kwargs["states"] = states
-        self._kwargs['extra_conds'] = extra_conds
+        self._args = (params, states, extra_conds)
 
     def get_preds(self, s, g, extra_conds=None):
         # Return one-step-ahead prediction of goals, given states
@@ -225,15 +226,14 @@ class joint_goals(RandomVariable, Distribution):
     """Auxiliary class to join random variables of goals for all agents
     """
 
-    def __init__(self, params, states, extra_conds=None,
-                 name="goal", value=None, dtype=tf.float32,
-                 reparameterization_type=FULLY_REPARAMETERIZED,
-                 validate_args=True, allow_nan_stats=True):
+    def __init__(self, params, states, extra_conds=None, *args, **kwargs):
         with tf.name_scope(name):
             if isinstance(params, list):
+                value = kwargs.pop("value", None)
                 self.agents = [GBDS_G(
-                    p, states, extra_conds, p["name"],
-                    tf.gather(value, p["col"], axis=-1)) for p in params]
+                    p, states, extra_conds, name=p["name"],
+                    value=tf.gather(value, p["col"], axis=-1))
+                               for p in params]
             else:
                 raise TypeError("params must be a list.")
 
@@ -241,14 +241,20 @@ class joint_goals(RandomVariable, Distribution):
             for agent in self.agents:
                 self.params += agent.params
 
-        super(joint_goals, self).__init__(
-            name=name, value=value, dtype=dtype,
-            reparameterization_type=reparameterization_type,
-            validate_args=validate_args, allow_nan_stats=allow_nan_stats)
+        if "name" not in kwargs:
+            kwargs["name"] = "goal"
+        if "dtype" not in kwargs:
+            kwargs["dtype"] = tf.float32
+        if "reparameterization_type" not in kwargs:
+            kwargs["reparameterization_type"] = FULLY_REPARAMETERIZED
+        if "validate_args" not in kwargs:
+            kwargs["validate_args"] = True
+        if "allow_nan_stats" not in kwargs:
+            kwargs["allow_nan_stats"] = False
 
-        self._kwargs["params"] = params
-        self._kwargs["states"] = states
-        self._kwargs['extra_conds'] = extra_conds
+        super(joint_goals, self).__init__(*args, **kwargs)
+
+        self._args = (params, states, extra_conds)
 
     def _log_prob(self, value):
         return tf.add_n([agent.log_prob(tf.gather(value, agent.col, axis=-1))
@@ -272,10 +278,7 @@ class GBDS_U(RandomVariable, Distribution):
     Goal-Based Dynamical System
     """
 
-    def __init__(self, params, goals, positions, ctrl_obs,
-                 name="U", value=None, dtype=tf.float32,
-                 reparameterization_type=FULLY_REPARAMETERIZED,
-                 validate_args=True, allow_nan_stats=True):
+    def __init__(self, params, goals, positions, ctrl_obs, *args, **kwargs):
         """Initialize GBDS_u random variable (batch) for an agent
 
         Args:
@@ -364,15 +367,20 @@ class GBDS_U(RandomVariable, Distribution):
                 else:
                     self.error_pen = None
 
-        super(GBDS_U, self).__init__(
-            name=name, value=value, dtype=dtype,
-            reparameterization_type=reparameterization_type,
-            validate_args=validate_args, allow_nan_stats=allow_nan_stats)
+        if "name" not in kwargs:
+            kwargs["name"] = "U"
+        if "dtype" not in kwargs:
+            kwargs["dtype"] = tf.float32
+        if "reparameterization_type" not in kwargs:
+            kwargs["reparameterization_type"] = FULLY_REPARAMETERIZED
+        if "validate_args" not in kwargs:
+            kwargs["validate_args"] = True
+        if "allow_nan_stats" not in kwargs:
+            kwargs["allow_nan_stats"] = False
 
-        self._kwargs["params"] = params
-        self._kwargs["goals"] = goals
-        self._kwargs["positions"] = positions
-        self._kwargs['ctrl_obs'] = ctrl_obs
+        super(GBDS_U, self).__init__(*args, **kwargs)
+
+        self._args = (params, goals, positions, ctrl_obs)
 
     def get_preds(self, y, post_g, prev_u):
         # Return one-step-ahead prediction of control signal, given current
@@ -498,12 +506,10 @@ class joint_ctrls(RandomVariable, Distribution):
     """Auxiliary class to join random variables of controls for all agents
     """
 
-    def __init__(self, params, goals, positions, ctrl_obs,
-                 name="control", value=None, dtype=tf.float32,
-                 reparameterization_type=FULLY_REPARAMETERIZED,
-                 validate_args=True, allow_nan_stats=True):
+    def __init__(self, params, goals, positions, ctrl_obs, *args, **kwargs):
         with tf.name_scope(name):
             if isinstance(params, list):
+                value = kwargs.pop("value", None)
                 self.agents = [GBDS_U(
                     p, tf.gather(goals, p["col"], axis=-1,
                                  name="%s_posterior_goals" % p["name"]),
@@ -511,7 +517,7 @@ class joint_ctrls(RandomVariable, Distribution):
                               name="%s_positions" % p["name"]),
                     tf.gather(ctrl_obs, p["col"], axis=-1,
                               name="%s_observed_control" % p["name"]),
-                    p["name"], tf.gather(value, p["col"], axis=-1))
+                    name=p["name"], value=tf.gather(value, p["col"], axis=-1))
                     for p in params]
             else:
                 raise TypeError("params must be a list.")
@@ -520,15 +526,20 @@ class joint_ctrls(RandomVariable, Distribution):
             for agent in self.agents:
                 self.params += agent.params
 
-        super(joint_ctrls, self).__init__(
-            name=name, value=value, dtype=dtype,
-            reparameterization_type=reparameterization_type,
-            validate_args=validate_args, allow_nan_stats=allow_nan_stats)
+        if "name" not in kwargs:
+            kwargs["name"] = "control"
+        if "dtype" not in kwargs:
+            kwargs["dtype"] = tf.float32
+        if "reparameterization_type" not in kwargs:
+            kwargs["reparameterization_type"] = FULLY_REPARAMETERIZED
+        if "validate_args" not in kwargs:
+            kwargs["validate_args"] = True
+        if "allow_nan_stats" not in kwargs:
+            kwargs["allow_nan_stats"] = False
 
-        self._kwargs["params"] = params
-        self._kwargs["goals"] = goals
-        self._kwargs["positions"] = positions
-        self._kwargs['ctrl_obs'] = ctrl_obs
+        super(joint_ctrls, self).__init__(*args, **kwargs)
+
+        self._args = (params, goals, positions, ctrl_obs)
 
     def _log_prob(self, value):
         return tf.add_n([agent.log_prob(tf.gather(value, agent.col, axis=-1))
