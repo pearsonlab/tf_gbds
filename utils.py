@@ -344,29 +344,28 @@ def get_accel(traj, max_vel):
 def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                      gen_n_layers, gen_hidden_dim, GMM_K, PKLparams,
                      sigma, sigma_trainable,
-                     goal_boundaries, goal_boundary_penalty,
-                     all_vel, latent_ctrl,
+                     goal_boundaries, goal_boundary_penalty, latent_ctrl,
                      rec_lag, rec_n_layers, rec_hidden_dim, penalty_Q,
-                     # control_residual_tolerance, control_residual_penalty,
                      epsilon, epsilon_trainable, epsilon_penalty,
                      control_error_tolerance, control_error_penalty,
                      clip, clip_range, clip_tolerance, clip_penalty):
 
     with tf.variable_scope("model_parameters"):
-        # PID_p = get_PID_priors(obs_dim, all_vel)
-        PID_q = get_PID_posteriors(obs_dim, all_vel)
+        if sigma_trainable:
+            sigma_init = tf.Variable(
+                sigma, name="unc_sigma", dtype=tf.float32)
+        else:
+            sigma_init = tf.constant(sigma, tf.float32, name="sigma")
+
+        if epsilon_trainable:
+            eps_init = tf.Variable(
+                epsilon, name="unc_eps", dtype=tf.float32)
+        else:
+            eps_init = tf.constant(epsilon, tf.float32, name="epsilon")
 
         priors = []
         for a in agents:
-            if epsilon_trainable:
-                agent_eps = tf.Variable(
-                    epsilon * np.ones((1, a["dim"])),
-                    name="%s_unc_eps" % a["name"], dtype=tf.float32)
-            else:
-                agent_eps = tf.constant(
-                    epsilon * np.ones((1, a["dim"])), tf.float32,
-                    name="%s_epsilon" % a["name"])
-
+            PID = get_PID(a["dim"], a["name"])
             priors.append(dict(
                 name=a["name"], col=a["col"], dim=a["dim"],
                 GMM_K=GMM_K,
@@ -375,17 +374,9 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                     (GMM_K * a["dim"] * 2 + GMM_K),
                     gen_hidden_dim, gen_n_layers, PKLparams)[0],
                 g0=get_g0_params(a["name"], a["dim"], GMM_K),
-                sigma=sigma, sigma_trainable=sigma_trainable,
+                sigma=sigma_init, sigma_trainable=sigma_trainable,
                 g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
-                PID=dict(Kp=tf.gather(PID_q["Kp"], a["col"],
-                                      name="%s_Kp" % a["name"]),
-                         Ki=tf.gather(PID_q["Ki"], a["col"],
-                                      name="%s_Ki" % a["name"]),
-                         Kd=tf.gather(PID_q["Kd"], a["col"],
-                                      name="%s_Kd" % a["name"])),
-                # u_res_tol=control_residual_tolerance,
-                # u_res_pen=control_residual_penalty,
-                eps=agent_eps, eps_trainable=epsilon_trainable,
+                PID=PID, eps=eps_init, eps_trainable=epsilon_trainable,
                 eps_pen=epsilon_penalty,
                 u_error_tol=control_error_tolerance,
                 u_error_pen=control_error_penalty,
@@ -405,8 +396,8 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
 
         params = dict(
             name=name, obs_dim=obs_dim, agent_priors=priors,
-            g_q_params=g_q_params,  # PID_p=PID_p,
-            PID_q=PID_q, u_q_params=u_q_params)
+            sigma=sigma_init, eps=eps_init,
+            g_q_params=g_q_params, u_q_params=u_q_params)
 
         return params
 
@@ -555,6 +546,31 @@ def get_PID_posteriors(dim, vel):
         posteriors["Kd"] = Point_Mass(tf.nn.softplus(unc_Kd), name="Kd")
 
         return posteriors
+
+
+def get_PID(dim, name):
+    with tf.variable_scope("%s_PID" % name):
+        PID = {}
+
+        unc_Kp = tf.Variable(
+            softplus_inverse(np.ones(dim, np.float32),
+                             name="unc_Kp_init"),
+            dtype=tf.float32, name="unc_Kp")
+        unc_Ki = tf.Variable(
+            softplus_inverse(np.ones(dim, np.float32) * 1e-3,
+                             name="unc_Ki_init"),
+            dtype=tf.float32, name="unc_Ki")
+        unc_Kd = tf.Variable(
+            softplus_inverse(np.ones(dim, np.float32) * 1e-6,
+                             name="unc_Kd_init"),
+            dtype=tf.float32, name="unc_Kd")
+        PID["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
+
+        PID["Kp"] = tf.nn.softplus(unc_Kp, "Kp")
+        PID["Ki"] = tf.nn.softplus(unc_Ki, "Ki")
+        PID["Kd"] = tf.nn.softplus(unc_Kd, "Kd")
+
+        return PID
 
 
 def get_g0_params(name, dim, K):

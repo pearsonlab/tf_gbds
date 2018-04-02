@@ -24,9 +24,9 @@ N_AGENTS = 2
 AGENT_NAME = "goalie,shooter"
 AGENT_COLUMN = "0;1,2"
 OBSERVE_DIM = 3
+OBSERVED_CONTROL = False
 EXTRA_CONDITIONS = False
 EXTRA_DIM = 0
-OBSERVED_CONTROL = False
 ADD_ACCEL = False
 
 GMM_K = 8
@@ -91,11 +91,11 @@ flags.DEFINE_string("agent_name", AGENT_NAME, "Name of each agent \
 flags.DEFINE_string("agent_col", AGENT_COLUMN, "Columns of data \
                     corresponding to each agent (separated by ; and ,)")
 flags.DEFINE_integer("obs_dim", OBSERVE_DIM, "Dimension of observation")
+flags.DEFINE_boolean("ctrl_obs", OBSERVED_CONTROL, "Are observed control \
+                     signals included in the dataset")
 flags.DEFINE_boolean("extra_conds", EXTRA_CONDITIONS, "Are extra conditions \
                      included in the dataset")
 flags.DEFINE_integer("extra_dim", EXTRA_DIM, "Dimension of extra conditions")
-flags.DEFINE_boolean("ctrl_obs", OBSERVED_CONTROL, "Are observed control \
-                     signals included in the dataset")
 flags.DEFINE_boolean("add_accel", ADD_ACCEL,
                      "Is acceleration included in state")
 
@@ -258,21 +258,15 @@ def run_model(FLAGS):
             FLAGS.game_name, agents, FLAGS.obs_dim, state_dim,
             FLAGS.extra_dim, FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
             FLAGS.GMM_K, PKLparams, FLAGS.sigma, FLAGS.sigma_trainable,
-            g_bounds, FLAGS.g_bounds_pen, max_vel, FLAGS.latent_u,
+            g_bounds, FLAGS.g_bounds_pen, FLAGS.latent_u,
             FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
             penalty_Q, FLAGS.eps, FLAGS.eps_trainable, FLAGS.eps_pen,
-            # FLAGS.u_res_tol, FLAGS.u_res_pen,
             FLAGS.u_error_tol, FLAGS.u_error_pen,
             FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen)
 
         with tf.name_scope("inputs"):
             y_train = tf.identity(train_data["trajectory"], "trajectory")
             s_train = tf.identity(get_state(y_train, max_vel), "states")
-            if FLAGS.extra_conds:
-                extra_conds_train = tf.identity(train_data["extra_conds"],
-                                                "extra_conditions")
-            else:
-                extra_conds_train = None
             if FLAGS.ctrl_obs:
                 ctrl_obs_train = tf.identity(train_data["ctrl_obs"],
                                              "observed_control")
@@ -281,10 +275,15 @@ def run_model(FLAGS):
                     ctrl_obs_train = tf.atanh(tf.divide(tf.subtract(
                         y_train[:, 1:], y_train[:, :-1], "diff"),
                         max_vel + 1e-8, "standardize"), "arctanh")
+            if FLAGS.extra_conds:
+                extra_conds_train = tf.identity(train_data["extra_conds"],
+                                                "extra_conditions")
+            else:
+                extra_conds_train = None
 
             inputs = {"trajectory": y_train, "states": s_train,
-                      "extra_conds": extra_conds_train,
-                      "ctrl_obs": ctrl_obs_train}
+                      "ctrl_obs": ctrl_obs_train,
+                      "extra_conds": extra_conds_train}
 
         model = game_model(params, inputs, max_vel, FLAGS.extra_dim,
                            FLAGS.n_post_samp)
@@ -294,46 +293,40 @@ def run_model(FLAGS):
                 "PID_params_summary")
 
             Kp_goalie_y = tf.summary.scalar("PID_params/goalie_y/Kp",
-                                            model.u_p.agents[0].Kp[0],
+                                            model.p.agents[0].Kp[0],
                                             collections=PID_summary_key)
             Ki_goalie_y = tf.summary.scalar("PID_params/goalie_y/Ki",
-                                            model.u_p.agents[0].Ki[0],
+                                            model.p.agents[0].Ki[0],
                                             collections=PID_summary_key)
             Kd_goalie_y = tf.summary.scalar("PID_params/goalie_y/Kd",
-                                            model.u_p.agents[0].Kd[0],
+                                            model.p.agents[0].Kd[0],
                                             collections=PID_summary_key)
-            eps_goalie_y = tf.summary.scalar("PID_params/goalie_y/eps",
-                                             model.u_p.agents[0].eps[0, 0],
-                                             collections=PID_summary_key)
             Kp_shooter_x = tf.summary.scalar("PID_params/shooter_x/Kp",
-                                             model.u_p.agents[1].Kp[0],
+                                             model.p.agents[1].Kp[0],
                                              collections=PID_summary_key)
             Ki_shooter_x = tf.summary.scalar("PID_params/shooter_x/Ki",
-                                             model.u_p.agents[1].Ki[0],
+                                             model.p.agents[1].Ki[0],
                                              collections=PID_summary_key)
             Kd_shooter_x = tf.summary.scalar("PID_params/shooter_x/Kd",
-                                             model.u_p.agents[1].Kd[0],
+                                             model.p.agents[1].Kd[0],
                                              collections=PID_summary_key)
-            eps_shooter_x = tf.summary.scalar("PID_params/shooter_x/eps",
-                                              model.u_p.agents[1].eps[0, 0],
-                                              collections=PID_summary_key)
             Kp_shooter_y = tf.summary.scalar("PID_params/shooter_y/Kp",
-                                             model.u_p.agents[1].Kp[1],
+                                             model.p.agents[1].Kp[1],
                                              collections=PID_summary_key)
             Ki_shooter_y = tf.summary.scalar("PID_params/shooter_y/Ki",
-                                             model.u_p.agents[1].Ki[1],
+                                             model.p.agents[1].Ki[1],
                                              collections=PID_summary_key)
             Kd_shooter_y = tf.summary.scalar("PID_params/shooter_y/Kd",
-                                             model.u_p.agents[1].Kd[1],
+                                             model.p.agents[1].Kd[1],
                                              collections=PID_summary_key)
-            eps_shooter_y = tf.summary.scalar("PID_params/shooter_y/eps",
-                                              model.u_p.agents[1].eps[0, 1],
-                                              collections=PID_summary_key)
+            eps = tf.summary.scalar(
+                "PID_params/eps", model.p.agents[0].eps[0, 0],
+                collections=PID_summary_key)
 
             PID_summary = tf.summary.merge(
-                [Kp_goalie_y, Ki_goalie_y, Kd_goalie_y, eps_goalie_y,
-                 Kp_shooter_x, Ki_shooter_x, Kd_shooter_x, eps_shooter_x,
-                 Kp_shooter_y, Ki_shooter_y, Kd_shooter_y, eps_shooter_y],
+                [Kp_goalie_y, Ki_goalie_y, Kd_goalie_y,
+                 Kp_shooter_x, Ki_shooter_x, Kd_shooter_x,
+                 Kp_shooter_y, Ki_shooter_y, Kd_shooter_y, eps],
                 collections=PID_summary_key, name="PID_params_summary")
 
         # Variational Inference (Edward KLqp)
@@ -373,7 +366,7 @@ def run_model(FLAGS):
 
         while True:
             try:
-                feed_dict=None
+                feed_dict = None
                 info_dict = inference.update(feed_dict=feed_dict)
                 add_summary(PID_summary, inference, sess, feed_dict,
                             info_dict["t"])
