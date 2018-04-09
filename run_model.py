@@ -38,6 +38,7 @@ REC_HIDDEN_DIM = 64
 
 SIGMA = 1e-3
 SIGMA_TRAINABLE = False
+SIGMA_PENALTY = 1e3
 GOAL_BOUNDARY_L = -1.
 GOAL_BOUNDARY_U = 1.
 GOAL_BOUNDARY_PENALTY = None
@@ -115,6 +116,7 @@ flags.DEFINE_integer("rec_hidden_dim", REC_HIDDEN_DIM,
 
 flags.DEFINE_float("sigma", SIGMA, "(Initial) value of goal state variance")
 flags.DEFINE_boolean("sigma_trainable", SIGMA_TRAINABLE, "Is sigma trainable")
+flags.DEFINE_float("sigma_pen", SIGMA_PENALTY, "Penalty on large sigma")
 flags.DEFINE_float("g_lb", GOAL_BOUNDARY_L, "Goal state lower boundary")
 flags.DEFINE_float("g_ub", GOAL_BOUNDARY_U, "Goal state upper boundary")
 flags.DEFINE_float("g_bounds_pen", GOAL_BOUNDARY_PENALTY,
@@ -257,7 +259,8 @@ def run_model(FLAGS):
         params = get_model_params(
             FLAGS.game_name, agents, FLAGS.obs_dim, state_dim,
             FLAGS.extra_dim, FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
-            FLAGS.GMM_K, PKLparams, FLAGS.sigma, FLAGS.sigma_trainable,
+            FLAGS.GMM_K, PKLparams,
+            FLAGS.sigma, FLAGS.sigma_trainable, FLAGS.sigma_pen,
             g_bounds, FLAGS.g_bounds_pen, FLAGS.latent_u,
             FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
             penalty_Q, FLAGS.eps, FLAGS.eps_trainable, FLAGS.eps_pen,

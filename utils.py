@@ -343,7 +343,7 @@ def get_accel(traj, max_vel):
 
 def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                      gen_n_layers, gen_hidden_dim, GMM_K, PKLparams,
-                     sigma, sigma_trainable,
+                     sigma, sigma_trainable, sigma_penalty,
                      goal_boundaries, goal_boundary_penalty, latent_ctrl,
                      rec_lag, rec_n_layers, rec_hidden_dim, penalty_Q,
                      epsilon, epsilon_trainable, epsilon_penalty,
@@ -365,19 +365,18 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
 
         priors = []
         for a in agents:
-            PID = get_PID(a["dim"], a["name"])
             priors.append(dict(
                 name=a["name"], col=a["col"], dim=a["dim"],
-                GMM_K=GMM_K,
+                g0=get_g0_params(a["name"], a["dim"], GMM_K),
                 GMM_NN=get_network(
                     "%s_goal_GMM" % a["name"], (state_dim + extra_dim),
                     (GMM_K * a["dim"] * 2 + GMM_K),
                     gen_hidden_dim, gen_n_layers, PKLparams)[0],
-                g0=get_g0_params(a["name"], a["dim"], GMM_K),
-                sigma=sigma_init, sigma_trainable=sigma_trainable,
+                GMM_K=GMM_K, sigma=sigma_init,
+                sigma_trainable=sigma_trainable, sigma_pen=sigma_penalty,
                 g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
-                PID=PID, eps=eps_init, eps_trainable=epsilon_trainable,
-                eps_pen=epsilon_penalty,
+                PID=get_PID(a["dim"], a["name"]), eps=eps_init,
+                eps_trainable=epsilon_trainable, eps_pen=epsilon_penalty,
                 u_error_tol=control_error_tolerance,
                 u_error_pen=control_error_penalty,
                 clip=clip, clip_range=clip_range, clip_tol=clip_tolerance,

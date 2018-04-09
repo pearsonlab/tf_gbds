@@ -56,9 +56,12 @@ class GBDS(RandomVariable, Distribution):
                     self.sigma = tf.multiply(
                         tf.nn.softplus(self.unc_sigma, "softplus"),
                         tf.ones([1, self.dim]), "sigma")
+                    self.sigma_pen = tf.constant(
+                        params["sigma_pen"], tf.float32, name="sigma_penalty")
                 else:
                     self.sigma = tf.multiply(
                         params["sigma"], tf.ones([1, self.dim]), "sigma")
+                    self.sigma_pen = None
 
             with tf.name_scope("goal_state_penalty"):
                 # penalty on goal state escaping boundaries
@@ -291,19 +294,18 @@ class GBDS(RandomVariable, Distribution):
                 logdensity_u -= self.error_pen * tf.reduce_sum(
                     tf.nn.relu(-ctrl_error - self.error_tol), [1, 2])
 
+        logdensity = tf.add(
+            tf.divide(tf.reduce_mean(logdensity_g),
+                      tf.cast(self.Tt, tf.float32)),
+            tf.divide(tf.reduce_mean(logdensity_u),
+                      tf.cast(self.Tt - 1, tf.float32)))
+
         if self.eps_pen is not None:
-            return tf.subtract(
-                tf.add(tf.divide(tf.reduce_mean(logdensity_g),
-                                 tf.cast(self.Tt, tf.float32)),
-                       tf.divide(tf.reduce_mean(logdensity_u),
-                                 tf.cast(self.Tt - 1, tf.float32))),
-                self.eps_pen * tf.reduce_sum(self.unc_eps))
-        else:
-            return tf.add(
-                tf.divide(tf.reduce_mean(logdensity_g),
-                          tf.cast(self.Tt, tf.float32)),
-                tf.divide(tf.reduce_mean(logdensity_u),
-                          tf.cast(self.Tt - 1, tf.float32)))
+            logdensity -= self.eps_pen * tf.reduce_sum(self.unc_eps)
+        if self.sigma_pen is not None:
+            logdensity -= self.sigma_pen * tf.reduce_sum(self.unc_sigma)
+
+        return logdensity
 
     def sample_g0(self, _=None):
         # Sample from initial goal distribution
