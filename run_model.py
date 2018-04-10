@@ -326,10 +326,14 @@ def run_model(FLAGS):
                 "PID_params/eps", model.p.agents[0].eps[0, 0],
                 collections=PID_summary_key)
 
+            sigma = tf.summary.scalar(
+                "PID_params/sigma", model.p.agents[0].sigma[0, 0],
+                collections=PID_summary_key)
+
             PID_summary = tf.summary.merge(
                 [Kp_goalie_y, Ki_goalie_y, Kd_goalie_y,
                  Kp_shooter_x, Ki_shooter_x, Kd_shooter_x,
-                 Kp_shooter_y, Ki_shooter_y, Kd_shooter_y, eps],
+                 Kp_shooter_y, Ki_shooter_y, Kd_shooter_y, eps, sigma],
                 collections=PID_summary_key, name="PID_params_summary")
 
         # Variational Inference (Edward KLqp)
