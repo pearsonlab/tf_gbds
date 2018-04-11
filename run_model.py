@@ -291,50 +291,44 @@ def run_model(FLAGS):
         model = game_model(params, inputs, max_vel, FLAGS.extra_dim,
                            FLAGS.n_post_samp)
 
-        with tf.name_scope("PID_params_summary"):
-            PID_summary_key = tf.get_default_graph().unique_name(
-                "PID_params_summary")
+        with tf.name_scope("parameters_summary"):
+            graph_key = tf.get_default_graph().unique_name("logging")
 
-            Kp_goalie_y = tf.summary.scalar("PID_params/goalie_y/Kp",
-                                            model.p.agents[0].Kp[0],
-                                            collections=PID_summary_key)
-            Ki_goalie_y = tf.summary.scalar("PID_params/goalie_y/Ki",
-                                            model.p.agents[0].Ki[0],
-                                            collections=PID_summary_key)
-            Kd_goalie_y = tf.summary.scalar("PID_params/goalie_y/Kd",
-                                            model.p.agents[0].Kd[0],
-                                            collections=PID_summary_key)
-            Kp_shooter_x = tf.summary.scalar("PID_params/shooter_x/Kp",
-                                             model.p.agents[1].Kp[0],
-                                             collections=PID_summary_key)
-            Ki_shooter_x = tf.summary.scalar("PID_params/shooter_x/Ki",
-                                             model.p.agents[1].Ki[0],
-                                             collections=PID_summary_key)
-            Kd_shooter_x = tf.summary.scalar("PID_params/shooter_x/Kd",
-                                             model.p.agents[1].Kd[0],
-                                             collections=PID_summary_key)
-            Kp_shooter_y = tf.summary.scalar("PID_params/shooter_y/Kp",
-                                             model.p.agents[1].Kp[1],
-                                             collections=PID_summary_key)
-            Ki_shooter_y = tf.summary.scalar("PID_params/shooter_y/Ki",
-                                             model.p.agents[1].Ki[1],
-                                             collections=PID_summary_key)
-            Kd_shooter_y = tf.summary.scalar("PID_params/shooter_y/Kd",
-                                             model.p.agents[1].Kd[1],
-                                             collections=PID_summary_key)
-            eps = tf.summary.scalar(
-                "PID_params/eps", model.p.agents[0].eps[0, 0],
-                collections=PID_summary_key)
+            Kp_goalie_y = tf.summary.scalar(
+                "PID/goalie_y/Kp", model.p.agents[0].Kp[0], graph_key)
+            Ki_goalie_y = tf.summary.scalar(
+                "PID/goalie_y/Ki", model.p.agents[0].Ki[0], graph_key)
+            Kd_goalie_y = tf.summary.scalar(
+                "PID/goalie_y/Kd", model.p.agents[0].Kd[0], graph_key)
+            Kp_shooter_x = tf.summary.scalar(
+                "PID/shooter_x/Kp", model.p.agents[1].Kp[0], graph_key)
+            Ki_shooter_x = tf.summary.scalar(
+                "PID/shooter_x/Ki", model.p.agents[1].Ki[0], graph_key)
+            Kd_shooter_x = tf.summary.scalar(
+                "PID/shooter_x/Kd", model.p.agents[1].Kd[0], graph_key)
+            Kp_shooter_y = tf.summary.scalar(
+                "PID/shooter_y/Kp", model.p.agents[1].Kp[1], graph_key)
+            Ki_shooter_y = tf.summary.scalar(
+                "PID/shooter_y/Ki", model.p.agents[1].Ki[1], graph_key)
+            Kd_shooter_y = tf.summary.scalar(
+                "PID/shooter_y/Kd", model.p.agents[1].Kd[1], graph_key)
+            
+            summary_list = [Kp_goalie_y, Ki_goalie_y, Kd_goalie_y,
+                            Kp_shooter_x, Ki_shooter_x, Kd_shooter_x,
+                            Kp_shooter_y, Ki_shooter_y, Kd_shooter_y]
 
-            sigma = tf.summary.scalar(
-                "PID_params/sigma", model.p.agents[0].sigma[0, 0],
-                collections=PID_summary_key)
+            if FLAGS.sigma_trainable:
+                sigma = tf.summary.scalar(
+                    "sigma", model.p.agents[0].sigma[0, 0], graph_key)
+                summary_list.append(sigma)
 
-            PID_summary = tf.summary.merge(
-                [Kp_goalie_y, Ki_goalie_y, Kd_goalie_y,
-                 Kp_shooter_x, Ki_shooter_x, Kd_shooter_x,
-                 Kp_shooter_y, Ki_shooter_y, Kd_shooter_y, eps, sigma],
-                collections=PID_summary_key, name="PID_params_summary")
+            if FLAGS.eps_trainable:
+                eps = tf.summary.scalar(
+                    "epsilon", model.p.agents[0].eps[0, 0], graph_key)
+                summary_list.append(eps)
+
+            params_summary = tf.summary.merge(
+                summary_list, graph_key, "trainable_parameters")
 
         # Variational Inference (Edward KLqp)
         if FLAGS.profile:
@@ -375,7 +369,7 @@ def run_model(FLAGS):
             try:
                 feed_dict = None
                 info_dict = inference.update(feed_dict=feed_dict)
-                add_summary(PID_summary, inference, sess, feed_dict,
+                add_summary(params_summary, inference, sess, feed_dict,
                             info_dict["t"])
             except tf.errors.OutOfRangeError:
                 break
