@@ -183,7 +183,7 @@ class GBDS(RandomVariable, Distribution):
                 signal = error[:, :, i]
                 # pad the beginning of control signal with zero
                 signal = tf.expand_dims(
-                    tf.pad(signal, [[0, 0], [1, 0]], name="pad_zero"),
+                    tf.pad(signal, [[0, 0], [2, 0]], name="pad_zero"),
                     -1, name="reshape_signal")
                 filt = tf.reshape(self.L[i], [-1, 1, 1], "reshape_filter")
                 res = tf.nn.convolution(signal, filt, padding="VALID",
@@ -238,8 +238,7 @@ class GBDS(RandomVariable, Distribution):
 
     def _log_prob(self, value):
         _, all_lambda, all_w, g_pred, ctrl_error, u_pred = self.get_preds(
-            self.s[:, :-1], tf.concat(
-                [tf.expand_dims(self.y[:, 0], 1, "y0"), self.y[:, :-1]], 1),
+            self.s[:, 1:-1], self.y[:, :-1],
             value, tf.pad(
                 self.ctrl_obs[:, :-1], [[0, 0], [1, 0], [0, 0]],
                 name="previous_control"), self.extra_conds)
@@ -294,11 +293,9 @@ class GBDS(RandomVariable, Distribution):
                 logdensity_u -= self.error_pen * tf.reduce_sum(
                     tf.nn.relu(-ctrl_error - self.error_tol), [1, 2])
 
-        logdensity = tf.add(
-            tf.divide(tf.reduce_mean(logdensity_g),
-                      tf.cast(self.Tt, tf.float32)),
-            tf.divide(tf.reduce_mean(logdensity_u),
-                      tf.cast(self.Tt - 1, tf.float32)))
+        logdensity = tf.divide(
+            tf.reduce_mean(tf.add(logdensity_g, logdensity_u)),
+            tf.cast(self.Tt, tf.float32))
 
         if self.eps_pen is not None:
             logdensity -= self.eps_pen * tf.reduce_sum(self.unc_eps)

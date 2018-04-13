@@ -232,10 +232,12 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
             else:
                 self.lag = 1
 
-            Input_ = Input
+            y0 = [0., -0.58, 0.]
+            Input_ = tf.identity(Input)
             for i in range(self.lag):
                 lagged = tf.concat(
-                    [tf.reshape(Input_[:, 0, :yDim], [-1, 1, yDim], "t0"),
+                    [tf.tile(tf.reshape(y0, [1, 1, yDim]),
+                             [tf.shape(Input_)[0], 1, 1], "t0"),
                      Input_[:, :-1, -yDim:]], 1, "lag")
                 Input_ = tf.concat([Input_, lagged], -1)
 

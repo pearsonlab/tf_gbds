@@ -244,11 +244,13 @@ def load_data(hps):
                 (), tf.string)})
 
         def _read_data(example):
+            y0 = [0., -0.58, 0.]
             parsed_features = tf.parse_single_example(example, features)
             entry = {}
-            entry["trajectory"] = tf.reshape(
-                tf.decode_raw(parsed_features["trajectory"], tf.float32),
-                [-1, hps.obs_dim])
+            entry["trajectory"] = tf.concat(
+                [tf.reshape(y0, [1, hps.obs_dim]),
+                 tf.reshape(tf.decode_raw(parsed_features["trajectory"],
+                                          tf.float32), [-1, hps.obs_dim])], 0)
 
             if "extra_conds" in parsed_features:
                 entry["extra_conds"] = tf.cast(

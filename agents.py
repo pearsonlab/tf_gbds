@@ -26,7 +26,7 @@ class game_model(object):
                 if traj_shape[1] is None:
                     Tt = 2
                 else:
-                    Tt = traj_shape[1]
+                    Tt = traj_shape[1] - 1
                 value_shape = [B, Tt, self.obs_dim]
 
             self.p = joint_GBDS(
@@ -40,7 +40,7 @@ class game_model(object):
                 self.var_list += [params["eps"]]
 
             self.g_q = SmoothingPastLDSTimeSeries(
-                params["g_q_params"], self.traj, self.obs_dim,
+                params["g_q_params"], self.traj[:, 1:], self.obs_dim,
                 self.obs_dim, self.extra_conds, name="recognition")
             self.var_list += self.g_q.params
             self.latent_vars.update({self.p: self.g_q})
