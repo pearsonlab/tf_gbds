@@ -12,7 +12,7 @@ class GBDS(RandomVariable, Distribution):
 
     def __init__(self, params, states, ctrl_obs, extra_conds=None,
                  *args, **kwargs):
- 
+
         name = kwargs.get("name", "GBDS")
         with tf.name_scope(name):
             self.col = params["col"]
@@ -253,7 +253,8 @@ class GBDS(RandomVariable, Distribution):
             gmm_term += (0.5 * tf.reduce_sum(tf.log(1 + all_lambda), -1) -
                          tf.reduce_sum(0.5 * tf.log(2 * np.pi) +
                                        tf.log(self.sigma), -1))
-            logdensity_g += tf.reduce_sum(tf.reduce_logsumexp(gmm_term, -1), -1)
+            logdensity_g += tf.reduce_sum(
+                tf.reduce_logsumexp(gmm_term, -1), -1)
 
         with tf.name_scope("g0"):
             res_g0 = tf.subtract(tf.expand_dims(value[:, 0], 1), self.g0_mu,
@@ -323,8 +324,7 @@ class GBDS(RandomVariable, Distribution):
         state = tf.reshape(state, [1, 1, -1], "reshape_state")
         with tf.name_scope("pad_extra_conds"):
             if extra_conds is not None:
-                state = pad_extra_conds(
-                    state, tf.reshape(extra_conds, [1, -1]))
+                state = pad_extra_conds(state, extra_conds)
 
         with tf.name_scope("mu"):
             all_mu = tf.reshape(

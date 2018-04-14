@@ -252,7 +252,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
         if "allow_nan_stats" not in kwargs:
             kwargs["allow_nan_stats"] = False
 
-        super(SmoothingPastLDSTimeSeries, self).__init__(params, Input_, xDim,
-            yDim, extra_conds, *args, **kwargs)
+        super(SmoothingPastLDSTimeSeries, self).__init__(
+            params, Input_, xDim, yDim, extra_conds, *args, **kwargs)
 
         self._args = (params, Input, xDim, yDim, extra_conds)

@@ -1,6 +1,7 @@
 import tensorflow as tf
 from tf_gbds.GenerativeModel import joint_GBDS
 from tf_gbds.RecognitionModel import SmoothingPastLDSTimeSeries
+from tf_gbds.utils import get_vel, pad_extra_conds
 
 
 class game_model(object):
@@ -49,6 +50,51 @@ class game_model(object):
                 self.g0 = tf.identity(self.p.sample_g0(), "g0")
                 self.g0_samp = tf.identity(self.p.sample_g0(1000),
                                            "samples")
+
+            with tf.name_scope("GMM"):
+                traj_i = tf.placeholder(
+                    tf.float32, [None, None, self.obs_dim], "trajectory")
+                states = get_vel(traj_i, max_vel)
+                if extra_dim != 0:
+                    extra_conds_i = tf.placeholder(tf.float32, extra_dim,
+                                                   "extra_conditions")
+                    states = pad_extra_conds(states, extra_conds_i)
+                with tf.name_scope("goalie"):
+                    goalie = self.p.agents[0]
+                    goalie_mu = tf.reshape(
+                        goalie.GMM_NN(
+                            states[1:])[:, :, :(goalie.K * goalie.dim)],
+                        [tf.shape(traj_i)[0], -1, goalie.K, goalie.dim],
+                        "mu")
+                    goalie_lambda = tf.reshape(
+                        tf.nn.softplus(goalie.GMM_NN(
+                            states[1:])[:, :, (goalie.K * goalie.dim):(
+                                2 * goalie.K * goalie.dim)]),
+                        [tf.shape(traj_i)[0], -1, goalie.K, goalie.dim],
+                        "lambda")
+                    goalie_w = tf.nn.softmax(
+                        tf.reshape(
+                            goalie.GMM_NN(states[1:])[:, :, (
+                                2 * goalie.K * goalie.dim):],
+                            [tf.shape(traj_i)[0], -1, goalie.K]), -1, "w")
+                with tf.name_scope("shooter"):
+                    shooter = self.p.agents[1]
+                    shooter_mu = tf.reshape(
+                        shooter.GMM_NN(
+                            states[1:])[:, :, :(shooter.K * shooter.dim)],
+                        [tf.shape(traj_i)[0], -1, shooter.K, shooter.dim],
+                        "mu")
+                    shooter_lambda = tf.reshape(
+                        tf.nn.softplus(shooter.GMM_NN(
+                            states[1:])[:, :, (shooter.K * shooter.dim):(
+                                2 * shooter.K * shooter.dim)]),
+                        [tf.shape(traj_i)[0], -1, shooter.K, shooter.dim],
+                        "lambda")
+                    shooter_w = tf.nn.softmax(
+                        tf.reshape(
+                            shooter.GMM_NN(states[1:])[:, :, (
+                                2 * shooter.K * shooter.dim):],
+                            [tf.shape(traj_i)[0], -1, shooter.K]), -1, "w")
 
             with tf.name_scope("posterior"):
                 self.g_q_mu = tf.identity(

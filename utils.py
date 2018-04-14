@@ -697,7 +697,8 @@ def pad_extra_conds(data, extra_conds):
         extra_conds = tf.convert_to_tensor(extra_conds, dtype=tf.float32,
                                            name="extra_conds")
         extra_conds_repeat = tf.tile(
-            tf.expand_dims(extra_conds, 1), [1, tf.shape(data)[1], 1],
+            tf.reshape(extra_conds, [1, 1, -1]),
+            [tf.shape(data)[0], tf.shape(data)[1], 1],
             name="repeat_extra_conds")
         padded_data = tf.concat([data, extra_conds_repeat], axis=-1,
                                 name="pad_extra_conds")

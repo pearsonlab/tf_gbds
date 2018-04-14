@@ -312,7 +312,7 @@ def run_model(FLAGS):
                 "PID/shooter_y/Ki", model.p.agents[1].Ki[1], graph_key)
             Kd_shooter_y = tf.summary.scalar(
                 "PID/shooter_y/Kd", model.p.agents[1].Kd[1], graph_key)
-            
+
             summary_list = [Kp_goalie_y, Ki_goalie_y, Kd_goalie_y,
                             Kp_shooter_x, Ki_shooter_x, Kd_shooter_x,
                             Kp_shooter_y, Ki_shooter_y, Kd_shooter_y]
