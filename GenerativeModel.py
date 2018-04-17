@@ -157,17 +157,31 @@ class GBDS(RandomVariable, Distribution):
             if extra_conds is not None:
                 s = pad_extra_conds(s, extra_conds)
 
+        # all_mu = tf.reshape(
+        #     self.GMM_NN(s)[:, :, :(self.K * self.dim)],
+        #     [self.B, -1, self.K, self.dim], "all_mu")
+
+        # all_lambda = tf.reshape(tf.nn.softplus(
+        #     self.GMM_NN(s)[:, :, (self.K * self.dim):(
+        #         2 * self.K * self.dim)], "softplus_lambda"),
+        #     [self.B, -1, self.K, self.dim], "all_lambda")
+
+        # all_w = tf.nn.softmax(tf.reshape(
+        #     self.GMM_NN(s)[:, :, (2 * self.K * self.dim):],
+        #     [self.B, -1, self.K], "reshape_w"), -1, "all_w")
+
+        NN_output = tf.identity(self.GMM_NN(s), "NN_output")
         all_mu = tf.reshape(
-            self.GMM_NN(s)[:, :, :(self.K * self.dim)],
+            NN_output[:, :, :(self.K * self.dim)],
             [self.B, -1, self.K, self.dim], "all_mu")
 
         all_lambda = tf.reshape(tf.nn.softplus(
-            self.GMM_NN(s)[:, :, (self.K * self.dim):(
+            NN_output[:, :, (self.K * self.dim):(
                 2 * self.K * self.dim)], "softplus_lambda"),
             [self.B, -1, self.K, self.dim], "all_lambda")
 
         all_w = tf.nn.softmax(tf.reshape(
-            self.GMM_NN(s)[:, :, (2 * self.K * self.dim):],
+            NN_output[:, :, (2 * self.K * self.dim):],
             [self.B, -1, self.K], "reshape_w"), -1, "all_w")
 
         next_g = tf.divide(
@@ -269,9 +283,9 @@ class GBDS(RandomVariable, Distribution):
             if self.g_pen is not None:
                 # penalty on goal state escaping game space
                 logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(self.bounds[0] - value), [1, 2])
+                    tf.nn.relu(self.bounds[0] - g_pred), [1, 2, 3])
                 logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(value - self.bounds[1]), [1, 2])
+                    tf.nn.relu(g_pred - self.bounds[1]), [1, 2, 3])
 
         logdensity_u = 0.0
         with tf.name_scope("control_signal"):
