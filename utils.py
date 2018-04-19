@@ -353,20 +353,26 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                      clip, clip_range, clip_tolerance, clip_penalty):
 
     with tf.variable_scope("model_parameters"):
-        if sigma_trainable:
-            sigma_init = tf.Variable(
-                sigma, name="unc_sigma", dtype=tf.float32)
-        else:
-            sigma_init = tf.constant(sigma, tf.float32, name="sigma")
-
-        if epsilon_trainable:
-            eps_init = tf.Variable(
-                epsilon, name="unc_eps", dtype=tf.float32)
-        else:
-            eps_init = tf.constant(epsilon, tf.float32, name="epsilon")
-
         priors = []
+
         for a in agents:
+            if sigma_trainable:
+                sigma_init = tf.Variable(
+                    sigma * np.ones((1, a["dim"]), np.float32),
+                    name="unc_sigma")
+            else:
+                sigma_init = tf.constant(
+                    sigma * np.ones((1, a["dim"]), np.float32),
+                    name="sigma")
+            if epsilon_trainable:
+                eps_init = tf.Variable(
+                    epsilon * np.ones((1, a["dim"]), np.float32),
+                    name="unc_eps")
+            else:
+                eps_init = tf.constant(
+                    epsilon * np.ones((1, a["dim"]), np.float32),
+                    name="epsilon")
+
             priors.append(dict(
                 name=a["name"], col=a["col"], dim=a["dim"],
                 g0=get_g0_params(a["name"], a["dim"], GMM_K),
@@ -438,16 +444,20 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
                     M.add(PK_bias)
 
             if i == num_layers - 1:
-                M.add(layers.Dense(
-                    output_dim, activation="linear",
-                    kernel_initializer=tf.random_normal_initializer(
-                        stddev=0.1),
-                    name="Dense_%s" % (i + 1)))
+                # M.add(layers.Dense(
+                #     output_dim, activation="linear",
+                #     kernel_initializer=tf.random_normal_initializer(
+                #         stddev=0.1),
+                #     name="Dense_%s" % (i + 1)))
+                M.add(layers.Dense(output_dim, activation="linear",
+                                   name="Dense_%s" % (i + 1)))
             else:
-                M.add(layers.Dense(
-                    hidden_dim, activation="relu",
-                    kernel_initializer=tf.orthogonal_initializer(),
-                    name="Dense_%s" % (i + 1)))
+                # M.add(layers.Dense(
+                #     hidden_dim, activation="relu",
+                #     kernel_initializer=tf.orthogonal_initializer(),
+                #     name="Dense_%s" % (i + 1)))
+                M.add(layers.Dense(hidden_dim, activation="relu",
+                                   name="Dense_%s" % (i + 1)))
 
         return M, PKbias_layers
 
@@ -554,7 +564,7 @@ def get_PID(dim, name):
         PID = {}
 
         unc_Kp = tf.Variable(
-            softplus_inverse(np.ones(dim, np.float32),
+            softplus_inverse(np.ones(dim, np.float32) * 1e-3,
                              name="unc_Kp_init"),
             dtype=tf.float32, name="unc_Kp")
         unc_Ki = tf.Variable(
@@ -562,9 +572,15 @@ def get_PID(dim, name):
                              name="unc_Ki_init"),
             dtype=tf.float32, name="unc_Ki")
         unc_Kd = tf.Variable(
-            softplus_inverse(np.ones(dim, np.float32) * 1e-6,
+            softplus_inverse(np.ones(dim, np.float32) * 1e-3,
                              name="unc_Kd_init"),
             dtype=tf.float32, name="unc_Kd")
+        # unc_Kp = tf.Variable(
+        #     tf.zeros(dim, tf.float32, "unc_Kp_init"), name="unc_Kp")
+        # unc_Ki = tf.Variable(
+        #     tf.zeros(dim, tf.float32, "unc_Ki_init"), name="unc_Ki")
+        # unc_Kd = tf.Variable(
+        #     tf.zeros(dim, tf.float32, "unc_Kd_init"), name="unc_Kd")
         PID["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
 
         PID["Kp"] = tf.nn.softplus(unc_Kp, "Kp")
@@ -875,6 +891,15 @@ class KLqp_grad_clipnorm(ed.KLqp):
         for grad, var in grads_and_vars:
             if "kernel" in var.name or "bias" in var.name:
                 grad = tf.clip_by_norm(grad, maxnorm, axes=[0])
+                # if self.logging:
+                #     tf.summary.histogram(
+                #         "gradient/" + var.name.replace(':', '/'),
+                #         grad, collections=[self._summary_key])
+                #     tf.summary.scalar(
+                #         "gradient_norm/" + var.name.replace(':', '/'),
+                #         tf.norm(grad), collections=[self._summary_key])
+
+            # self.summarize = tf.summary.merge_all(key=self._summary_key)
 
         with tf.variable_scope(None, default_name="optimizer") as scope:
             self.train = optimizer.apply_gradients(grads_and_vars,

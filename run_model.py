@@ -34,7 +34,7 @@ GEN_N_LAYERS = 3
 GEN_HIDDEN_DIM = 64
 REC_LAG = 10
 REC_N_LAYERS = 3
-REC_HIDDEN_DIM = 64
+REC_HIDDEN_DIM = 32
 
 SIGMA = 1e-3
 SIGMA_TRAINABLE = False
@@ -318,17 +318,34 @@ def run_model(FLAGS):
                             Kp_shooter_y, Ki_shooter_y, Kd_shooter_y]
 
             if FLAGS.sigma_trainable:
-                sigma = tf.summary.scalar(
-                    "sigma", model.p.agents[0].sigma[0, 0], graph_key)
-                summary_list.append(sigma)
+                sigma_goalie_y = tf.summary.scalar(
+                    "sigma/goalie_y", model.p.agents[0].sigma[0, 0],
+                    graph_key)
+                sigma_shooter_x = tf.summary.scalar(
+                    "sigma/shooter_x", model.p.agents[1].sigma[0, 0],
+                    graph_key)
+                sigma_shooter_y = tf.summary.scalar(
+                    "sigma/shooter_y", model.p.agents[1].sigma[0, 1],
+                    graph_key)
+
+                summary_list += [sigma_goalie_y, sigma_shooter_x,
+                                 sigma_shooter_y]
 
             if FLAGS.eps_trainable:
-                eps = tf.summary.scalar(
-                    "epsilon", model.p.agents[0].eps[0, 0], graph_key)
-                summary_list.append(eps)
+                eps_goalie_y = tf.summary.scalar(
+                    "epsilon/goalie_y", model.p.agents[0].eps[0, 0],
+                    graph_key)
+                eps_shooter_x = tf.summary.scalar(
+                    "epsilon/shooter_x", model.p.agents[1].eps[0, 0],
+                    graph_key)
+                eps_shooter_y = tf.summary.scalar(
+                    "epsilon/shooter_y", model.p.agents[1].eps[0, 1],
+                    graph_key)
 
-            params_summary = tf.summary.merge(
-                summary_list, graph_key, "trainable_parameters")
+                summary_list += [eps_goalie_y, eps_shooter_x,
+                                 eps_shooter_y]
+
+            all_summary = tf.summary.merge(summary_list, graph_key)
 
         # Variational Inference (Edward KLqp)
         if FLAGS.profile:
@@ -336,15 +353,16 @@ def run_model(FLAGS):
             run_metadata = tf.RunMetadata()
             inference = KLqp_profile(options, run_metadata, model.latent_vars)
         else:
-            # inference = ed.KLqp(model.latent_vars)
-            inference = KLqp_grad_clipnorm(latent_vars=model.latent_vars)
+            inference = ed.KLqp(model.latent_vars)
+            # inference = KLqp_grad_clipnorm(latent_vars=model.latent_vars)
 
         if FLAGS.opt == "Adam":
             optimizer = tf.train.AdamOptimizer(FLAGS.lr)
         inference.initialize(n_samples=FLAGS.n_samp,
                              var_list=model.var_list,
                              optimizer=optimizer,
-                             logdir=FLAGS.model_dir + "/log")
+                             logdir=FLAGS.model_dir + "/log",
+                             log_vars=model.log_vars)
 
     print("Computational graph constructed.")
 
@@ -369,7 +387,7 @@ def run_model(FLAGS):
             try:
                 feed_dict = None
                 info_dict = inference.update(feed_dict=feed_dict)
-                add_summary(params_summary, inference, sess, feed_dict,
+                add_summary(all_summary, inference, sess, feed_dict,
                             info_dict["t"])
             except tf.errors.OutOfRangeError:
                 break

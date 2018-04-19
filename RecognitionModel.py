@@ -85,6 +85,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             self.params = (self.NN_Mu.variables + self.NN_Lambda.variables +
                            self.NN_LambdaX.variables + [self.A] +
                            [self.QinvChol] + [self.Q0invChol])
+            self.log_vars = self.params
 
         if "name" not in kwargs:
             kwargs["name"] = name

@@ -17,6 +17,7 @@ class game_model(object):
 
             self.latent_vars = {}
             self.var_list = []
+            self.log_vars = []
 
             with tf.name_scope("variable_value_shape"):
                 traj_shape = self.traj.shape.as_list()
@@ -35,15 +36,13 @@ class game_model(object):
                 self.extra_conds, name="prior",
                 value=tf.zeros(value_shape))
             self.var_list += self.p.params
-            if isinstance(params["sigma"], tf.Variable):
-                self.var_list += [params["sigma"]]
-            if isinstance(params["eps"], tf.Variable):
-                self.var_list += [params["eps"]]
+            self.log_vars += self.p.log_vars
 
             self.g_q = SmoothingPastLDSTimeSeries(
                 params["g_q_params"], self.traj[:, 1:], self.obs_dim,
                 self.obs_dim, self.extra_conds, name="recognition")
             self.var_list += self.g_q.params
+            self.log_vars += self.g_q.log_vars
             self.latent_vars.update({self.p: self.g_q})
 
             with tf.name_scope("initial_goal"):

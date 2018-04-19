@@ -33,11 +33,13 @@ class GBDS(RandomVariable, Distribution):
                 self.extra_conds = None
 
             self.params = []
+            self.log_vars = []
             # number of GMM components
             self.K = params["GMM_K"]
             # neural network to generate state-dependent goals
             self.GMM_NN = params["GMM_NN"]
             self.params += self.GMM_NN.variables
+            self.log_vars += self.GMM_NN.variables
 
             with tf.name_scope("g0"):
                 # initial goal distribution
@@ -48,19 +50,19 @@ class GBDS(RandomVariable, Distribution):
                 self.g0_params = ([g0["mu"]] + [g0["unc_lambda"]] +
                                   [g0["unc_w"]])
                 self.params += self.g0_params
+                self.log_vars += ([self.g0_mu] + [self.g0_lambda] +
+                                  [self.g0_w])
 
             with tf.name_scope("goal_state_noise"):
                 # noise coefficient on goal states
                 if params["sigma_trainable"]:
                     self.unc_sigma = params["sigma"]
-                    self.sigma = tf.multiply(
-                        tf.nn.softplus(self.unc_sigma, "softplus"),
-                        tf.ones([1, self.dim]), "sigma")
+                    self.params += [self.unc_sigma]
+                    self.sigma = tf.nn.softplus(self.unc_sigma, "sigma")
                     self.sigma_pen = tf.constant(
                         params["sigma_pen"], tf.float32, name="sigma_penalty")
                 else:
-                    self.sigma = tf.multiply(
-                        params["sigma"], tf.ones([1, self.dim]), "sigma")
+                    self.sigma = tf.identity(params["sigma"], "sigma")
                     self.sigma_pen = None
 
             with tf.name_scope("goal_state_penalty"):
@@ -112,14 +114,12 @@ class GBDS(RandomVariable, Distribution):
                 # noise coefficient on control signals
                 if params["eps_trainable"]:
                     self.unc_eps = params["eps"]
-                    self.eps = tf.multiply(
-                        tf.nn.softplus(self.unc_eps, "softplus"),
-                        tf.ones([1, self.dim]), "epsilon")
+                    self.params += [self.unc_eps]
+                    self.eps = tf.nn.softplus(self.unc_eps, "epsilon")
                     self.eps_pen = tf.constant(
                         params["eps_pen"], tf.float32, name="epsilon_penalty")
                 else:
-                    self.eps = tf.multiply(
-                        params["eps"], tf.ones([1, self.dim]), "epsilon")
+                    self.eps = tf.identity(params["eps"], "epsilon")
                     self.eps_pen = None
             with tf.name_scope("control_signal_penalty"):
                 # penalty on large control error
@@ -270,6 +270,9 @@ class GBDS(RandomVariable, Distribution):
             logdensity_g += tf.reduce_sum(
                 tf.reduce_logsumexp(gmm_term, -1), -1)
 
+            tf.summary.scalar("average_log_density", tf.reduce_mean(
+                tf.reduce_logsumexp(gmm_term, -1)))
+
         with tf.name_scope("g0"):
             res_g0 = tf.subtract(tf.expand_dims(value[:, 0], 1), self.g0_mu,
                                  "g0_residual")
@@ -293,6 +296,10 @@ class GBDS(RandomVariable, Distribution):
             logdensity_u -= tf.reduce_sum(
                 (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
                  u_res ** 2 / (2 * self.eps ** 2)), [1, 2])
+
+            tf.summary.histogram("residual", u_res)
+            tf.summary.scalar("average_log_density", tf.reduce_mean(
+                logdensity_u))
             # logdensity_u -= tf.reduce_sum(
             #     (0.5 * tf.log(2 * np.pi) + tf.log(1e-5) * tf.ones([1, self.dim]) +
             #      u_res ** 2 / (tf.ones([1, self.dim]) * 2 * 1e-5 ** 2)), [1, 2])
@@ -396,8 +403,10 @@ class joint_GBDS(RandomVariable, Distribution):
                 raise TypeError("params must be a list.")
 
             self.params = []
+            self.log_vars = []
             for agent in self.agents:
                 self.params += agent.params
+                self.log_vars += agent.log_vars
 
         if "name" not in kwargs:
             kwargs["name"] = name
