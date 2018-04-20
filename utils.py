@@ -1,14 +1,17 @@
-import tensorflow as tf
 import math
-from scipy.stats import norm
 import numpy as np
+from scipy.stats import norm
+from matplotlib.colors import Normalize
+import tensorflow as tf
 from tensorflow.contrib.distributions import softplus_inverse
 from tensorflow.contrib.keras import layers
 from tensorflow.contrib.keras import models
-from matplotlib.colors import Normalize
-import edward as ed
+from edward import KLqp
 from edward.models import Exponential, Gamma, PointMass
+from edward.util import get_session, get_variables, Progbar, transform
 import six
+import os
+from datetime import datetime
 from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
 
 
@@ -563,24 +566,24 @@ def get_PID(dim, name):
     with tf.variable_scope("%s_PID" % name):
         PID = {}
 
-        unc_Kp = tf.Variable(
-            softplus_inverse(np.ones(dim, np.float32) * 1e-3,
-                             name="unc_Kp_init"),
-            dtype=tf.float32, name="unc_Kp")
-        unc_Ki = tf.Variable(
-            softplus_inverse(np.ones(dim, np.float32) * 1e-3,
-                             name="unc_Ki_init"),
-            dtype=tf.float32, name="unc_Ki")
-        unc_Kd = tf.Variable(
-            softplus_inverse(np.ones(dim, np.float32) * 1e-3,
-                             name="unc_Kd_init"),
-            dtype=tf.float32, name="unc_Kd")
         # unc_Kp = tf.Variable(
-        #     tf.zeros(dim, tf.float32, "unc_Kp_init"), name="unc_Kp")
+        #     softplus_inverse(np.ones(dim, np.float32) * 1e-3,
+        #                      name="unc_Kp_init"),
+        #     dtype=tf.float32, name="unc_Kp")
         # unc_Ki = tf.Variable(
-        #     tf.zeros(dim, tf.float32, "unc_Ki_init"), name="unc_Ki")
+        #     softplus_inverse(np.ones(dim, np.float32) * 1e-3,
+        #                      name="unc_Ki_init"),
+        #     dtype=tf.float32, name="unc_Ki")
         # unc_Kd = tf.Variable(
-        #     tf.zeros(dim, tf.float32, "unc_Kd_init"), name="unc_Kd")
+        #     softplus_inverse(np.ones(dim, np.float32) * 1e-3,
+        #                      name="unc_Kd_init"),
+        #     dtype=tf.float32, name="unc_Kd")
+        unc_Kp = tf.Variable(
+            tf.zeros(dim, tf.float32, "unc_Kp_init"), name="unc_Kp")
+        unc_Ki = tf.Variable(
+            tf.zeros(dim, tf.float32, "unc_Ki_init"), name="unc_Ki")
+        unc_Kd = tf.Variable(
+            tf.zeros(dim, tf.float32, "unc_Kd_init"), name="unc_Kd")
         PID["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
 
         PID["Kp"] = tf.nn.softplus(unc_Kp, "Kp")
@@ -846,7 +849,7 @@ class MultiDatasetMiniBatchIterator(object):
 #         self[key] = value
 
 
-class KLqp_profile(ed.KLqp):
+class KLqp_profile(KLqp):
     def __init__(self, options=None, run_metadata=None, latent_vars=None,
                  data=None):
         super(KLqp_profile, self).__init__(latent_vars=latent_vars, data=data)
@@ -861,7 +864,7 @@ class KLqp_profile(ed.KLqp):
             if isinstance(key, tf.Tensor) and "Placeholder" in key.op.type:
                 feed_dict[key] = value
 
-        sess = ed.get_session()
+        sess = get_session()
         _, t, loss = sess.run([self.train, self.increment_t, self.loss],
                               options=self.options,
                               run_metadata=self.run_metadata,
@@ -878,33 +881,188 @@ class KLqp_profile(ed.KLqp):
         return {"t": t, "loss": loss}
 
 
-class KLqp_grad_clipnorm(ed.KLqp):
-    def __init__(self, n_samples=1, kl_scaling=None, *args, **kwargs):
-        super(KLqp_grad_clipnorm, self).__init__(*args, **kwargs)
+class KLqp_clipgrads(KLqp):
+    def __init__(self, *args, **kwargs):
+        super(KLqp_clipgrads, self).__init__(*args, **kwargs)
 
-    def initialize(self, var_list, optimizer, global_step=None,
-                   maxnorm=5., *args, **kwargs):
-        super(KLqp_grad_clipnorm, self).initialize(*args, **kwargs)
+    def initialize(
+        self, n_iter=1000, n_print=None, scale=None, auto_transform=True,
+        logdir=None, log_timestamp=True, log_vars=None, debug=False,
+        optimizer=None, var_list=None, use_prettytensor=False,
+        global_step=None, n_samples=1, kl_scaling=None, maxnorm=5.):
+
+        if kl_scaling is None:
+            kl_scaling = {}
+        if n_samples <= 0:
+            raise ValueError(
+                "n_samples should be greater than zero: {}".format(n_samples))
+
+        self.n_samples = n_samples
+        self.kl_scaling = kl_scaling
+
+        # from inference.py
+        self.n_iter = n_iter
+        if n_print is None:
+            self.n_print = int(n_iter / 100)
+        else:
+            self.n_print = n_print
+
+        self.progbar = Progbar(self.n_iter)
+        self.t = tf.Variable(0, trainable=False, name="iteration")
+        self.increment_t = self.t.assign_add(1)
+
+        if scale is None:
+            scale = {}
+        elif not isinstance(scale, dict):
+            raise TypeError("scale must be a dict object.")
+        self.scale = scale
+
+        self.transformations = {}
+        if auto_transform:
+            latent_vars = self.latent_vars.copy()
+            self.latent_vars = {}
+            self.latent_vars_unconstrained = {}
+            for z, qz in six.iteritems(latent_vars):
+                if hasattr(z, 'support') and hasattr(qz, 'support') and \
+                        z.support != qz.support and qz.support != 'point':
+
+                    z_unconstrained = transform(z)
+                    self.transformations[z] = z_unconstrained
+
+                    if qz.support == "points":
+                        qz_unconstrained = qz
+                    else:
+                        qz_unconstrained = transform(qz)
+                    self.latent_vars_unconstrained[z_unconstrained] = \
+                            qz_unconstrained
+
+                    if z_unconstrained != z:
+                        qz_constrained = transform(
+                            qz_unconstrained,
+                            bijectors.Invert(z_unconstrained.bijector))
+
+                        try:
+                            qz_constrained.params = \
+                                    z_unconstrained.bijector.inverse(
+                                        qz_unconstrained.params)
+                        except:
+                            pass
+                    else:
+                        qz_constrained = qz_unconstrained
+
+                    self.latent_vars[z] = qz_constrained
+                else:
+                    self.latent_vars[z] = qz
+                    self.latent_vars_unconstrained[z] = qz
+            del latent_vars
+
+        if logdir is not None:
+            self.logging = True
+            if log_timestamp:
+                logdir = os.path.expanduser(logdir)
+                logdir = os.path.join(
+                    logdir,
+                    datetime.strftime(datetime.utcnow(), "%Y%m%d_%H%M%S"))
+
+            self._summary_key = tf.get_default_graph().unique_name(
+                "summaries")
+            self._set_log_variables(log_vars)
+            self.train_writer = tf.summary.FileWriter(
+                logdir, tf.get_default_graph())
+        else:
+            self.logging = False
+
+        self.debug = debug
+        if self.debug:
+            self.op_check = tf.add_check_numerics_ops()
+
+        self.reset = [tf.variables_initializer([self.t])]
+
+        # from variational_inference.py
+        if var_list is None:
+            var_list = set()
+            trainables = tf.trainable_variables()
+            for z, qz in six.iteritems(self.latent_vars):
+                var_list.update(get_variables(z, collection=trainables))
+                var_list.update(get_variables(qz, collection=trainables))
+
+            for x, qx in six.iteritems(self.data):
+                if isinstance(x, RandomVariable) and \
+                        not isinstance(qx, RandomVariable):
+                    var_list.update(get_variables(x, collection=trainables))
+
+        var_list = list(var_list)
 
         self.loss, grads_and_vars = self.build_loss_and_gradients(var_list)
 
+        clipped_grads_and_vars = []
+        # for grad, var in grads_and_vars:
+        #     if "kernel" in var.name or "bias" in var.name:
+        #         clipped_grads_and_vars.append(
+        #             (tf.clip_by_norm(grad, maxnorm, axes=[0]), var))
+        #     else:
+        #         clipped_grads_and_vars.append((grad, var))
         for grad, var in grads_and_vars:
-            if "kernel" in var.name or "bias" in var.name:
-                grad = tf.clip_by_norm(grad, maxnorm, axes=[0])
-                # if self.logging:
-                #     tf.summary.histogram(
-                #         "gradient/" + var.name.replace(':', '/'),
-                #         grad, collections=[self._summary_key])
-                #     tf.summary.scalar(
-                #         "gradient_norm/" + var.name.replace(':', '/'),
-                #         tf.norm(grad), collections=[self._summary_key])
+            clipped_grads_and_vars.append(
+                (tf.clip_by_value(grad, -1000., 1000.), var))
+        del grads_and_vars
 
-            # self.summarize = tf.summary.merge_all(key=self._summary_key)
+        if self.logging:
+            tf.summary.scalar(
+                "loss", self.loss, collections=[self._summary_key])
+        for grad, var in clipped_grads_and_vars:
+            tf.summary.histogram("gradient/" +
+                                 var.name.replace(':', '/'),
+                                 grad, collections=[self._summary_key])
+            tf.summary.scalar("gradient_norm/" +
+                              var.name.replace(':', '/'),
+                              tf.norm(grad), collections=[self._summary_key])
+
+        self.summarize = tf.summary.merge_all(key=self._summary_key)
+
+        if optimizer is None and global_step is None:
+            global_step = tf.Variable(0, trainable=False, name="global_step")
+
+        if isinstance(global_step, tf.Variable):
+            starter_learning_rate = 0.1
+            learning_rate = tf.train.exponential_decay(
+                starter_learning_rate, global_step, 100, 0.9, staircase=True)
+        else:
+            learning_rate = 0.01
+
+        # Build optimizer.
+        if optimizer is None:
+            optimizer = tf.train.AdamOptimizer(learning_rate)
+        elif isinstance(optimizer, str):
+            if optimizer == 'gradientdescent':
+                optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+            elif optimizer == 'adadelta':
+                optimizer = tf.train.AdadeltaOptimizer(learning_rate)
+            elif optimizer == 'adagrad':
+                optimizer = tf.train.AdagradOptimizer(learning_rate)
+            elif optimizer == 'momentum':
+                optimizer = tf.train.MomentumOptimizer(learning_rate, 0.9)
+            elif optimizer == 'adam':
+                optimizer = tf.train.AdamOptimizer(learning_rate)
+            elif optimizer == 'ftrl':
+                optimizer = tf.train.FtrlOptimizer(learning_rate)
+            elif optimizer == 'rmsprop':
+                optimizer = tf.train.RMSPropOptimizer(learning_rate)
+            else:
+                raise ValueError('Optimizer class not found:', optimizer)
+        elif not isinstance(optimizer, tf.train.Optimizer):
+            raise TypeError(
+                "Optimizer must be str, tf.train.Optimizer, or None.")
 
         with tf.variable_scope(None, default_name="optimizer") as scope:
-            self.train = optimizer.apply_gradients(grads_and_vars,
-                                                   global_step=global_step)
+            if not use_prettytensor:
+                self.train = optimizer.apply_gradients(
+                    clipped_grads_and_vars, global_step=global_step)
+            else:
+                import prettytensor as pt
+                self.train = pt.apply_optimizer(
+                    optimizer, losses=[self.loss],
+                    global_step=global_step, var_list=var_list)
 
-        self.reset.append(tf.variables_initializer(
-            tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES,
-                              scope=scope.name)))
+        self.reset.append(tf.variables_initializer(tf.get_collection(
+            tf.GraphKeys.GLOBAL_VARIABLES, scope=scope.name)))

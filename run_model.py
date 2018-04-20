@@ -5,7 +5,7 @@ import edward as ed
 from tf_gbds.agents import game_model
 from tf_gbds.utils import (load_data, get_max_velocities, get_vel, get_accel,
                            get_model_params, pad_batch, add_summary,
-                           KLqp_profile, KLqp_grad_clipnorm)
+                           KLqp_profile, KLqp_clipgrads)
 import time
 from tensorflow.python.client import timeline
 
@@ -353,8 +353,8 @@ def run_model(FLAGS):
             run_metadata = tf.RunMetadata()
             inference = KLqp_profile(options, run_metadata, model.latent_vars)
         else:
-            inference = ed.KLqp(model.latent_vars)
-            # inference = KLqp_grad_clipnorm(latent_vars=model.latent_vars)
+            # inference = ed.KLqp(model.latent_vars)
+            inference = KLqp_clipgrads(latent_vars=model.latent_vars)
 
         if FLAGS.opt == "Adam":
             optimizer = tf.train.AdamOptimizer(FLAGS.lr)
