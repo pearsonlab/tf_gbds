@@ -144,8 +144,8 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
 
             with tf.name_scope("diagonal_blocks"):
                 self.AA = tf.add(self.Lambda + tf.pad(
-                    self.LambdaX, [[0, 0], [1, 0], [0, 0], [0, 0]]) +
-                    AQinvArepPlusQ, 1e-6 * tf.eye(self.xDim), "diagonal")
+                    self.LambdaX, [[0, 0], [1, 0], [0, 0], [0, 0]]),
+                    AQinvArepPlusQ, "diagonal")
             with tf.name_scope("off-diagonal_blocks"):
                 self.BB = tf.add(tf.matmul(
                     self.LambdaChol[:, :-1],
@@ -238,8 +238,8 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
             for i in range(self.lag):
                 lagged = tf.concat(
                     [tf.tile(tf.reshape(y0, [1, 1, yDim]),
-                             [tf.shape(Input_)[0], 1, 1], "t0"),
-                     Input_[:, :-1, -yDim:]], 1, "lag")
+                             [tf.shape(Input_)[0], 1, 1]),
+                     Input_[:, :-1, -yDim:]], 1, "lagged")
                 Input_ = tf.concat([Input_, lagged], -1)
 
         if "name" not in kwargs:

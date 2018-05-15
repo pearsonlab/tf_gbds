@@ -1,12 +1,12 @@
 import os
+import math
 import tensorflow as tf
-# import numpy as np
 import edward as ed
 from tf_gbds.agents import game_model
 from tf_gbds.utils import (load_data, get_max_velocities, get_vel, get_accel,
                            get_model_params, pad_batch, add_summary,
                            KLqp_profile, KLqp_clipgrads)
-import time
+# import time
 from tensorflow.python.client import timeline
 
 
@@ -36,20 +36,16 @@ REC_LAG = 10
 REC_N_LAYERS = 3
 REC_HIDDEN_DIM = 32
 
-SIGMA = 1e-3
+SIGMA = -7.
 SIGMA_TRAINABLE = False
 SIGMA_PENALTY = 1e3
 GOAL_BOUNDARY_L = -1.
 GOAL_BOUNDARY_U = 1.
 GOAL_BOUNDARY_PENALTY = None
 
-# CONTROL_RESIDUAL_TOLERANCE = 1e-5
-# CONTROL_RESIDUAL_PENALTY = 1e8
-EPSILON = 1e-5
+EPSILON = -11.
 EPSILON_TRAINABLE = False
 EPSILON_PENALTY = 1e5
-CONTROL_ERROR_TOLERANCE = .5
-CONTROL_ERROR_PENALTY = None
 LATENT_CONTROL = False
 CLIP = False
 CLIP_RANGE_L = -1.
@@ -57,6 +53,7 @@ CLIP_RANGE_U = 1.
 CLIP_TOLERANCE = 1e-5
 CLIP_PENALTY = 1e8
 
+SEED = 1234
 OPTIMIZER = "Adam"
 LEARNING_RATE = 1e-3
 N_EPOCHS = 500
@@ -114,7 +111,8 @@ flags.DEFINE_integer("rec_hidden_dim", REC_HIDDEN_DIM,
                      "Number of hidden units in each dense layer of \
                      neural networks (recognition model)")
 
-flags.DEFINE_float("sigma", SIGMA, "(Initial) value of goal state variance")
+flags.DEFINE_float("sigma_init", SIGMA,
+                   "Initial value of unconstrained goal state variance")
 flags.DEFINE_boolean("sigma_trainable", SIGMA_TRAINABLE, "Is sigma trainable")
 flags.DEFINE_float("sigma_pen", SIGMA_PENALTY, "Penalty on large sigma")
 flags.DEFINE_float("g_lb", GOAL_BOUNDARY_L, "Goal state lower boundary")
@@ -122,18 +120,11 @@ flags.DEFINE_float("g_ub", GOAL_BOUNDARY_U, "Goal state upper boundary")
 flags.DEFINE_float("g_bounds_pen", GOAL_BOUNDARY_PENALTY,
                    "Penalty on goal states escaping boundaries")
 
-# flags.DEFINE_float("u_res_tol", CONTROL_RESIDUAL_TOLERANCE,
-#                    "Tolerance of control signal residual")
-# flags.DEFINE_float("u_res_pen", CONTROL_RESIDUAL_PENALTY,
-#                    "Penalty on control signal residual")
-flags.DEFINE_float("eps", EPSILON, "(Initial) value of control signal noise")
+flags.DEFINE_float("eps_init", EPSILON,
+                   "Initial value of unconstrained control signal noise")
 flags.DEFINE_boolean("eps_trainable", EPSILON_TRAINABLE,
                      "Is epsilon trainable")
 flags.DEFINE_float("eps_pen", EPSILON_PENALTY, "Penalty on large epsilon")
-flags.DEFINE_float("u_error_tol", CONTROL_ERROR_TOLERANCE,
-                   "Tolerance of control error (input to PID control model)")
-flags.DEFINE_float("u_error_pen", CONTROL_ERROR_PENALTY,
-                   "Penalty on large control errors")
 flags.DEFINE_boolean("latent_u", LATENT_CONTROL, "Is the true control signal \
                      modeled as latent variable")
 flags.DEFINE_boolean("clip", CLIP, "Is the observed control signal censored")
@@ -146,6 +137,7 @@ flags.DEFINE_float("clip_tol", CLIP_TOLERANCE,
 flags.DEFINE_float("clip_pen", CLIP_PENALTY,
                    "Penalty on control signal censoring")
 
+flags.DEFINE_integer("seed", SEED, "Random seed")
 flags.DEFINE_string("opt", OPTIMIZER, "Gradient descent optimizer")
 flags.DEFINE_float("lr", LEARNING_RATE, "Initial learning rate")
 flags.DEFINE_integer("n_epochs", N_EPOCHS, "Number of iterations algorithm \
@@ -162,6 +154,8 @@ flags.DEFINE_integer("freq_ckpt", FREQ_CKPT, "Frequency of saving \
 
 FLAGS = flags.FLAGS
 
+ed.set_seed(FLAGS.seed)
+
 
 def run_model(FLAGS):
     if not os.path.exists(FLAGS.model_dir):
@@ -169,19 +163,20 @@ def run_model(FLAGS):
 
     # Check provided agent information
     agent_name = FLAGS.agent_name.split(",")
-    assert len(agent_name) == FLAGS.n_agents, "The length of name list \
-        %i does not match the number of agents %i" % (len(agent_name),
-                                                      FLAGS.n_agents)
+    assert len(agent_name) == FLAGS.n_agents, \
+        "The length of name list %i does not match number of agents %i." % (
+            len(agent_name), FLAGS.n_agents)
 
     agent_col = [[int(c) for c in a.split(",")]
                  for a in FLAGS.agent_col.split(";")]
-    assert len(agent_col) == FLAGS.n_agents, "The length of column list \
-        %i does not match the number of agents %i" % (len(agent_col),
-                                                      FLAGS.n_agents)
+    assert len(agent_col) == FLAGS.n_agents, \
+        "The length of column list %i does not match number of agents %i." % (
+            len(agent_col), FLAGS.n_agents)
 
     agent_dim = [len(a) for a in agent_col]
-    assert sum(agent_dim) <= FLAGS.obs_dim, "The modeling dimension \
-        exceeds observed: %i > %i" % (sum(agent_dim), FLAGS.obs_dim)
+    assert sum(agent_dim) <= FLAGS.obs_dim, \
+        "The modeling dimension exceeds observed: %i > %i" % (
+            sum(agent_dim), FLAGS.obs_dim)
 
     agents = []
     for i in range(FLAGS.n_agents):
@@ -210,25 +205,13 @@ def run_model(FLAGS):
     else:
         clip_range = None
 
-    # epoch = tf.placeholder(tf.int32, name="epoch")
-    # with tf.name_scope("penalty"):
-    #     u_res_pen_t = tf.multiply(
-    #         FLAGS.u_res_pen, tf.to_float(10 ** tf.minimum(epoch // 20, 3)),
-    #         "control_residual_penalty")
-    #     u_res_tol_t = tf.divide(
-    #         FLAGS.u_res_tol, tf.to_float(10 ** tf.minimum(epoch // 10, 5)),
-    #         "control_residual_tolerance")
-
     print("--------------Generative Parameters---------------")
     print("Number of GMM components: %i" % FLAGS.GMM_K)
     print("Number of layers in neural networks: %i" % FLAGS.gen_n_layers)
     print("Dimensions of hidden layers: %i" % FLAGS.gen_hidden_dim)
     if FLAGS.g_bounds_pen is not None:
-        print("Penalty on goal states leaving boundary (Generative): %i"
+        print("Penalty on goal states leaving boundary: %i"
               % FLAGS.g_bounds_pen)
-    if FLAGS.u_error_pen is not None:
-        print("Penalty on large control errors (Generative): %i"
-              % FLAGS.u_error_pen)
 
     print("--------------Recognition Parameters--------------")
     print("Number of layers in neural networks: %i" % FLAGS.rec_n_layers)
@@ -236,125 +219,138 @@ def run_model(FLAGS):
     print("Lag of input: %i" % FLAGS.rec_lag)
 
     with tf.device("/cpu:0"):
+        epoch = tf.placeholder(tf.int64, name="epoch")
         with tf.name_scope("data"):
             with tf.name_scope("load_data"):
                 train_set = load_data(FLAGS)
                 print("Data loaded.")
 
             with tf.name_scope("get_max_velocities"):
-                max_vel = get_max_velocities([train_set], FLAGS.obs_dim)
+                max_vel, n_trials = get_max_velocities(
+                    [train_set], FLAGS.obs_dim)
                 print("The maximum velocity is %s." % max_vel)
+                print("The training set contains %i trials." % n_trials)
 
-            with tf.name_scope("get_iterator"):
-                with tf.name_scope("training_set"):
-                    train_set = train_set.shuffle(buffer_size=100000)
-                    train_set = train_set.apply(
-                        tf.contrib.data.batch_and_drop_remainder(FLAGS.B))
-                    # if FLAGS.B > 1:
-                    #     train_set = train_set.map(_pad_data)
-                    train_iterator = train_set.make_initializable_iterator(
-                        "training_iterator")
-                    train_data = train_iterator.get_next("training_data")
+            with tf.name_scope("training_set"):
+                train_set = train_set.shuffle(buffer_size=100000)
+                train_set = train_set.apply(
+                    tf.contrib.data.batch_and_drop_remainder(FLAGS.B))
+                # if FLAGS.B > 1:
+                #     train_set = train_set.map(_pad_data)
+                train_set = train_set.repeat(FLAGS.n_epochs)
+                train_iterator = train_set.make_one_shot_iterator()
+
+                if FLAGS.extra_conds and FLAGS.ctrl_obs:
+                    (trajectory, extra_conds, ctrl_obs) = \
+                          train_iterator.get_next("training_data")
+                elif FLAGS.extra_conds:
+                    (trajectory, extra_conds) = train_iterator.get_next(
+                        "training_data")
+                    ctrl_obs = None
+                elif FLAGS.ctrl_obs:
+                    (trajectory, ctrl_obs) = train_iterator.get_next(
+                        "training_data")
+                    extra_conds = None
+                else:
+                    (trajectory,) = train_iterator.get_next("training_data")
+                    extra_conds = None
+                    ctrl_obs = None
+
+            with tf.name_scope("inputs"):
+                y_train = tf.identity(trajectory, "trajectory")
+                s_train = tf.identity(get_state(y_train, max_vel), "states")
+
+                if ctrl_obs is not None:
+                    ctrl_obs_train = tf.identity(
+                        ctrl_obs, "observed_control")
+                else:
+                    with tf.name_scope("observed_control"):
+                        ctrl_obs_train = tf.atanh(tf.divide(tf.subtract(
+                            y_train[:, 1:], y_train[:, :-1], "diff"),
+                            max_vel, "standardize"), "arctanh")
+
+                if extra_conds is not None:
+                    extra_conds_train = tf.identity(
+                        extra_conds, "extra_conditions")
+                else:
+                    extra_conds_train = None
+
+                inputs = {"trajectory": y_train, "states": s_train,
+                          "ctrl_obs": ctrl_obs_train,
+                          "extra_conds": extra_conds_train}
 
         params = get_model_params(
             FLAGS.game_name, agents, FLAGS.obs_dim, state_dim,
             FLAGS.extra_dim, FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
             FLAGS.GMM_K, PKLparams,
-            FLAGS.sigma, FLAGS.sigma_trainable, FLAGS.sigma_pen,
+            FLAGS.sigma_init, FLAGS.sigma_trainable, FLAGS.sigma_pen,
             g_bounds, FLAGS.g_bounds_pen, FLAGS.latent_u,
             FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
-            penalty_Q, FLAGS.eps, FLAGS.eps_trainable, FLAGS.eps_pen,
-            FLAGS.u_error_tol, FLAGS.u_error_pen,
-            FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen)
-
-        with tf.name_scope("inputs"):
-            y_train = tf.identity(train_data["trajectory"], "trajectory")
-            s_train = tf.identity(get_state(y_train, max_vel), "states")
-            if FLAGS.ctrl_obs:
-                ctrl_obs_train = tf.identity(train_data["ctrl_obs"],
-                                             "observed_control")
-            else:
-                with tf.name_scope("observed_control"):
-                    ctrl_obs_train = tf.atanh(tf.divide(tf.subtract(
-                        y_train[:, 1:], y_train[:, :-1], "diff"),
-                        max_vel + 1e-8, "standardize"), "arctanh")
-            if FLAGS.extra_conds:
-                extra_conds_train = tf.identity(train_data["extra_conds"],
-                                                "extra_conditions")
-            else:
-                extra_conds_train = None
-
-            inputs = {"trajectory": y_train, "states": s_train,
-                      "ctrl_obs": ctrl_obs_train,
-                      "extra_conds": extra_conds_train}
+            penalty_Q, FLAGS.eps_init, FLAGS.eps_trainable, FLAGS.eps_pen,
+            FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen, epoch)
 
         model = game_model(params, inputs, max_vel, FLAGS.extra_dim,
                            FLAGS.n_post_samp)
 
         with tf.name_scope("parameters_summary"):
-            graph_key = tf.get_default_graph().unique_name("logging")
+            summary_list = []
 
             Kp_goalie_y = tf.summary.scalar(
-                "PID/goalie_y/Kp", model.p.agents[0].Kp[0], graph_key)
+                "PID/goalie_y/Kp", model.p.agents[0].Kp[0])
             Ki_goalie_y = tf.summary.scalar(
-                "PID/goalie_y/Ki", model.p.agents[0].Ki[0], graph_key)
+                "PID/goalie_y/Ki", model.p.agents[0].Ki[0])
             Kd_goalie_y = tf.summary.scalar(
-                "PID/goalie_y/Kd", model.p.agents[0].Kd[0], graph_key)
+                "PID/goalie_y/Kd", model.p.agents[0].Kd[0])
             Kp_shooter_x = tf.summary.scalar(
-                "PID/shooter_x/Kp", model.p.agents[1].Kp[0], graph_key)
+                "PID/shooter_x/Kp", model.p.agents[1].Kp[0])
             Ki_shooter_x = tf.summary.scalar(
-                "PID/shooter_x/Ki", model.p.agents[1].Ki[0], graph_key)
+                "PID/shooter_x/Ki", model.p.agents[1].Ki[0])
             Kd_shooter_x = tf.summary.scalar(
-                "PID/shooter_x/Kd", model.p.agents[1].Kd[0], graph_key)
+                "PID/shooter_x/Kd", model.p.agents[1].Kd[0])
             Kp_shooter_y = tf.summary.scalar(
-                "PID/shooter_y/Kp", model.p.agents[1].Kp[1], graph_key)
+                "PID/shooter_y/Kp", model.p.agents[1].Kp[1])
             Ki_shooter_y = tf.summary.scalar(
-                "PID/shooter_y/Ki", model.p.agents[1].Ki[1], graph_key)
+                "PID/shooter_y/Ki", model.p.agents[1].Ki[1])
             Kd_shooter_y = tf.summary.scalar(
-                "PID/shooter_y/Kd", model.p.agents[1].Kd[1], graph_key)
+                "PID/shooter_y/Kd", model.p.agents[1].Kd[1])
 
-            summary_list = [Kp_goalie_y, Ki_goalie_y, Kd_goalie_y,
-                            Kp_shooter_x, Ki_shooter_x, Kd_shooter_x,
-                            Kp_shooter_y, Ki_shooter_y, Kd_shooter_y]
+            summary_list += [Kp_goalie_y, Ki_goalie_y, Kd_goalie_y,
+                             Kp_shooter_x, Ki_shooter_x, Kd_shooter_x,
+                             Kp_shooter_y, Ki_shooter_y, Kd_shooter_y]
 
             if FLAGS.sigma_trainable:
                 sigma_goalie_y = tf.summary.scalar(
-                    "sigma/goalie_y", model.p.agents[0].sigma[0, 0],
-                    graph_key)
+                    "sigma/goalie_y", model.p.agents[0].sigma[0, 0])
                 sigma_shooter_x = tf.summary.scalar(
-                    "sigma/shooter_x", model.p.agents[1].sigma[0, 0],
-                    graph_key)
+                    "sigma/shooter_x", model.p.agents[1].sigma[0, 0])
                 sigma_shooter_y = tf.summary.scalar(
-                    "sigma/shooter_y", model.p.agents[1].sigma[0, 1],
-                    graph_key)
+                    "sigma/shooter_y", model.p.agents[1].sigma[0, 1])
 
                 summary_list += [sigma_goalie_y, sigma_shooter_x,
                                  sigma_shooter_y]
 
             if FLAGS.eps_trainable:
                 eps_goalie_y = tf.summary.scalar(
-                    "epsilon/goalie_y", model.p.agents[0].eps[0, 0],
-                    graph_key)
+                    "epsilon/goalie_y", model.p.agents[0].eps[0, 0])
                 eps_shooter_x = tf.summary.scalar(
-                    "epsilon/shooter_x", model.p.agents[1].eps[0, 0],
-                    graph_key)
+                    "epsilon/shooter_x", model.p.agents[1].eps[0, 0])
                 eps_shooter_y = tf.summary.scalar(
-                    "epsilon/shooter_y", model.p.agents[1].eps[0, 1],
-                    graph_key)
+                    "epsilon/shooter_y", model.p.agents[1].eps[0, 1])
 
                 summary_list += [eps_goalie_y, eps_shooter_x,
                                  eps_shooter_y]
 
-            all_summary = tf.summary.merge(summary_list, graph_key)
+            all_summary = tf.summary.merge(summary_list)
 
         # Variational Inference (Edward KLqp)
         if FLAGS.profile:
             options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
             run_metadata = tf.RunMetadata()
-            inference = KLqp_profile(options, run_metadata, model.latent_vars)
+            inference = KLqp_profile(options, run_metadata,
+                                     model.latent_vars)
         else:
-            # inference = ed.KLqp(model.latent_vars)
-            inference = KLqp_clipgrads(latent_vars=model.latent_vars)
+            inference = ed.KLqp(model.latent_vars)
+            # inference = KLqp_clipgrads(latent_vars=model.latent_vars)
 
         if FLAGS.opt == "Adam":
             optimizer = tf.train.AdamOptimizer(FLAGS.lr)
@@ -377,35 +373,37 @@ def run_model(FLAGS):
         seso_saver.restore(sess, FLAGS.saved_model_dir)
         print("Parameters saved in %s restored." % FLAGS.saved_model_dir)
 
-    for i in range(FLAGS.n_epochs):
-        if i == 0 or (i + 1) % 5 == 0:
-            print("Entering epoch %i ..." % (i + 1))
+    print("Training initiated.")
 
-        train_iterator.initializer.run()
+    step = 0
+    while True:
+        try:
+            feed_dict = {epoch: math.ceil((step + 1) / n_trials)}
+            info_dict = inference.update(feed_dict=feed_dict)
 
-        while True:
-            try:
-                feed_dict = None
-                info_dict = inference.update(feed_dict=feed_dict)
-                add_summary(all_summary, inference, sess, feed_dict,
-                            info_dict["t"])
-            except tf.errors.OutOfRangeError:
-                break
+            step = info_dict["t"]
+            add_summary(all_summary, inference, sess, feed_dict, step)
 
-        if (i + 1) % FLAGS.freq_ckpt == 0:
-            seso_saver.save(sess, FLAGS.model_dir + "/saved_model",
-                            global_step=(i + 1),
-                            latest_filename="checkpoint")
-            print("Model saved after epoch %i." % (i + 1))
+            if step % (5 * n_trials) == 0:
+                print("%i epochs finished." % int(step / n_trials))
 
-    if FLAGS.profile:
-        fetched_timeline = timeline.Timeline(run_metadata.step_stats)
-        chrome_trace = fetched_timeline.generate_chrome_trace_format()
-        # use absolute path for FLAGS.model_dir
-        with open(FLAGS.model_dir + "/timeline_01_step_%d.json" %
-                  (i + 1), "w") as f:
-            f.write(chrome_trace)
-            f.close()
+            if step % (FLAGS.freq_ckpt * n_trials) == 0:
+                seso_saver.save(sess, FLAGS.model_dir + "/saved_model",
+                                global_step=int(step / n_trials),
+                                latest_filename="checkpoint")
+                print("Model saved after epoch %i." % int(step / n_trials))
+
+        except tf.errors.OutOfRangeError:
+            break
+
+    # if FLAGS.profile:
+    #     fetched_timeline = timeline.Timeline(run_metadata.step_stats)
+    #     chrome_trace = fetched_timeline.generate_chrome_trace_format()
+    #     # use absolute path for FLAGS.model_dir
+    #     with open(FLAGS.model_dir + "/timeline_01_step_%d.json" %
+    #               step, "w") as f:
+    #         f.write(chrome_trace)
+    #         f.close()
 
     seso_saver.save(sess, FLAGS.model_dir + "/final_model")
     inference.finalize()

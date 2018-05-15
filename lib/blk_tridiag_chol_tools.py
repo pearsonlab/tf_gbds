@@ -92,9 +92,9 @@ def blk_chol_inv(A, B, b, lower=True, transpose=False):
         X = tf.concat([tf.expand_dims(x0, 1), X], 1)
     else:
         xN = tf.matrix_solve(A[:, -1], b[:, -1])
-        X = tf.scan(_step, [tf.transpose(A[:, :-1, ::-1], perm=[1, 0, 2, 3]),
-                            tf.transpose(B[:, ::-1], perm=[1, 0, 2, 3]),
-                            tf.transpose(b[:, :-1, ::-1], perm=[1, 0, 2, 3])],
+        X = tf.scan(_step, [tf.transpose(A[:, :-1], perm=[1, 0, 2, 3])[::-1],
+                            tf.transpose(B, perm=[1, 0, 2, 3])[::-1],
+                            tf.transpose(b[:, :-1], perm=[1, 0, 2, 3])[::-1]],
                     initializer=xN)
         X = tf.transpose(X, perm=[1, 0, 2, 3])
         X = tf.concat([tf.expand_dims(xN, 1), X], 1)[:, ::-1]
@@ -134,14 +134,14 @@ def blk_chol_mtimes(A, B, x, lower=True, transpose=False):
         X = tf.scan(_lower_step, [tf.transpose(A[:, 1:], perm=[1, 0, 2, 3]),
                                   tf.transpose(B, perm=[1, 0, 2, 3]),
                                   tf.transpose(x[:, 1:], perm=[1, 0, 2, 3]),
-                                  tf.transpose(x[:, 0:-1], perm=[1, 0, 2, 3])],
+                                  tf.transpose(x[:, :-1], perm=[1, 0, 2, 3])],
                     initializer=b0)
         X = tf.concat([tf.expand_dims(b0, 1), X], 1)
     else:
         bN = tf.matmul(A[:, -1], x[:, -1])
-        X = tf.scan(_lower_step, [tf.transpose(A[:, 0:-1], perm=[1, 0, 2, 3]),
+        X = tf.scan(_lower_step, [tf.transpose(A[:, :-1], perm=[1, 0, 2, 3]),
                                   tf.transpose(B, perm=[1, 0, 2, 3]),
-                                  tf.transpose(x[:, 0:-1], perm=[1, 0, 2, 3]),
+                                  tf.transpose(x[:, :-1], perm=[1, 0, 2, 3]),
                                   tf.transpose(x[:, 1:], perm=[1, 0, 2, 3])],
                     initializer=bN)
         X = tf.concat([X, tf.expand_dims(bN, 1)], 1)

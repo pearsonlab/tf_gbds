@@ -60,7 +60,7 @@ class game_model(object):
                     states = pad_extra_conds(states, extra_conds_i)
                 with tf.name_scope("goalie"):
                     goalie = self.p.agents[0]
-                    goalie_NN_out = self.p.agents[0].GMM_NN(states[:, 1:])
+                    goalie_NN_out = goalie.GMM_NN(states[:, 1:])
                     goalie_mu = tf.reshape(
                         goalie_NN_out[:, :, :(goalie.K * goalie.dim)],
                         [tf.shape(traj_i)[0], -1, goalie.K, goalie.dim],
@@ -76,7 +76,7 @@ class game_model(object):
                         [tf.shape(traj_i)[0], -1, goalie.K]), -1, "w")
                 with tf.name_scope("shooter"):
                     shooter = self.p.agents[1]
-                    shooter_NN_out = self.p.agents[1].GMM_NN(states[:, 1:])
+                    shooter_NN_out = shooter.GMM_NN(states[:, 1:])
                     shooter_mu = tf.reshape(
                         shooter_NN_out[:, :, :(shooter.K * shooter.dim)],
                         [tf.shape(traj_i)[0], -1, shooter.K, shooter.dim],
@@ -126,7 +126,7 @@ class game_model(object):
                         prev2_error = tf.placeholder(tf.float32, self.obs_dim,
                                                      "previous2")
                         errors = tf.stack(
-                            [curr_error, prev_error, prev2_error], 0, "all")
+                            [prev2_error, prev_error, curr_error], 0, "all")
                     prev_u = tf.placeholder(tf.float32, self.obs_dim,
                                             "previous")
                     curr_u = tf.identity(self.p.update_ctrl(errors, prev_u),
