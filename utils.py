@@ -12,7 +12,7 @@ from edward.util import get_session, get_variables, Progbar, transform
 import six
 import os
 from datetime import datetime
-from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
+from layers import PKBiasLayer, PKRowBiasLayer
 
 
 class set_cbar_zero(Normalize):
@@ -78,192 +78,36 @@ def smooth_trial(trial, sigma=4.0, pad_method="extrapolate"):
     return rtrial
 
 
-# def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 2)))),
-#              eps=np.log1p(np.exp(-10.)), Kp=1, Ki=0, Kd=0,
-#              vel=1e-2 * np.ones((3))):
-#     """Generate fake data to test the accuracy of the model
-#     """
-#     p = []
-#     g = []
-
-#     for _ in range(n_trials):
-#         p_b = np.zeros((n_obs, 2), np.float32)
-#         p_g = np.zeros((n_obs, 1), np.float32)
-#         g_b = np.zeros((n_obs, 2), np.float32)
-#         prev_error_b = 0
-#         prev_error_g = 0
-#         int_error_b = 0
-#         int_error_g = 0
-
-#         init_b_x = np.pi * (np.random.rand() * 2 - 1)
-#         g_b_x_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-#                                        init_b_x))
-#         init_b_y = np.pi * (np.random.rand() * 2 - 1)
-#         g_b_y_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-#                                        init_b_y))
-#         g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1),
-#                             g_b_y_mu.reshape(n_obs, 1)])
-#         g_b_lambda = np.array([16, 16], np.float32)
-#         g_b[0] = g_b_mu[0]
-
-#         for t in range(n_obs - 1):
-#             g_b[t + 1] = ((g_b[t] + g_b_lambda * g_b_mu[t + 1]) /
-#                           (1 + g_b_lambda))
-#             var = sigma ** 2 / (1 + g_b_lambda)
-#             g_b[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
-
-#             error_b = g_b[t + 1] - p_b[t]
-#             int_error_b += error_b
-#             der_error_b = error_b - prev_error_b
-#             u_b = (Kp * error_b + Ki * int_error_b + Kd * der_error_b +
-#                    eps * np.random.randn(2,))
-#             prev_error_b = error_b
-#             p_b[t + 1] = p_b[t] + vel[1:] * np.clip(u_b, -1, 1)
-
-#             error_g = p_b[t + 1, 1] - p_g[t]
-#             int_error_g += error_g
-#             der_error_g = error_g - prev_error_g
-#             u_g = (Kp * error_g + Ki * int_error_g + Kd * der_error_g +
-#                    eps * np.random.randn())
-#             prev_error_g = error_g
-#             p_g[t + 1] = p_g[t] + vel[0] * np.clip(u_g, -1, 1)
-
-#         p.append(np.hstack((p_g, p_b)))
-#         g.append(g_b)
-
-#     return p, g
-
-
-def gen_data(n_trials, n_obs, sigma=1e-3 * np.ones((1, 3)),
-             eps=1e-5, Kp=1, Ki=0, Kd=0,
-             vel=1. * np.ones((3))):
-
-    p = []
-    g = []
-
-    for _ in range(n_trials):
-        p_b = np.zeros((n_obs, 2), np.float32)
-        p_g = np.zeros((n_obs, 1), np.float32)
-        g_b = np.zeros((n_obs, 2), np.float32)
-        g_g = np.zeros((n_obs, 1), np.float32)
-        prev_error_b = 0
-        prev_error_g = 0
-        prev2_error_b = 0
-        prev2_error_g = 0
-        u_b = 0
-        u_g = 0
-
-        init_b_x = np.pi * (np.random.rand() * 2 - 1)
-        g_b_x_mu = (np.linspace(0, 0.975, n_obs) + 0.02 * np.sin(2. *
-                    (np.linspace(0, 2 * np.pi, n_obs) - init_b_x)))
-
-        init_b_y = np.pi * (np.random.rand() * 2 - 1)
-        g_b_y_mu = (np.linspace(-0.2 + (np.random.rand() * 0.1 - 0.05),
-                                0.4 + (np.random.rand() * 0.1 - 0.05),
-                                n_obs) +
-                    0.05 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-                                        init_b_y)))
-        g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1),
-                            g_b_y_mu.reshape(n_obs, 1)])
-        g_b_lambda = np.array([1e4, 1e4])
-        g_b[0] = g_b_mu[0]
-
-        init_g = np.pi * (np.random.rand() * 2 - 1)
-        g_g_mu = (np.linspace(-0.2 + (np.random.rand() * 0.1 - 0.05),
-                              0.4 + (np.random.rand() * 0.1 - 0.05), n_obs) +
-                  0.05 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-                                      init_g)))
-        g_g_lambda = 1e4
-        g_g[0] = g_g_mu[0]
-
-        for t in range(n_obs - 1):
-            g_b[t + 1] = ((g_b[t] + g_b_lambda * g_b_mu[t + 1]) /
-                          (1 + g_b_lambda))
-            var_b = sigma[0, 1:] ** 2 / (1 + g_b_lambda)
-            g_b[t + 1] += (np.random.randn(1, 2) * np.sqrt(var_b)).reshape(2,)
-
-            error_b = g_b[t + 1] - p_b[t]
-            u_b += ((Kp + Ki + Kd) * error_b - (Kp + 2 * Kd) * prev_error_b +
-                    Kd * prev2_error_b + eps * np.random.randn(2,))
-            p_b[t + 1] = np.clip(p_b[t] + vel[1:] * np.clip(u_b, -1, 1),
-                                 -1, 1)
-            prev2_error_b = prev_error_b
-            prev_error_b = error_b
-
-            g_g[t + 1] = ((g_g[t] + g_g_lambda * g_g_mu[t + 1]) /
-                          (1 + g_g_lambda))
-            var_g = sigma[0, 0] ** 2 / (1 + g_g_lambda)
-            g_g[t + 1] += np.random.randn() * np.sqrt(var_g)
-
-            error_g = g_g[t + 1] - p_g[t]
-            u_g += ((Kp + Ki + Kd) * error_g - (Kp + 2 * Kd) * prev_error_g +
-                    Kd * prev2_error_g + eps * np.random.randn())
-            p_g[t + 1] = np.clip(p_g[t] + vel[0] * np.clip(u_g, -1, 1), -1, 1)
-            prev2_error_g = prev_error_g
-            prev_error_g = error_g
-
-        p.append(np.hstack((p_g, p_b)))
-        g.append(np.hstack((g_g, g_b)))
-
-    return p, g
-
-
 def load_data(hps):
     """ Generate synthetic data set or load real data from local directory
     """
-    if hps.synthetic_data:
-        trajs, goals = gen_data(
-            n_trials=2000, n_obs=100, Kp=0.5, Ki=0.2, Kd=0.1)
-        np.random.seed(hps.seed)  # set seed for consistent train/val split
-        train_trajs = []
-        val_trajs = []
-        val_goals = []
-        for (traj, goal) in zip(trajs, goals):
-            if np.random.rand() <= hps.train_ratio:
-                train_trajs.append(traj)
-            else:
-                val_trajs.append(traj)
-                val_goals.append(goal)
-
-        np.save(hps.model_dir + "/train_trajs", train_trajs)
-        np.save(hps.model_dir + "/val_trajs", val_trajs)
-        np.save(hps.model_dir + "/val_goals", val_goals)
-
-        with tf.name_scope("load_training_set"):
-            train_set = tf.data.Dataset.from_tensor_slices(
-                [tf.convert_to_tensor(trial, tf.float32)
-                 for trial in train_trajs])
-            train_set = train_set.map(lambda x: {"trajectory": x})
-
-    elif hps.data_dir is not None:
+    if hps.data_dir is not None:
         features = {"trajectory": tf.FixedLenFeature((), tf.string)}
         if hps.extra_conds:
-            # assume extra conditions are of type int64
             features.update({"extra_conds": tf.FixedLenFeature(
-                (hps.extra_dim), tf.int64)})
+                (), tf.string)})
         if hps.ctrl_obs:
             features.update({"ctrl_obs": tf.FixedLenFeature(
                 (), tf.string)})
 
         def _read_data(example):
-            y0 = [0., -0.58, 0.]
             parsed_features = tf.parse_single_example(example, features)
             data = ()
 
-            trajectory = tf.concat(
-                [tf.reshape(y0, [1, hps.obs_dim]), tf.reshape(
-                    tf.decode_raw(parsed_features["trajectory"], tf.float32),
-                    [-1, hps.obs_dim])], 0)
-            data = (trajectory,)
+            trajectory = tf.reshape(
+                tf.decode_raw(parsed_features["trajectory"], tf.float32),
+                [-1, hps.obs_dim])
+            data += (trajectory,)
 
             if "extra_conds" in parsed_features:
-                extra_conds = tf.cast(
-                    parsed_features["extra_conds"], tf.float32)
+                extra_conds = tf.reshape(
+                    tf.decode_raw(parsed_features["extra_conds"], tf.float32),
+                    [-1, hps.extra_dim])
                 data += (extra_conds,)
             if "ctrl_obs" in parsed_features:
                 ctrl_obs = tf.reshape(
-                    tf.decode_raw(parsed_features["ctrl_obs"],
-                                  tf.float32), [-1, hps.obs_dim])
+                    tf.decode_raw(parsed_features["ctrl_obs"], tf.float32),
+                    [-1, hps.obs_dim])
                 data += (ctrl_obs,)
 
             return data
@@ -303,7 +147,7 @@ def load_data(hps):
 #     return np.array([max(vel) for vel in max_vel], np.float32)
 
 
-def get_max_velocities(datasets, dim):
+def get_max_velocities(datasets, dim, clip):
     max_vel = np.zeros((dim), np.float32)
     n_trials = 0
 
@@ -321,7 +165,10 @@ def get_max_velocities(datasets, dim):
                 break
         sess.close()
 
-    return np.around(max_vel, decimals=3) + 0.001, n_trials
+    if clip:
+        return max_vel, n_trials
+    else:
+        return np.around(max_vel, decimals=3) + 0.001, n_trials
 
 
 def get_vel(traj, max_vel):
@@ -330,7 +177,7 @@ def get_vel(traj, max_vel):
     """
     with tf.name_scope("get_velocity"):
         vel = tf.pad(
-            tf.divide(traj[:, 1:] - traj[:, :-1], max_vel.astype(np.float32),
+            tf.divide(traj[:, 1:] - traj[:, :-1], tf.to_float(max_vel),
                       name="standardize"), [[0, 0], [1, 0], [0, 0]],
             name="pad_zero")
         states = tf.concat([traj, vel], -1, name="states")
@@ -351,66 +198,72 @@ def get_accel(traj, max_vel):
         return states
 
 
-def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
+def get_model_params(name, agents, model_dim, obs_dim, state_dim, extra_dim,
                      gen_n_layers, gen_hidden_dim, GMM_K, PKLparams,
-                     unc_sigma, sigma_trainable, sigma_penalty,
+                     sigma, sigma_trainable, sigma_penalty,
                      goal_boundaries, goal_boundary_penalty, latent_ctrl,
                      rec_lag, rec_n_layers, rec_hidden_dim, penalty_Q,
-                     unc_epsilon, epsilon_trainable, epsilon_penalty,
-                     clip, clip_range, clip_tolerance, clip_penalty, epoch):
+                     epsilon, epsilon_trainable, epsilon_penalty,
+                     clip, clip_range, clip_tolerance,
+                     eta, eta_trainable, eta_penalty, epoch):
 
     with tf.variable_scope("model_parameters"):
-        priors = []
+        p_params = []
 
         for a in agents:
             if sigma_trainable:
-                unc_sigma_init = tf.Variable(
-                    unc_sigma * np.ones((1, a["dim"]), np.float32),
-                    name="unc_sigma")
+                unc_sigma = tf.Variable(
+                    sigma * np.ones((1, a["dim"]), np.float32),
+                    name="unc_sigma_%s" % a["name"])
             else:
-                unc_sigma_init = tf.constant(
-                    unc_sigma * np.ones((1, a["dim"]), np.float32),
-                    name="unc_sigma")
+                unc_sigma = tf.constant(
+                    sigma * np.ones((1, a["dim"]), np.float32),
+                    name="unc_sigma_%s" % a["name"])
             if epsilon_trainable:
-                unc_eps_init = tf.Variable(
-                    unc_epsilon * np.ones((1, a["dim"]), np.float32),
-                    name="unc_eps")
+                unc_eps = tf.Variable(
+                    epsilon * np.ones((1, a["dim"]), np.float32),
+                    name="unc_eps_%s" % a["name"])
             else:
-                unc_eps_init = tf.constant(
-                    unc_epsilon * np.ones((1, a["dim"]), np.float32),
-                    name="unc_epsilon")
+                unc_eps = tf.constant(
+                    epsilon * np.ones((1, a["dim"]), np.float32),
+                    name="unc_eps_%s" % a["name"])
+            if eta_trainable:
+                unc_eta = tf.Variable(
+                    eta * np.ones(a["dim"], np.float32),
+                    name="unc_eta_%s" % a["name"])
+            else:
+                unc_eta = tf.constant(
+                    eta * np.ones(a["dim"], np.float32),
+                    name="unc_eta_%s" % a["name"])
 
-            priors.append(dict(
+            p_params.append(dict(
                 name=a["name"], col=a["col"], dim=a["dim"],
-                g0=get_g0_params(a["name"], a["dim"], GMM_K),
                 GMM_NN=get_network(
                     "%s_goal_GMM" % a["name"], (state_dim + extra_dim),
                     (GMM_K * a["dim"] * 2 + GMM_K),
                     gen_hidden_dim, gen_n_layers, PKLparams)[0],
-                GMM_K=GMM_K,
-                unc_sigma=unc_sigma_init,
+                GMM_K=GMM_K, unc_sigma=unc_sigma,
                 sigma_trainable=sigma_trainable, sigma_pen=sigma_penalty,
                 g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
-                PID=get_PID(a["dim"], a["name"], epoch),
-                unc_eps=unc_eps_init,
-                eps_trainable=epsilon_trainable, eps_pen=epsilon_penalty,
-                clip=clip, clip_range=clip_range, clip_tol=clip_tolerance,
-                clip_pen=clip_penalty))
-
-        g_q_params = get_rec_params(
-            obs_dim, extra_dim, rec_lag, rec_n_layers,
-            rec_hidden_dim, penalty_Q, PKLparams, "goal_posterior")
+                PID=get_PID(a["dim"], a["name"], epoch), latent_u=latent_ctrl,
+                unc_eps=unc_eps, eps_trainable=epsilon_trainable,
+                eps_pen=epsilon_penalty, clip=clip, clip_range=clip_range,
+                clip_tol=clip_tolerance, unc_eta=unc_eta,
+                eta_trainable=eta_trainable, eta_pen=eta_penalty))
 
         if latent_ctrl:
-            u_q_params = get_rec_params(
-                obs_dim, extra_dim, rec_lag, rec_n_layers,
-                rec_hidden_dim, penalty_Q, PKLparams, "control_posterior")
+            q_params = get_rec_params(
+                obs_dim, extra_dim, model_dim * 2, rec_lag, rec_n_layers,
+                rec_hidden_dim, penalty_Q, PKLparams, "posterior")
         else:
-            u_q_params = None
+            q_params = get_rec_params(
+                obs_dim, extra_dim, model_dim, rec_lag, rec_n_layers,
+                rec_hidden_dim, penalty_Q, PKLparams, "posterior")
 
         params = dict(
-            name=name, obs_dim=obs_dim, agent_priors=priors,
-            g_q_params=g_q_params, u_q_params=u_q_params)
+            name=name, model_dim=model_dim, obs_dim=obs_dim,
+            p_params=p_params, q_params=q_params, latent_u=latent_ctrl,
+            g_bounds=goal_boundaries, clip_range=clip_range)
 
         return params
 
@@ -450,25 +303,20 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
                     M.add(PK_bias)
 
             if i == num_layers - 1:
-                # M.add(layers.Dense(
-                #     output_dim, activation="linear",
-                #     kernel_initializer=tf.random_normal_initializer(
-                #         stddev=0.1),
-                #     name="Dense_%s" % (i + 1)))
-                M.add(layers.Dense(output_dim, activation="linear",
-                                   name="Dense_%s" % (i + 1)))
+                M.add(layers.Dense(
+                    output_dim, activation="linear",
+                    kernel_initializer=tf.random_normal_initializer(
+                        stddev=0.1), name="Dense_%s" % (i + 1)))
             else:
-                # M.add(layers.Dense(
-                #     hidden_dim, activation="relu",
-                #     kernel_initializer=tf.orthogonal_initializer(),
-                #     name="Dense_%s" % (i + 1)))
-                M.add(layers.Dense(hidden_dim, activation="relu",
-                                   name="Dense_%s" % (i + 1)))
+                M.add(layers.Dense(
+                    hidden_dim, activation="relu",
+                    kernel_initializer=tf.orthogonal_initializer(),
+                    name="Dense_%s" % (i + 1)))
 
         return M, PKbias_layers
 
 
-def get_rec_params(obs_dim, extra_dim, lag, n_layers, hidden_dim,
+def get_rec_params(obs_dim, extra_dim, output_dim, lag, n_layers, hidden_dim,
                    penalty_Q=None, PKLparams=None, name="recognition"):
     """Return a dictionary of timeseries-specific parameters for recognition
        model
@@ -476,22 +324,22 @@ def get_rec_params(obs_dim, extra_dim, lag, n_layers, hidden_dim,
 
     with tf.variable_scope("%s_params" % name):
         Mu_net, PKbias_layers_mu = get_network(
-            "Mu_NN", (obs_dim * (lag + 1) + extra_dim), obs_dim, hidden_dim,
+            "Mu_NN", (obs_dim * (lag + 1) + extra_dim), output_dim, hidden_dim,
             n_layers, PKLparams)
         Lambda_net, PKbias_layers_lambda = get_network(
-            "Lambda_NN", obs_dim * (lag + 1) + extra_dim, obs_dim ** 2,
+            "Lambda_NN", obs_dim * (lag + 1) + extra_dim, output_dim ** 2,
             hidden_dim, n_layers, PKLparams)
         LambdaX_net, PKbias_layers_lambdaX = get_network(
-            "LambdaX_NN", obs_dim * (lag + 1) + extra_dim, obs_dim ** 2,
+            "LambdaX_NN", obs_dim * (lag + 1) + extra_dim, output_dim ** 2,
             hidden_dim, n_layers, PKLparams)
 
         dyn_params = dict(
             A=tf.Variable(
-                .9 * np.eye(obs_dim), name="A", dtype=tf.float32),
+                .9 * np.eye(output_dim), name="A", dtype=tf.float32),
             QinvChol=tf.Variable(
-                np.eye(obs_dim), name="QinvChol", dtype=tf.float32),
+                np.eye(output_dim), name="QinvChol", dtype=tf.float32),
             Q0invChol=tf.Variable(
-                np.eye(obs_dim), name="Q0invChol", dtype=tf.float32))
+                np.eye(output_dim), name="Q0invChol", dtype=tf.float32))
 
         rec_params = dict(
             dyn_params=dyn_params,
@@ -528,32 +376,36 @@ def get_PID(dim, name, epoch):
 
         PID = {}
         PID["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
-
-        PID["Kp"] = tf.cond(tf.greater(epoch, 30),
+        PID["Kp"] = tf.cond(tf.greater(epoch, 10),
                             lambda: Kp, lambda: tf.stop_gradient(Kp))
-        PID["Ki"] = tf.cond(tf.greater(epoch, 30),
+        PID["Ki"] = tf.cond(tf.greater(epoch, 10),
                             lambda: Ki, lambda: tf.stop_gradient(Ki))
-        PID["Kd"] = tf.cond(tf.greater(epoch, 30),
+        PID["Kd"] = tf.cond(tf.greater(epoch, 10),
                             lambda: Kd, lambda: tf.stop_gradient(Kd))
+        # PID["Kp"] = Kp
+        # PID["Ki"] = Ki
+        # PID["Kd"] = Kd
 
         return PID
+    # with tf.name_scope("%s_PID" % name):
+    #     PID = {}
+
+    #     PID["Kp"] = tf.ones(dim, tf.float32, "Kp")
+    #     PID["Ki"] = tf.zeros(dim, tf.float32, "Ki")
+    #     PID["Kd"] = tf.zeros(dim, tf.float32, "Kd")
+
+    #     return PID
 
 
-def get_g0_params(name, dim, K):
-    with tf.variable_scope("%s_g0_params" % name):
-        g0 = {}
-
-        g0["K"] = K
-        g0["mu"] = tf.Variable(
-            tf.random_normal([K, dim], name="mu_init_value"),
-            dtype=tf.float32, name="mu")
-        g0["unc_lambda"] = tf.Variable(
-            tf.random_normal([K, dim], name="lambda_init_value"),
-            dtype=tf.float32, name="unc_lambda")
-        g0["unc_w"] = tf.Variable(
-            tf.ones([K], name="w_init_value"), dtype=tf.float32, name="unc_w")
-
-        return g0
+# def pad_batch(arrays, mode="edge"):
+#     max_len = np.max([len(a) for a in arrays])
+#     if mode == "edge":
+#         return np.array([np.pad(a, ((0, max_len - len(a)), (0, 0)),
+#                                 "edge") for a in arrays])
+#     elif mode == "zero":
+#         return np.array(
+#             [np.pad(a, ((0, max_len - len(a)), (0, 0)), "constant",
+#                     constant_values=0) for a in arrays])
 
 
 def pad_batch(batch, mode="edge"):
@@ -594,6 +446,120 @@ def add_summary(summary_op, inference, session, feed_dict, step):
         if step == 1 or step % inference.n_print == 0:
             summary = session.run(summary_op, feed_dict=feed_dict)
             inference.train_writer.add_summary(summary, step)
+
+
+class DatasetTrialIndexIterator(object):
+    """Basic trial iterator
+    """
+    def __init__(self, y, randomize=False, batch_size=1):
+        self.y = y
+        self.randomize = randomize
+
+    def __iter__(self):
+        n_batches = len(self.y)
+        if self.randomize:
+            indices = list(range(n_batches))
+            np.random.shuffle(indices)
+            for i in indices:
+                yield self.y[i]
+        else:
+            for i in range(n_batches):
+                yield self.y[i]
+
+
+class MultiDatasetTrialIndexIterator(object):
+    """Trial iterator over multiple datasets of shape
+    (ntrials, trial_len, trial_dimensions)
+    """
+    def __init__(self, data, randomize=False, batch_size=1):
+        self.data = data
+        self.randomize = randomize
+
+    def __iter__(self):
+        n_batches = len(self.data[0])
+        if self.randomize:
+            indices = list(range(n_batches))
+            np.random.shuffle(indices)
+            for i in indices:
+                yield tuple(dset[i] for dset in self.data)
+        else:
+            for i in range(n_batches):
+                yield tuple(dset[i] for dset in self.data)
+
+
+class DataSetTrialIndexTF(object):
+    """Tensor version of Minibatch iterator over one dataset of shape
+    (nobservations, ndimensions)
+    """
+    def __init__(self, data, batch_size=100):
+        self.data = data
+        self.batch_size = batch_size
+
+    def __iter__(self):
+        new_data = [tf.constant(d) for d in self.data]
+        data_iter_vb_new = tf.train.batch(new_data, self.batch_size,
+                                          dynamic_pad=True)
+        # data_iter_vb = [vb.eval() for vb in data_iter_vb_new]
+        return iter(data_iter_vb_new)
+
+
+class DatasetMiniBatchIterator(object):
+    """Minibatch iterator over one dataset of shape
+    (nobservations, ndimensions)
+    """
+    def __init__(self, data, batch_size, randomize=False):
+        super(DatasetMiniBatchIterator, self).__init__()
+        self.data = data  # tuple of datasets w/ same nobservations
+        self.batch_size = batch_size
+        self.randomize = randomize
+
+    def __iter__(self):
+        rows = range(len(self.data))
+        if self.randomize:
+            np.random.shuffle(rows)
+        beg_indices = range(0, len(self.data) - self.batch_size + 1,
+                            self.batch_size)
+        end_indices = range(self.batch_size, len(self.data) + 1,
+                            self.batch_size)
+        for beg, end in zip(beg_indices, end_indices):
+            curr_rows = rows[beg:end]
+            yield self.data[curr_rows, :]
+
+
+class MultiDatasetMiniBatchIterator(object):
+    """Minibatch iterator over multiple datasets of shape
+    (nobservations, ndimensions)
+    """
+    def __init__(self, data, batch_size, randomize=False):
+        super(MultiDatasetMiniBatchIterator, self).__init__()
+        self.data = data  # tuple of datasets w/ same nobservations
+        self.batch_size = batch_size
+        self.randomize = randomize
+
+    def __iter__(self):
+        rows = range(len(self.data[0]))
+        if self.randomize:
+            np.random.shuffle(rows)
+        beg_indices = range(0, len(self.data[0]) - self.batch_size + 1,
+                            self.batch_size)
+        end_indices = range(self.batch_size, len(self.data[0]) + 1,
+                            self.batch_size)
+        for beg, end in zip(beg_indices, end_indices):
+            curr_rows = rows[beg:end]
+            yield tuple(dset[curr_rows, :] for dset in self.data)
+
+
+# class hps_dict_to_obj(dict):
+#     """Helper class allowing us to access hps dictionary more easily.
+#     """
+#     def __getattr__(self, key):
+#         if key in self:
+#             return self[key]
+#         else:
+#             assert False, ("%s does not exist." % key)
+
+#     def __setattr__(self, key, value):
+#         self[key] = value
 
 
 class KLqp_profile(KLqp):

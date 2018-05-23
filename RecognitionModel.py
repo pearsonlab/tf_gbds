@@ -6,11 +6,11 @@ https://github.com/earcher/vilds/blob/master/code/RecognitionModel.py
 
 import tensorflow as tf
 import numpy as np
-import tf_gbds.lib.blk_tridiag_chol_tools as blk
+import lib.blk_tridiag_chol_tools as blk
 from edward.models import RandomVariable
 from tensorflow.contrib.distributions import Distribution
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
-from tf_gbds.utils import pad_extra_conds
+# from utils import pad_extra_conds
 
 
 class SmoothingLDSTimeSeries(RandomVariable, Distribution):
@@ -22,7 +22,6 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
     x ~ N( mu(y), sigma(y) )
 
     """
-
     def __init__(self, params, Input, xDim, yDim, extra_conds=None, *args,
                  **kwargs):
         """Initialize SmoothingLDSTimeSeries random variable (batch)
@@ -43,7 +42,6 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             name: Optional name for the random variable.
                   Default to "SmoothingLDSTimeSeries".
         """
-
         name = kwargs.get("name", "SmoothingLDSTimeSeries")
         with tf.name_scope(name):
             self.y = tf.identity(Input, "observations")
@@ -59,7 +57,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                 if extra_conds is not None:
                     self.extra_conds = tf.identity(
                         extra_conds, "extra_conditions")
-                    self.y = pad_extra_conds(self.y, self.extra_conds)
+                    self.y = tf.concat([self.y, self.extra_conds], -1)
                 else:
                     self.extra_conds = None
 
@@ -166,9 +164,10 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             self.postX = blk.blk_chol_inv(self.the_chol[0], self.the_chol[1],
                                           ib, lower=False, transpose=True)
 
-        # The determinant of covariance matrix is the square of the
-        # determinant of Cholesky factor, which is the product of the diagonal
-        # elements of the block-diagonal.
+        """The determinant of covariance matrix is the square of the
+        determinant of Cholesky factor, which is the product of the diagonal
+        elements of the block-diagonal.
+        """
         with tf.name_scope("log_determinant"):
             def comp_log_det(acc, inputs):
                 L = inputs[0]
@@ -191,14 +190,6 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             lower=False, transpose=True), self.postX)
 
     def _log_prob(self, value):
-        # with tf.name_scope("weight_norm_sum"):
-        #     norm = 0.0
-        #     for layer in (self.NN_Mu.layers + self.NN_Lambda.layers +
-        #                   self.NN_LambdaX.layers):
-        #         if "Dense" in layer.name:
-        #             norm += tf.norm(layer.kernel)  # + tf.norm(layer.bias)
-
-        # return (tf.reduce_mean(self.eval_entropy()) + 1e-1 * norm)
         return tf.reduce_mean(self.eval_entropy())
 
     def eval_entropy(self):
@@ -220,12 +211,10 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
     """SmoothingLDSTimeSeries that uses past observations (lag) in addition to
     current to evaluate the latent.
     """
-
     def __init__(self, params, Input, xDim, yDim, extra_conds=None, *args,
                  **kwargs):
         """Initialize SmoothingPastLDSTimeSeries random variable (batch)
         """
-
         with tf.name_scope("pad_lag"):
             # manipulate input to include past observations (up to lag)
             if "lag" in params:
@@ -233,13 +222,11 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
             else:
                 self.lag = 1
 
-            y0 = [0., -0.58, 0.]
             Input_ = tf.identity(Input)
             for i in range(self.lag):
                 lagged = tf.concat(
-                    [tf.tile(tf.reshape(y0, [1, 1, yDim]),
-                             [tf.shape(Input_)[0], 1, 1]),
-                     Input_[:, :-1, -yDim:]], 1, "lagged")
+                    [tf.reshape(Input_[:, 0, :yDim], [-1, 1, yDim], "t0"),
+                     Input_[:, :-1, -yDim:]], 1, "lag")
                 Input_ = tf.concat([Input_, lagged], -1)
 
         if "name" not in kwargs:
