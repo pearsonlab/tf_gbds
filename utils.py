@@ -134,7 +134,7 @@ def smooth_trial(trial, sigma=4.0, pad_method="extrapolate"):
 #     return p, g
 
 
-def load_data(data_dir, hps):
+def load_data(hps):
     """ Load data from given directory
     """
     features = {"trajectory": tf.FixedLenFeature((), tf.string)}
@@ -153,18 +153,21 @@ def load_data(data_dir, hps):
             [y0, tf.reshape(
                 tf.decode_raw(parsed_features["trajectory"], tf.float32),
                 [-1, hps.obs_dim])], 0)
-        data = (trajectory,)
+        # data = (trajectory,)
+        data = {"trajectory": trajectory}
 
         if "extra_conds" in parsed_features:
             extra_conds = tf.reshape(
                 tf.decode_raw(parsed_features["extra_conds"], tf.float32),
                 [hps.extra_dim])
-            data += (extra_conds,)
+            # data += (extra_conds,)
+            data.update({"extra_conds": extra_conds})
         if "ctrl_obs" in parsed_features:
             ctrl_obs = tf.reshape(
                 tf.decode_raw(parsed_features["ctrl_obs"], tf.float32),
                 [-1, hps.obs_dim])
-            data += (ctrl_obs,)
+            # data += (ctrl_obs,)
+            data.update({"ctrl_obs": ctrl_obs})
 
         return data
 
@@ -176,14 +179,14 @@ def load_data(data_dir, hps):
 
     #     return batch
 
-    dataset = tf.data.TFRecordDataset(data_dir)
+    dataset = tf.data.TFRecordDataset(hps.train_data_dir)
     dataset = dataset.map(_read_data)
-    dataset = dataset.shuffle(
-        buffer_size=100000)
-        # seed=tf.random_uniform([], minval=-2**63+1, maxval=2**63-1,
-        #                        dtype=tf.int64))
-    dataset = dataset.apply(
-        tf.contrib.data.batch_and_drop_remainder(hps.B))
+    # dataset = dataset.shuffle(
+    #     buffer_size=100000)
+    #     # seed=tf.random_uniform([], minval=-2**63+1, maxval=2**63-1,
+    #     #                        dtype=tf.int64))
+    # dataset = dataset.apply(
+    #     tf.contrib.data.batch_and_drop_remainder(hps.B))
     # if hps.B > 1:
     #     dataset = dataset.map(_pad_data)
 
