@@ -1,19 +1,20 @@
 import tensorflow as tf
 from tf_gbds.GenerativeModel import joint_GBDS
 from tf_gbds.RecognitionModel import SmoothingPastLDSTimeSeries
-from tf_gbds.utils import get_vel, pad_extra_conds
+from tf_gbds.utils import pad_extra_conds
 
 
 class game_model(object):
-    def __init__(self, params, inputs, max_vel, extra_dim=0, n_samples=50):
+    def __init__(self, params, inputs, max_vel, get_state,
+                 extra_dim=0, n_samples=50):
         with tf.name_scope(params["name"]):
             self.name = params["name"]
             self.obs_dim = params["obs_dim"]
 
             self.traj = inputs["trajectory"]
             self.states = inputs["states"]
-            self.ctrl_obs = inputs["ctrl_obs"]
             self.extra_conds = inputs["extra_conds"]
+            self.ctrl_obs = inputs["ctrl_obs"]
 
             self.latent_vars = {}
             self.var_list = []
@@ -43,17 +44,18 @@ class game_model(object):
                 self.obs_dim, self.extra_conds, name="recognition")
             self.var_list += self.g_q.params
             self.log_vars += self.g_q.log_vars
+
             self.latent_vars.update({self.p: self.g_q})
 
             with tf.name_scope("initial_goal"):
-                self.g0 = tf.identity(self.p.sample_g0(), "g0")
+                self.g0 = tf.identity(self.p.sample_g0(), "sampler")
                 self.g0_samp = tf.identity(self.p.sample_g0(1000),
                                            "samples")
 
             with tf.name_scope("GMM"):
                 traj_i = tf.placeholder(
                     tf.float32, [None, None, self.obs_dim], "trajectory")
-                states = get_vel(traj_i, max_vel)
+                states = get_state(traj_i, max_vel)
                 if extra_dim != 0:
                     extra_conds_i = tf.placeholder(tf.float32, extra_dim,
                                                    "extra_conditions")
@@ -105,7 +107,7 @@ class game_model(object):
                 v = tf.divide(curr_y - prev_y, max_vel, "current_velocity")
                 curr_s = tf.concat([curr_y, v], 0, "current_state")
 
-                if inputs["extra_conds"] is not None:
+                if extra_dim != 0:
                     gen_extra_conds = tf.placeholder(
                         tf.float32, extra_dim, "extra_conditions")
                 else:

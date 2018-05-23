@@ -1,18 +1,19 @@
 import os
-import math
+import numpy as np
 import tensorflow as tf
 import edward as ed
 from tf_gbds.agents import game_model
-from tf_gbds.utils import (load_data, get_max_velocities, get_vel, get_accel,
+from tf_gbds.utils import (get_max_velocities, load_data, get_vel, get_accel,
                            get_model_params, pad_batch, add_summary,
                            KLqp_profile, KLqp_clipgrads)
 # import time
-from tensorflow.python.client import timeline
+# from tensorflow.python.client import timeline
 
 
 # default flag values
 MODEL_DIR = "new_model"
-DATA_DIR = None
+TRAINING_DATA_DIR = None
+VALIDATION_DATA_DIR = None
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
@@ -24,9 +25,9 @@ N_AGENTS = 2
 AGENT_NAME = "goalie,shooter"
 AGENT_COLUMN = "0;1,2"
 OBSERVE_DIM = 3
-OBSERVED_CONTROL = False
 EXTRA_CONDITIONS = False
 EXTRA_DIM = 0
+OBSERVED_CONTROL = False
 ADD_ACCEL = False
 
 GMM_K = 8
@@ -60,7 +61,7 @@ N_EPOCHS = 500
 BATCH_SIZE = 1
 N_VI_SAMPLES = 1
 N_POSTERIOR_SAMPLES = 30
-MAX_CKPT = 3
+MAX_CKPT = 5
 FREQ_CKPT = 5
 
 
@@ -68,7 +69,10 @@ flags = tf.app.flags
 
 flags.DEFINE_string("model_dir", MODEL_DIR,
                     "Directory where the model is saved")
-flags.DEFINE_string("data_dir", DATA_DIR, "Directory of training data file")
+flags.DEFINE_string("train_data_dir", TRAINING_DATA_DIR,
+                    "Directory of training data set file")
+flags.DEFINE_string("val_data_dir", VALIDATION_DATA_DIR,
+                    "Directory of validation data set file")
 flags.DEFINE_boolean("synthetic_data", SYNTHETIC_DATA,
                      "Is the model trained on synthetic dataset")
 flags.DEFINE_boolean("save_posterior", SAVE_POSTERIOR, "Will posterior \
@@ -89,11 +93,11 @@ flags.DEFINE_string("agent_name", AGENT_NAME, "Name of each agent \
 flags.DEFINE_string("agent_col", AGENT_COLUMN, "Columns of data \
                     corresponding to each agent (separated by ; and ,)")
 flags.DEFINE_integer("obs_dim", OBSERVE_DIM, "Dimension of observation")
-flags.DEFINE_boolean("ctrl_obs", OBSERVED_CONTROL, "Are observed control \
-                     signals included in the dataset")
 flags.DEFINE_boolean("extra_conds", EXTRA_CONDITIONS, "Are extra conditions \
                      included in the dataset")
 flags.DEFINE_integer("extra_dim", EXTRA_DIM, "Dimension of extra conditions")
+flags.DEFINE_boolean("ctrl_obs", OBSERVED_CONTROL, "Are observed control \
+                     signals included in the dataset")
 flags.DEFINE_boolean("add_accel", ADD_ACCEL,
                      "Is acceleration included in state")
 
@@ -164,18 +168,18 @@ def run_model(FLAGS):
     # Check provided agent information
     agent_name = FLAGS.agent_name.split(",")
     assert len(agent_name) == FLAGS.n_agents, \
-        "The length of name list %i does not match number of agents %i." % (
+        "The length of name list %s does not match number of agents %s." % (
             len(agent_name), FLAGS.n_agents)
 
     agent_col = [[int(c) for c in a.split(",")]
                  for a in FLAGS.agent_col.split(";")]
     assert len(agent_col) == FLAGS.n_agents, \
-        "The length of column list %i does not match number of agents %i." % (
+        "The length of column list %s does not match number of agents %s." % (
             len(agent_col), FLAGS.n_agents)
 
     agent_dim = [len(a) for a in agent_col]
     assert sum(agent_dim) <= FLAGS.obs_dim, \
-        "The modeling dimension exceeds observed: %i > %i" % (
+        "The modeling dimension exceeds observed: %s > %s" % (
             sum(agent_dim), FLAGS.obs_dim)
 
     agents = []
@@ -206,78 +210,65 @@ def run_model(FLAGS):
         clip_range = None
 
     print("--------------Generative Parameters---------------")
-    print("Number of GMM components: %i" % FLAGS.GMM_K)
-    print("Number of layers in neural networks: %i" % FLAGS.gen_n_layers)
-    print("Dimensions of hidden layers: %i" % FLAGS.gen_hidden_dim)
+    print("Number of GMM components: %s" % FLAGS.GMM_K)
+    print("Number of layers in neural networks: %s" % FLAGS.gen_n_layers)
+    print("Dimensions of hidden layers: %s" % FLAGS.gen_hidden_dim)
     if FLAGS.g_bounds_pen is not None:
-        print("Penalty on goal states leaving boundary: %i"
+        print("Penalty on goal states leaving boundary: %s"
               % FLAGS.g_bounds_pen)
 
     print("--------------Recognition Parameters--------------")
-    print("Number of layers in neural networks: %i" % FLAGS.rec_n_layers)
-    print("Dimensions of hidden layers: %i" % FLAGS.rec_hidden_dim)
-    print("Lag of input: %i" % FLAGS.rec_lag)
+    print("Number of layers in neural networks: %s" % FLAGS.rec_n_layers)
+    print("Dimensions of hidden layers: %s" % FLAGS.rec_hidden_dim)
+    print("Lag of input: %s" % FLAGS.rec_lag)
 
     with tf.device("/cpu:0"):
+        with tf.name_scope("get_max_velocities"):
+            max_vel, n_trials = get_max_velocities(
+                [FLAGS.train_data_dir, FLAGS.val_data_dir],
+                FLAGS.obs_dim)
+            print("The maximum velocity is %s." % max_vel)
+            print("The training set contains %s trials." % n_trials[0])
+            print("The validation set contains %s trials." % n_trials[1])
+
         epoch = tf.placeholder(tf.int64, name="epoch")
-        with tf.name_scope("data"):
-            with tf.name_scope("load_data"):
-                train_set = load_data(FLAGS)
-                print("Data loaded.")
+        # data_dir = tf.placeholder(tf.string, name="dataset_directory")
+        with tf.name_scope("load_data"):
+            # dataset = load_data(data_dir, FLAGS)
+            # iterator = dataset.make_initializable_iterator()
+            train_set = load_data(FLAGS.train_data_dir, FLAGS)
+            val_set = load_data(FLAGS.val_data_dir, FLAGS)
+            iterator = tf.data.Iterator.from_structure(
+                train_set.output_types, train_set.output_shapes)
+            train_init_op = iterator.make_initializer(train_set)
+            val_init_op = iterator.make_initializer(val_set)
 
-            with tf.name_scope("get_max_velocities"):
-                max_vel, n_trials = get_max_velocities(
-                    [train_set], FLAGS.obs_dim)
-                print("The maximum velocity is %s." % max_vel)
-                print("The training set contains %i trials." % n_trials)
+            if FLAGS.extra_conds and FLAGS.ctrl_obs:
+                (trajectory, extra_conds, ctrl_obs) = iterator.get_next()
+            elif FLAGS.extra_conds:
+                (trajectory, extra_conds) = iterator.get_next()
+            elif FLAGS.ctrl_obs:
+                (trajectory, ctrl_obs) = iterator.get_next()
+            else:
+                (trajectory,) = iterator.get_next()
 
-            with tf.name_scope("training_set"):
-                train_set = train_set.shuffle(buffer_size=100000)
-                train_set = train_set.apply(
-                    tf.contrib.data.batch_and_drop_remainder(FLAGS.B))
-                # if FLAGS.B > 1:
-                #     train_set = train_set.map(_pad_data)
-                train_set = train_set.repeat(FLAGS.n_epochs)
-                train_iterator = train_set.make_one_shot_iterator()
+            trajectory_in = tf.identity(trajectory, "trajectory")
+            states_in = tf.identity(get_state(trajectory_in, max_vel),
+                                    "states")
+            if FLAGS.extra_conds:
+                extra_conds_in = tf.identity(extra_conds, "extra_conditions")
+            else:
+                extra_conds_in = None
+            if FLAGS.ctrl_obs:
+                ctrl_obs_in = tf.identity(ctrl_obs, "observed_control")
+            else:
+                with tf.name_scope("observed_control"):
+                    ctrl_obs_in = tf.atanh(tf.divide(tf.subtract(
+                        trajectory_in[:, 1:], trajectory_in[:, :-1], "diff"),
+                        max_vel, "standardize"), "arctanh")
 
-                if FLAGS.extra_conds and FLAGS.ctrl_obs:
-                    (trajectory, extra_conds, ctrl_obs) = \
-                          train_iterator.get_next("training_data")
-                elif FLAGS.extra_conds:
-                    (trajectory, extra_conds) = train_iterator.get_next(
-                        "training_data")
-                    ctrl_obs = None
-                elif FLAGS.ctrl_obs:
-                    (trajectory, ctrl_obs) = train_iterator.get_next(
-                        "training_data")
-                    extra_conds = None
-                else:
-                    (trajectory,) = train_iterator.get_next("training_data")
-                    extra_conds = None
-                    ctrl_obs = None
-
-            with tf.name_scope("inputs"):
-                y_train = tf.identity(trajectory, "trajectory")
-                s_train = tf.identity(get_state(y_train, max_vel), "states")
-
-                if ctrl_obs is not None:
-                    ctrl_obs_train = tf.identity(
-                        ctrl_obs, "observed_control")
-                else:
-                    with tf.name_scope("observed_control"):
-                        ctrl_obs_train = tf.atanh(tf.divide(tf.subtract(
-                            y_train[:, 1:], y_train[:, :-1], "diff"),
-                            max_vel, "standardize"), "arctanh")
-
-                if extra_conds is not None:
-                    extra_conds_train = tf.identity(
-                        extra_conds, "extra_conditions")
-                else:
-                    extra_conds_train = None
-
-                inputs = {"trajectory": y_train, "states": s_train,
-                          "ctrl_obs": ctrl_obs_train,
-                          "extra_conds": extra_conds_train}
+            inputs = {"trajectory": trajectory_in, "states": states_in,
+                      "extra_conds": extra_conds_in, "ctrl_obs": ctrl_obs_in}
 
         params = get_model_params(
             FLAGS.game_name, agents, FLAGS.obs_dim, state_dim,
@@ -289,8 +280,8 @@ def run_model(FLAGS):
             penalty_Q, FLAGS.eps_init, FLAGS.eps_trainable, FLAGS.eps_pen,
             FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen, epoch)
 
-        model = game_model(params, inputs, max_vel, FLAGS.extra_dim,
-                           FLAGS.n_post_samp)
+        model = game_model(params, inputs, max_vel, get_state,
+                           FLAGS.extra_dim, FLAGS.n_post_samp)
 
         with tf.name_scope("parameters_summary"):
             summary_list = []
@@ -354,6 +345,7 @@ def run_model(FLAGS):
 
         if FLAGS.opt == "Adam":
             optimizer = tf.train.AdamOptimizer(FLAGS.lr)
+
         inference.initialize(n_samples=FLAGS.n_samp,
                              var_list=model.var_list,
                              optimizer=optimizer,
@@ -365,36 +357,69 @@ def run_model(FLAGS):
     sess = ed.get_session()
     tf.global_variables_initializer().run()
 
-    seso_saver = tf.train.Saver(tf.global_variables(),
+    sess_saver = tf.train.Saver(tf.global_variables(),
                                 max_to_keep=FLAGS.max_ckpt,
                                 name="session_saver")
+    val_loss_saver = tf.train.Saver(tf.global_variables(),
+                                    max_to_keep=10,
+                                    name="validation_loss_based_saver")
 
     if FLAGS.load_saved_model:
-        seso_saver.restore(sess, FLAGS.saved_model_dir)
+        sess_saver.restore(sess, FLAGS.saved_model_dir)
         print("Parameters saved in %s restored." % FLAGS.saved_model_dir)
 
     print("Training initiated.")
 
-    step = 0
-    while True:
-        try:
-            feed_dict = {epoch: math.ceil((step + 1) / n_trials)}
-            info_dict = inference.update(feed_dict=feed_dict)
+    val_loss = []
+    val_loss_change_cutoff = .01
+    n_ckpt_val_loss = 0
+    for i in range(FLAGS.n_epochs):
+        if i == 0 or (i + 1) % 5 == 0:
+            print("Entering epoch %s ..." % (i + 1))
 
-            step = info_dict["t"]
-            add_summary(all_summary, inference, sess, feed_dict, step)
+        # sess.run(iterator.initializer, {data_dir: FLAGS.train_data_dir})
+        # import pdb; pdb.set_trace()
+        sess.run(train_init_op)
+        while True:
+            try:
+                feed_dict = {epoch: (i + 1)}
+                info_dict = inference.update(feed_dict=feed_dict)
+                add_summary(all_summary, inference, sess, feed_dict,
+                            info_dict["t"])
+            except tf.errors.OutOfRangeError:
+                break
 
-            if step % (5 * n_trials) == 0:
-                print("%i epochs finished." % int(step / n_trials))
+        if (i + 1) % FLAGS.freq_ckpt == 0:
+            sess_saver.save(sess, FLAGS.model_dir + "/saved_model",
+                            global_step=(i + 1),
+                            latest_filename="ckpt")
+            print("Model saved after epoch %s." % (i + 1))
 
-            if step % (FLAGS.freq_ckpt * n_trials) == 0:
-                seso_saver.save(sess, FLAGS.model_dir + "/saved_model",
-                                global_step=int(step / n_trials),
-                                latest_filename="checkpoint")
-                print("Model saved after epoch %i." % int(step / n_trials))
+        curr_val_loss = []
+        # sess.run(iterator.initializer, {data_dir: FLAGS.val_data_dir})
+        sess.run(val_init_op)
+        while True:
+            try:
+                curr_val_loss.append(
+                    sess.run(inference.loss, {epoch: (i + 1)}))
+            except tf.errors.OutOfRangeError:
+                break
 
-        except tf.errors.OutOfRangeError:
-            break
+        val_loss.append(np.array(curr_val_loss).mean())
+        print("Validation set loss after %s epochs is %.3f" % (
+            (i + 1), val_loss[-1]))
+        np.save(FLAGS.model_dir + "/val_loss", val_loss)
+
+        if len(val_loss) > 1:
+            val_loss_change = (
+                val_loss[-2] - val_loss[-1]) / val_loss[-2]
+            if (val_loss_change > 0
+                    and (val_loss_change < val_loss_change_cutoff)):
+                n_ckpt_val_loss += 1
+                val_loss_saver.save(
+                    sess, FLAGS.model_dir + "/val_loss-%s" % n_ckpt_val_loss,
+                    latest_filename="ckpt_val_loss")
+                val_loss_change_cutoff /= 10
 
     # if FLAGS.profile:
     #     fetched_timeline = timeline.Timeline(run_metadata.step_stats)
@@ -405,7 +430,7 @@ def run_model(FLAGS):
     #         f.write(chrome_trace)
     #         f.close()
 
-    seso_saver.save(sess, FLAGS.model_dir + "/final_model")
+    sess_saver.save(sess, FLAGS.model_dir + "/final_model")
     inference.finalize()
     sess.close()
 

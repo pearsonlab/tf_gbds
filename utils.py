@@ -134,159 +134,60 @@ def smooth_trial(trial, sigma=4.0, pad_method="extrapolate"):
 #     return p, g
 
 
-def gen_data(n_trials, n_obs, sigma=1e-3 * np.ones((1, 3)),
-             eps=1e-5, Kp=1, Ki=0, Kd=0,
-             vel=1. * np.ones((3))):
-
-    p = []
-    g = []
-
-    for _ in range(n_trials):
-        p_b = np.zeros((n_obs, 2), np.float32)
-        p_g = np.zeros((n_obs, 1), np.float32)
-        g_b = np.zeros((n_obs, 2), np.float32)
-        g_g = np.zeros((n_obs, 1), np.float32)
-        prev_error_b = 0
-        prev_error_g = 0
-        prev2_error_b = 0
-        prev2_error_g = 0
-        u_b = 0
-        u_g = 0
-
-        init_b_x = np.pi * (np.random.rand() * 2 - 1)
-        g_b_x_mu = (np.linspace(0, 0.975, n_obs) + 0.02 * np.sin(2. *
-                    (np.linspace(0, 2 * np.pi, n_obs) - init_b_x)))
-
-        init_b_y = np.pi * (np.random.rand() * 2 - 1)
-        g_b_y_mu = (np.linspace(-0.2 + (np.random.rand() * 0.1 - 0.05),
-                                0.4 + (np.random.rand() * 0.1 - 0.05),
-                                n_obs) +
-                    0.05 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-                                        init_b_y)))
-        g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1),
-                            g_b_y_mu.reshape(n_obs, 1)])
-        g_b_lambda = np.array([1e4, 1e4])
-        g_b[0] = g_b_mu[0]
-
-        init_g = np.pi * (np.random.rand() * 2 - 1)
-        g_g_mu = (np.linspace(-0.2 + (np.random.rand() * 0.1 - 0.05),
-                              0.4 + (np.random.rand() * 0.1 - 0.05), n_obs) +
-                  0.05 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-                                      init_g)))
-        g_g_lambda = 1e4
-        g_g[0] = g_g_mu[0]
-
-        for t in range(n_obs - 1):
-            g_b[t + 1] = ((g_b[t] + g_b_lambda * g_b_mu[t + 1]) /
-                          (1 + g_b_lambda))
-            var_b = sigma[0, 1:] ** 2 / (1 + g_b_lambda)
-            g_b[t + 1] += (np.random.randn(1, 2) * np.sqrt(var_b)).reshape(2,)
-
-            error_b = g_b[t + 1] - p_b[t]
-            u_b += ((Kp + Ki + Kd) * error_b - (Kp + 2 * Kd) * prev_error_b +
-                    Kd * prev2_error_b + eps * np.random.randn(2,))
-            p_b[t + 1] = np.clip(p_b[t] + vel[1:] * np.clip(u_b, -1, 1),
-                                 -1, 1)
-            prev2_error_b = prev_error_b
-            prev_error_b = error_b
-
-            g_g[t + 1] = ((g_g[t] + g_g_lambda * g_g_mu[t + 1]) /
-                          (1 + g_g_lambda))
-            var_g = sigma[0, 0] ** 2 / (1 + g_g_lambda)
-            g_g[t + 1] += np.random.randn() * np.sqrt(var_g)
-
-            error_g = g_g[t + 1] - p_g[t]
-            u_g += ((Kp + Ki + Kd) * error_g - (Kp + 2 * Kd) * prev_error_g +
-                    Kd * prev2_error_g + eps * np.random.randn())
-            p_g[t + 1] = np.clip(p_g[t] + vel[0] * np.clip(u_g, -1, 1), -1, 1)
-            prev2_error_g = prev_error_g
-            prev_error_g = error_g
-
-        p.append(np.hstack((p_g, p_b)))
-        g.append(np.hstack((g_g, g_b)))
-
-    return p, g
-
-
-def load_data(hps):
-    """ Generate synthetic data set or load real data from local directory
+def load_data(data_dir, hps):
+    """ Load data from given directory
     """
-    if hps.synthetic_data:
-        trajs, goals = gen_data(
-            n_trials=2000, n_obs=100, Kp=0.5, Ki=0.2, Kd=0.1)
-        np.random.seed(hps.seed)  # set seed for consistent train/val split
-        train_trajs = []
-        val_trajs = []
-        val_goals = []
-        for (traj, goal) in zip(trajs, goals):
-            if np.random.rand() <= hps.train_ratio:
-                train_trajs.append(traj)
-            else:
-                val_trajs.append(traj)
-                val_goals.append(goal)
+    features = {"trajectory": tf.FixedLenFeature((), tf.string)}
+    if hps.extra_conds:
+        features.update({"extra_conds": tf.FixedLenFeature(
+            (), tf.string)})
+    if hps.ctrl_obs:
+        features.update({"ctrl_obs": tf.FixedLenFeature(
+            (), tf.string)})
 
-        np.save(hps.model_dir + "/train_trajs", train_trajs)
-        np.save(hps.model_dir + "/val_trajs", val_trajs)
-        np.save(hps.model_dir + "/val_goals", val_goals)
+    y0 = tf.reshape([0., -0.58, 0.], [1, hps.obs_dim], "y0")
 
-        with tf.name_scope("load_training_set"):
-            train_set = tf.data.Dataset.from_tensor_slices(
-                [tf.convert_to_tensor(trial, tf.float32)
-                 for trial in train_trajs])
-            train_set = train_set.map(lambda x: {"trajectory": x})
+    def _read_data(example):
+        parsed_features = tf.parse_single_example(example, features)
+        trajectory = tf.concat(
+            [y0, tf.reshape(
+                tf.decode_raw(parsed_features["trajectory"], tf.float32),
+                [-1, hps.obs_dim])], 0)
+        data = (trajectory,)
 
-    elif hps.data_dir is not None:
-        features = {"trajectory": tf.FixedLenFeature((), tf.string)}
-        if hps.extra_conds:
-            # assume extra conditions are of type int64
-            features.update({"extra_conds": tf.FixedLenFeature(
-                (hps.extra_dim), tf.int64)})
-        if hps.ctrl_obs:
-            features.update({"ctrl_obs": tf.FixedLenFeature(
-                (), tf.string)})
+        if "extra_conds" in parsed_features:
+            extra_conds = tf.reshape(
+                tf.decode_raw(parsed_features["extra_conds"], tf.float32),
+                [hps.extra_dim])
+            data += (extra_conds,)
+        if "ctrl_obs" in parsed_features:
+            ctrl_obs = tf.reshape(
+                tf.decode_raw(parsed_features["ctrl_obs"], tf.float32),
+                [-1, hps.obs_dim])
+            data += (ctrl_obs,)
 
-        def _read_data(example):
-            y0 = [0., -0.58, 0.]
-            parsed_features = tf.parse_single_example(example, features)
-            data = ()
+        return data
 
-            trajectory = tf.concat(
-                [tf.reshape(y0, [1, hps.obs_dim]), tf.reshape(
-                    tf.decode_raw(parsed_features["trajectory"], tf.float32),
-                    [-1, hps.obs_dim])], 0)
-            data = (trajectory,)
+    # def _pad_data(batch):
+    #     batch["trajectory"] = pad_batch(batch["trajectory"])
+    #     if "ctrl_obs" in batch:
+    #         batch["ctrl_obs"] = pad_batch(batch["ctrl_obs"],
+    #                                       mode="zero")
 
-            if "extra_conds" in parsed_features:
-                extra_conds = tf.cast(
-                    parsed_features["extra_conds"], tf.float32)
-                data += (extra_conds,)
-            if "ctrl_obs" in parsed_features:
-                ctrl_obs = tf.reshape(
-                    tf.decode_raw(parsed_features["ctrl_obs"],
-                                  tf.float32), [-1, hps.obs_dim])
-                data += (ctrl_obs,)
+    #     return batch
 
-            return data
+    dataset = tf.data.TFRecordDataset(data_dir)
+    dataset = dataset.map(_read_data)
+    dataset = dataset.shuffle(
+        buffer_size=100000)
+        # seed=tf.random_uniform([], minval=-2**63+1, maxval=2**63-1,
+        #                        dtype=tf.int64))
+    dataset = dataset.apply(
+        tf.contrib.data.batch_and_drop_remainder(hps.B))
+    # if hps.B > 1:
+    #     dataset = dataset.map(_pad_data)
 
-        # def _pad_data(batch):
-        #     batch["trajectory"] = pad_batch(batch["trajectory"])
-        #     if "ctrl_obs" in batch:
-        #         batch["ctrl_obs"] = pad_batch(batch["ctrl_obs"],
-        #                                       mode="zero")
-
-        #     return batch
-
-        with tf.name_scope("load_training_set"):
-            if hps.data_dir.split(".")[-1] == "tfrecords":
-                train_set = tf.data.TFRecordDataset(hps.data_dir)
-                train_set = train_set.map(_read_data)
-            else:
-                raise Exception("Data format not recognized.")
-
-    else:
-        raise Exception("Data must be provided (either real or synthetic).")
-
-    return train_set
+    return dataset
 
 
 # def get_max_velocities(datasets, dim):
@@ -303,23 +204,36 @@ def load_data(hps):
 #     return np.array([max(vel) for vel in max_vel], np.float32)
 
 
-def get_max_velocities(datasets, dim):
+def get_max_velocities(data_dirs, dim):
     max_vel = np.zeros((dim), np.float32)
-    n_trials = 0
+    n_trials = []
 
-    for dataset in datasets:
-        traj = dataset.make_one_shot_iterator().get_next()[0]
+    feature = {"trajectory": tf.FixedLenFeature((), tf.string)}
+    y0 = tf.reshape([0., -0.58, 0.], [1, dim])
+    def _read_data(example):
+        data_dict = tf.parse_single_example(example, feature)
+        traj = tf.concat(
+            [y0, tf.reshape(tf.decode_raw(
+                data_dict["trajectory"], tf.float32), [-1, dim])], 0)
+
+        return traj
+
+    for data_dir in data_dirs:
+        dataset = tf.data.TFRecordDataset(data_dir)
+        dataset = dataset.map(_read_data)
+        traj = dataset.make_one_shot_iterator().get_next()
         trial_max_vel = tf.reduce_max(tf.abs(traj[1:] - traj[:-1]), 0,
                                       name="trial_maximum_velocity")
 
-        sess = tf.InteractiveSession()
-        while True:
-            try:
-                max_vel = np.maximum(trial_max_vel.eval(), max_vel)
-                n_trials += 1
-            except tf.errors.OutOfRangeError:
-                break
-        sess.close()
+        dataset_size = 0
+        with tf.Session() as sess:
+            while True:
+                try:
+                    max_vel = np.maximum(sess.run(trial_max_vel), max_vel)
+                    dataset_size += 1
+                except tf.errors.OutOfRangeError:
+                    break
+        n_trials.append(dataset_size)
 
     return np.around(max_vel, decimals=3) + 0.001, n_trials
 
@@ -366,19 +280,19 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
             if sigma_trainable:
                 unc_sigma_init = tf.Variable(
                     unc_sigma * np.ones((1, a["dim"]), np.float32),
-                    name="unc_sigma")
+                    name="%s_unc_sigma" % a["name"])
             else:
                 unc_sigma_init = tf.constant(
                     unc_sigma * np.ones((1, a["dim"]), np.float32),
-                    name="unc_sigma")
+                    name="%s_unc_sigma" % a["name"])
             if epsilon_trainable:
                 unc_eps_init = tf.Variable(
                     unc_epsilon * np.ones((1, a["dim"]), np.float32),
-                    name="unc_eps")
+                    name="%s_unc_epsilon" % a["name"])
             else:
                 unc_eps_init = tf.constant(
                     unc_epsilon * np.ones((1, a["dim"]), np.float32),
-                    name="unc_epsilon")
+                    name="%s_unc_epsilon" % a["name"])
 
             priors.append(dict(
                 name=a["name"], col=a["col"], dim=a["dim"],
@@ -450,18 +364,9 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
                     M.add(PK_bias)
 
             if i == num_layers - 1:
-                # M.add(layers.Dense(
-                #     output_dim, activation="linear",
-                #     kernel_initializer=tf.random_normal_initializer(
-                #         stddev=0.1),
-                #     name="Dense_%s" % (i + 1)))
                 M.add(layers.Dense(output_dim, activation="linear",
                                    name="Dense_%s" % (i + 1)))
             else:
-                # M.add(layers.Dense(
-                #     hidden_dim, activation="relu",
-                #     kernel_initializer=tf.orthogonal_initializer(),
-                #     name="Dense_%s" % (i + 1)))
                 M.add(layers.Dense(hidden_dim, activation="relu",
                                    name="Dense_%s" % (i + 1)))
 

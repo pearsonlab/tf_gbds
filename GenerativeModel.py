@@ -244,8 +244,8 @@ class GBDS(RandomVariable, Distribution):
             logdensity_g += tf.reduce_sum(
                 tf.reduce_logsumexp(gmm_term, -1), -1)
 
-            tf.summary.scalar("average_log_density", tf.reduce_mean(
-                tf.reduce_logsumexp(gmm_term, -1)))
+            # tf.summary.scalar("average_log_density", tf.reduce_mean(
+            #     tf.reduce_logsumexp(gmm_term, -1)))
 
         with tf.name_scope("g0"):
             res_g0 = tf.subtract(tf.expand_dims(value[:, 0], 1), self.g0_mu,
@@ -275,9 +275,9 @@ class GBDS(RandomVariable, Distribution):
                 (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
                  u_res ** 2 / (2 * self.eps ** 2)), [1, 2])
 
-            tf.summary.histogram("residual", u_res)
-            tf.summary.scalar("average_log_density", tf.reduce_mean(
-                logdensity_u))
+            # tf.summary.histogram("residual", u_res)
+            # tf.summary.scalar("average_log_density", tf.reduce_mean(
+            #     logdensity_u))
 
         if self.sigma_pen is not None:
             logdensity_g -= self.sigma_pen * tf.reduce_sum(self.unc_sigma)
