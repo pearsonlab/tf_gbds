@@ -134,63 +134,65 @@ def smooth_trial(trial, sigma=4.0, pad_method="extrapolate"):
 #     return p, g
 
 
-def load_data(hps):
+def load_data(data_dir, hps):
     """ Load data from given directory
     """
-    features = {"trajectory": tf.FixedLenFeature((), tf.string)}
-    if hps.extra_conds:
-        features.update({"extra_conds": tf.FixedLenFeature(
-            (), tf.string)})
-    if hps.ctrl_obs:
-        features.update({"ctrl_obs": tf.FixedLenFeature(
-            (), tf.string)})
 
-    y0 = tf.reshape([0., -0.58, 0.], [1, hps.obs_dim], "y0")
+    with tf.name_scope("create_dataset"):
+        features = {"trajectory": tf.FixedLenFeature((), tf.string)}
+        if hps.extra_conds:
+            features.update({"extra_conds": tf.FixedLenFeature(
+                (), tf.string)})
+        if hps.ctrl_obs:
+            features.update({"ctrl_obs": tf.FixedLenFeature(
+                (), tf.string)})
 
-    def _read_data(example):
-        parsed_features = tf.parse_single_example(example, features)
-        trajectory = tf.concat(
-            [y0, tf.reshape(
-                tf.decode_raw(parsed_features["trajectory"], tf.float32),
-                [-1, hps.obs_dim])], 0)
-        # data = (trajectory,)
-        data = {"trajectory": trajectory}
+        y0 = tf.reshape([0., -0.58, 0.], [1, hps.obs_dim], "y0")
 
-        if "extra_conds" in parsed_features:
-            extra_conds = tf.reshape(
-                tf.decode_raw(parsed_features["extra_conds"], tf.float32),
-                [hps.extra_dim])
-            # data += (extra_conds,)
-            data.update({"extra_conds": extra_conds})
-        if "ctrl_obs" in parsed_features:
-            ctrl_obs = tf.reshape(
-                tf.decode_raw(parsed_features["ctrl_obs"], tf.float32),
-                [-1, hps.obs_dim])
-            # data += (ctrl_obs,)
-            data.update({"ctrl_obs": ctrl_obs})
+        def _read_data(example):
+            parsed_features = tf.parse_single_example(example, features)
+            trajectory = tf.concat(
+                [y0, tf.reshape(
+                    tf.decode_raw(parsed_features["trajectory"], tf.float32),
+                    [-1, hps.obs_dim])], 0)
+            data = (trajectory,)
 
-        return data
+            if "extra_conds" in parsed_features:
+                extra_conds = tf.reshape(
+                    tf.decode_raw(parsed_features["extra_conds"], tf.float32),
+                    [hps.extra_dim])
+                data += (extra_conds,)
+            if "ctrl_obs" in parsed_features:
+                ctrl_obs = tf.reshape(
+                    tf.decode_raw(parsed_features["ctrl_obs"], tf.float32),
+                    [-1, hps.obs_dim])
+                data += (ctrl_obs,)
 
-    # def _pad_data(batch):
-    #     batch["trajectory"] = pad_batch(batch["trajectory"])
-    #     if "ctrl_obs" in batch:
-    #         batch["ctrl_obs"] = pad_batch(batch["ctrl_obs"],
-    #                                       mode="zero")
+            return data
 
-    #     return batch
+        # def _pad_data(batch):
+        #     batch["trajectory"] = pad_batch(batch["trajectory"])
+        #     if "ctrl_obs" in batch:
+        #         batch["ctrl_obs"] = pad_batch(batch["ctrl_obs"],
+        #                                       mode="zero")
 
-    dataset = tf.data.TFRecordDataset(hps.train_data_dir)
-    dataset = dataset.map(_read_data)
-    # dataset = dataset.shuffle(
-    #     buffer_size=100000)
-    #     # seed=tf.random_uniform([], minval=-2**63+1, maxval=2**63-1,
-    #     #                        dtype=tf.int64))
-    # dataset = dataset.apply(
-    #     tf.contrib.data.batch_and_drop_remainder(hps.B))
-    # if hps.B > 1:
-    #     dataset = dataset.map(_pad_data)
+        #     return batch
 
-    return dataset
+        dataset = tf.data.TFRecordDataset(data_dir)
+        dataset = dataset.map(_read_data)
+
+    with tf.name_scope("preprocessing"):
+        dataset = dataset.shuffle(
+            buffer_size=100000,
+            seed=tf.random_uniform([], minval=-2**63+1, maxval=2**63-1,
+                                   dtype=tf.int64))
+        dataset = dataset.apply(
+            tf.contrib.data.batch_and_drop_remainder(hps.B))
+        # if hps.B > 1:
+        #     dataset = dataset.map(_pad_data)
+        iterator = dataset.make_initializable_iterator("iterator")
+
+    return iterator
 
 
 # def get_max_velocities(datasets, dim):
@@ -280,39 +282,40 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
         priors = []
 
         for a in agents:
-            if sigma_trainable:
-                unc_sigma_init = tf.Variable(
-                    unc_sigma * np.ones((1, a["dim"]), np.float32),
-                    name="%s_unc_sigma" % a["name"])
-            else:
-                unc_sigma_init = tf.constant(
-                    unc_sigma * np.ones((1, a["dim"]), np.float32),
-                    name="%s_unc_sigma" % a["name"])
-            if epsilon_trainable:
-                unc_eps_init = tf.Variable(
-                    unc_epsilon * np.ones((1, a["dim"]), np.float32),
-                    name="%s_unc_epsilon" % a["name"])
-            else:
-                unc_eps_init = tf.constant(
-                    unc_epsilon * np.ones((1, a["dim"]), np.float32),
-                    name="%s_unc_epsilon" % a["name"])
+            with tf.variable_scope(a["name"]):
+                if sigma_trainable:
+                    unc_sigma_init = tf.Variable(
+                        unc_sigma * np.ones((1, a["dim"]), np.float32),
+                        name="unc_sigma")
+                else:
+                    unc_sigma_init = tf.constant(
+                        unc_sigma * np.ones((1, a["dim"]), np.float32),
+                        name="unc_sigma")
+                if epsilon_trainable:
+                    unc_eps_init = tf.Variable(
+                        unc_epsilon * np.ones((1, a["dim"]), np.float32),
+                        name="unc_epsilon")
+                else:
+                    unc_eps_init = tf.constant(
+                        unc_epsilon * np.ones((1, a["dim"]), np.float32),
+                        name="unc_epsilon")
 
-            priors.append(dict(
-                name=a["name"], col=a["col"], dim=a["dim"],
-                g0=get_g0_params(a["name"], a["dim"], GMM_K),
-                GMM_NN=get_network(
-                    "%s_goal_GMM" % a["name"], (state_dim + extra_dim),
-                    (GMM_K * a["dim"] * 2 + GMM_K),
-                    gen_hidden_dim, gen_n_layers, PKLparams)[0],
-                GMM_K=GMM_K,
-                unc_sigma=unc_sigma_init,
-                sigma_trainable=sigma_trainable, sigma_pen=sigma_penalty,
-                g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
-                PID=get_PID(a["dim"], a["name"], epoch),
-                unc_eps=unc_eps_init,
-                eps_trainable=epsilon_trainable, eps_pen=epsilon_penalty,
-                clip=clip, clip_range=clip_range, clip_tol=clip_tolerance,
-                clip_pen=clip_penalty))
+                priors.append(dict(
+                    name=a["name"], col=a["col"], dim=a["dim"],
+                    g0=get_g0_params(a["dim"], GMM_K),
+                    GMM_NN=get_network(
+                        "goal_GMM", (state_dim + extra_dim),
+                        (GMM_K * a["dim"] * 2 + GMM_K),
+                        gen_hidden_dim, gen_n_layers, PKLparams)[0],
+                    GMM_K=GMM_K,
+                    unc_sigma=unc_sigma_init,
+                    sigma_trainable=sigma_trainable, sigma_pen=sigma_penalty,
+                    g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
+                    PID=get_PID(a["dim"], epoch),
+                    unc_eps=unc_eps_init,
+                    eps_trainable=epsilon_trainable, eps_pen=epsilon_penalty,
+                    clip=clip, clip_range=clip_range, clip_tol=clip_tolerance,
+                    clip_pen=clip_penalty))
 
         g_q_params = get_rec_params(
             obs_dim, extra_dim, rec_lag, rec_n_layers,
@@ -418,8 +421,8 @@ def get_rec_params(obs_dim, extra_dim, lag, n_layers, hidden_dim,
         return rec_params
 
 
-def get_PID(dim, name, epoch):
-    with tf.variable_scope("%s_PID" % name):
+def get_PID(dim, epoch):
+    with tf.variable_scope("PID"):
         unc_Kp = tf.Variable(tf.multiply(
             softplus_inverse(1.), tf.ones(dim, tf.float32), "unc_Kp_init"),
                              name="unc_Kp")
@@ -429,14 +432,12 @@ def get_PID(dim, name, epoch):
         unc_Kd = tf.Variable(tf.multiply(
             softplus_inverse(1e-6), tf.ones(dim, tf.float32), "unc_Kd_init"),
                              name="unc_Kd")
-
         Kp = tf.nn.softplus(unc_Kp, "Kp")
         Ki = tf.nn.softplus(unc_Ki, "Ki")
         Kd = tf.nn.softplus(unc_Kd, "Kd")
 
         PID = {}
         PID["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
-
         PID["Kp"] = tf.cond(tf.greater(epoch, 30),
                             lambda: Kp, lambda: tf.stop_gradient(Kp))
         PID["Ki"] = tf.cond(tf.greater(epoch, 30),
@@ -447,10 +448,9 @@ def get_PID(dim, name, epoch):
         return PID
 
 
-def get_g0_params(name, dim, K):
-    with tf.variable_scope("%s_g0_params" % name):
+def get_g0_params(dim, K):
+    with tf.variable_scope("g0_params"):
         g0 = {}
-
         g0["K"] = K
         g0["mu"] = tf.Variable(
             tf.random_normal([K, dim], name="mu_init_value"),

@@ -61,8 +61,9 @@ N_EPOCHS = 500
 BATCH_SIZE = 1
 N_VI_SAMPLES = 1
 N_POSTERIOR_SAMPLES = 30
-MAX_CKPT = 5
+MAX_CKPT = 10
 FREQ_CKPT = 5
+FREQ_VAL_LOSS = 1
 
 
 flags = tf.app.flags
@@ -155,6 +156,8 @@ flags.DEFINE_integer("max_ckpt", MAX_CKPT,
                      "Maximum number of checkpoints to keep in the directory")
 flags.DEFINE_integer("freq_ckpt", FREQ_CKPT, "Frequency of saving \
                      checkpoints to the directory")
+flags.DEFINE_integer("freq_val_loss", FREQ_VAL_LOSS, "Frequency of computing \
+                     validation set loss")
 
 FLAGS = flags.FLAGS
 
@@ -232,37 +235,45 @@ def run_model(FLAGS):
             print("The validation set contains %s trials." % n_trials[1])
 
         epoch = tf.placeholder(tf.int64, name="epoch")
-        # data_dir = tf.placeholder(tf.string, name="dataset_directory")
+        data_dir = tf.placeholder(tf.string, name="dataset_directory")
 
         with tf.name_scope("load_data"):
-            # dataset = load_data(data_dir, FLAGS)
-            dataset = load_data(FLAGS)
+            iterator = load_data(data_dir, FLAGS)
+            data = iterator.get_next("data")
 
-            with tf.name_scope("get_iterator"):
-                dataset = dataset.shuffle(
-                    buffer_size=100000)
-                    # seed=tf.random_uniform([], minval=-2**63+1, maxval=2**63-1,
-                    #                        dtype=tf.int64))
-                dataset = dataset.apply(
-                    tf.contrib.data.batch_and_drop_remainder(FLAGS.B))
+            if FLAGS.extra_conds and FLAGS.ctrl_obs:
+                (trajectory, extra_conds, ctrl_obs) = data
+            elif FLAGS.extra_conds:
+                (trajectory, extra_conds) = data
+            elif FLAGS.ctrl_obs:
+                (trajectory, ctrl_obs) = data
+            else:
+                (trajectory,) = data
 
-                iterator = dataset.make_initializable_iterator()
-                data = iterator.get_next()
-                # train_set = load_data(FLAGS.train_data_dir, FLAGS)
-                # val_set = load_data(FLAGS.val_data_dir, FLAGS)
-                # iterator = tf.data.Iterator.from_structure(
-                #     train_set.output_types, train_set.output_shapes)
-                # train_init_op = iterator.make_initializer(train_set)
-                # val_init_op = iterator.make_initializer(val_set)
+            trajectory_in = tf.identity(trajectory, "trajectory")
+            states_in = tf.identity(get_state(trajectory_in, max_vel),
+                                    "states")
+            if FLAGS.extra_conds:
+                extra_conds_in = tf.identity(extra_conds, "extra_conditions")
+            else:
+                extra_conds_in = None
+            if FLAGS.ctrl_obs:
+                ctrl_obs_in = tf.identity(ctrl_obs, "observed_control")
+            else:
+                with tf.name_scope("observed_control"):
+                    ctrl_obs_in = tf.atanh(tf.divide(tf.subtract(
+                        trajectory_in[:, 1:], trajectory_in[:, :-1], "diff"),
+                        max_vel, "standardize"), "arctanh")
 
-                # if FLAGS.extra_conds and FLAGS.ctrl_obs:
-                #     (trajectory, extra_conds, ctrl_obs) = iterator.get_next()
-                # elif FLAGS.extra_conds:
-                #     (trajectory, extra_conds) = iterator.get_next()
-                # elif FLAGS.ctrl_obs:
-                #     (trajectory, ctrl_obs) = iterator.get_next()
-                # else:
-                #     (trajectory,) = iterator.get_next()
+            inputs = {"trajectory": trajectory_in, "states": states_in,
+                      "extra_conds": extra_conds_in, "ctrl_obs": ctrl_obs_in}
+
+            # train_set = load_data(FLAGS.train_data_dir, FLAGS)
+            # val_set = load_data(FLAGS.val_data_dir, FLAGS)
+            # iterator = tf.data.Iterator.from_structure(
+            #     train_set.output_types, train_set.output_shapes)
+            # train_init_op = iterator.make_initializer(train_set)
+            # val_init_op = iterator.make_initializer(val_set)
 
         params = get_model_params(
             FLAGS.game_name, agents, FLAGS.obs_dim, state_dim,
@@ -273,28 +284,6 @@ def run_model(FLAGS):
             FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
             penalty_Q, FLAGS.eps_init, FLAGS.eps_trainable, FLAGS.eps_pen,
             FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen, epoch)
-
-        with tf.name_scope("inputs"):
-            # trajectory_in = tf.identity(trajectory, "trajectory")
-            trajectory_in = tf.identity(data["trajectory"], "trajectory")
-            states_in = tf.identity(get_state(trajectory_in, max_vel),
-                                    "states")
-            if FLAGS.extra_conds:
-                # extra_conds_in = tf.identity(extra_conds, "extra_conditions")
-                extra_conds_in = tf.identity(data["extra_conds"], "extra_conditions")
-            else:
-                extra_conds_in = None
-            if FLAGS.ctrl_obs:
-                # ctrl_obs_in = tf.identity(ctrl_obs, "observed_control")
-                ctrl_obs_in = tf.identity(data["ctrl_obs"], "observed_control")
-            else:
-                with tf.name_scope("observed_control"):
-                    ctrl_obs_in = tf.atanh(tf.divide(tf.subtract(
-                        trajectory_in[:, 1:], trajectory_in[:, :-1], "diff"),
-                        max_vel, "standardize"), "arctanh")
-
-            inputs = {"trajectory": trajectory_in, "states": states_in,
-                      "extra_conds": extra_conds_in, "ctrl_obs": ctrl_obs_in}
 
         model = game_model(params, inputs, max_vel, get_state,
                            FLAGS.extra_dim, FLAGS.n_post_samp)
@@ -376,9 +365,9 @@ def run_model(FLAGS):
     sess_saver = tf.train.Saver(tf.global_variables(),
                                 max_to_keep=FLAGS.max_ckpt,
                                 name="session_saver")
-    # val_loss_saver = tf.train.Saver(tf.global_variables(),
-    #                                 max_to_keep=10,
-    #                                 name="validation_loss_based_saver")
+    val_loss_saver = tf.train.Saver(tf.global_variables(),
+                                    max_to_keep=10,
+                                    name="validation_loss_based_saver")
 
     if FLAGS.load_saved_model:
         sess_saver.restore(sess, FLAGS.saved_model_dir)
@@ -386,16 +375,14 @@ def run_model(FLAGS):
 
     print("Training initiated.")
 
-    # val_loss = []
-    # val_loss_change_cutoff = .01
-    # n_ckpt_val_loss = 0
+    val_loss = []
+    val_loss_change_cutoff = .01
+    n_ckpt_val_loss = 0
     for i in range(FLAGS.n_epochs):
         if i == 0 or (i + 1) % 5 == 0:
             print("Entering epoch %s ..." % (i + 1))
 
-        # sess.run(iterator.initializer, {data_dir: FLAGS.train_data_dir})
-        iterator.initializer.run()
-        # import pdb; pdb.set_trace()
+        iterator.initializer.run({data_dir: FLAGS.train_data_dir})
         # sess.run(train_init_op)
         while True:
             try:
@@ -410,33 +397,38 @@ def run_model(FLAGS):
             sess_saver.save(sess, FLAGS.model_dir + "/saved_model",
                             global_step=(i + 1),
                             latest_filename="ckpt")
-            print("Model saved after epoch %s." % (i + 1))
+            print("Model saved after %s epochs." % (i + 1))
 
-        # curr_val_loss = []
-        # sess.run(iterator.initializer, {data_dir: FLAGS.val_data_dir})
-        # # sess.run(val_init_op)
-        # while True:
-        #     try:
-        #         curr_val_loss.append(
-        #             sess.run(inference.loss, {epoch: (i + 1)}))
-        #     except tf.errors.OutOfRangeError:
-        #         break
+        if (i + 1) % FLAGS.freq_val_loss == 0:
+            curr_val_loss = []
+            iterator.initializer.run({data_dir: FLAGS.val_data_dir})
+            # sess.run(val_init_op)
+            while True:
+                try:
+                    curr_val_loss.append(
+                        sess.run(inference.loss, {epoch: (i + 1)}))
+                except tf.errors.OutOfRangeError:
+                    break
 
-        # val_loss.append(np.array(curr_val_loss).mean())
-        # print("Validation set loss after %s epochs is %.3f" % (
-        #     (i + 1), val_loss[-1]))
-        # np.save(FLAGS.model_dir + "/val_loss", val_loss)
+            val_loss.append(np.array(curr_val_loss).mean())
+            print("Validation set loss after %s epochs is %.3f." % (
+                (i + 1), val_loss[-1]))
+            np.save(FLAGS.model_dir + "/val_loss", val_loss)
 
-        # if len(val_loss) > 1:
-        #     val_loss_change = (
-        #         val_loss[-2] - val_loss[-1]) / val_loss[-2]
-        #     if (val_loss_change > 0
-        #             and (val_loss_change < val_loss_change_cutoff)):
-        #         n_ckpt_val_loss += 1
-        #         val_loss_saver.save(
-        #             sess, FLAGS.model_dir + "/val_loss-%s" % n_ckpt_val_loss,
-        #             latest_filename="ckpt_val_loss")
-        #         val_loss_change_cutoff /= 10
+            if len(val_loss) > 1:
+                val_loss_change = (
+                    val_loss[-2] - val_loss[-1]) / val_loss[-2]
+                if (val_loss_change > 0
+                        and (val_loss_change < val_loss_change_cutoff)):
+                    n_ckpt_val_loss += 1
+                    val_loss_saver.save(
+                        sess,
+                        FLAGS.model_dir + "/val_loss-%s" % n_ckpt_val_loss,
+                        latest_filename="ckpt_val_loss")
+                    print("Validation set loss decreases less than %s%%. \
+                          Model saved after %s epochs." % (
+                              val_loss_change_cutoff * 100, (i + 1)))
+                    val_loss_change_cutoff /= 10
 
     # if FLAGS.profile:
     #     fetched_timeline = timeline.Timeline(run_metadata.step_stats)
@@ -447,7 +439,8 @@ def run_model(FLAGS):
     #         f.write(chrome_trace)
     #         f.close()
 
-    sess_saver.save(sess, FLAGS.model_dir + "/final_model")
+    sess_saver.save(sess, FLAGS.model_dir + "/final_model",
+                    latest_filename="ckpt")
     inference.finalize()
     sess.close()
 
