@@ -39,10 +39,10 @@ def clip_log_prob(upsilon, u, bounds, tol, eta):
     u_b = tf.subtract(bounds[1], tol, "upper_bound")
 
     return tf.where(tf.less_equal(upsilon, l_b, name="left_clip"),
-                    normal_logcdf(l_b, u, eta),
+                    normal_logcdf(upsilon, u, eta),
                     tf.where(tf.greater_equal(upsilon, u_b,
                                               name="right_clip"),
-                             normal_logcdf(-u_b, -u, eta),
+                             normal_logcdf(-upsilon, -u, eta),
                              normal_logpdf(upsilon, u, eta)))
 
 
@@ -305,6 +305,10 @@ class GBDS(RandomVariable, Distribution):
                     tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3])
                 logdensity_g -= self.g_pen * tf.reduce_sum(
                     tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3])
+                logdensity_g -= self.g_pen * tf.reduce_sum(
+                    tf.nn.relu(self.bounds[0] - g_q), [1, 2])
+                logdensity_g -= self.g_pen * tf.reduce_sum(
+                    tf.nn.relu(g_q - self.bounds[1]), [1, 2])
 
         logdensity_u = 0.0
         with tf.name_scope("control_signal"):
