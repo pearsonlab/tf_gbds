@@ -302,9 +302,9 @@ class GBDS(RandomVariable, Distribution):
                 # logdensity_g -= self.g_pen * tf.reduce_sum(
                 #     tf.nn.relu(g_pred - self.bounds[1]), [1, 2, 3])
                 logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3])
+                    tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3]) / self.K
                 logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3])
+                    tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3]) / self.K
                 logdensity_g -= self.g_pen * tf.reduce_sum(
                     tf.nn.relu(self.bounds[0] - g_q), [1, 2])
                 logdensity_g -= self.g_pen * tf.reduce_sum(
