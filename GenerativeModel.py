@@ -297,18 +297,18 @@ class GBDS(RandomVariable, Distribution):
         with tf.name_scope("goal_boundary_penalty"):
             if self.g_pen is not None:
                 # penalty on goal state escaping game space
+                logdensity_g -= self.g_pen * tf.reduce_sum(
+                    tf.nn.relu(self.bounds[0] - g_pred), [1, 2, 3])
+                logdensity_g -= self.g_pen * tf.reduce_sum(
+                    tf.nn.relu(g_pred - self.bounds[1]), [1, 2, 3])
                 # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(self.bounds[0] - g_pred), [1, 2, 3])
+                #     tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3]) / self.K
                 # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(g_pred - self.bounds[1]), [1, 2, 3])
-                logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3]) / self.K
-                logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3]) / self.K
-                logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(self.bounds[0] - g_q), [1, 2])
-                logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(g_q - self.bounds[1]), [1, 2])
+                #     tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3]) / self.K
+                # logdensity_g -= self.g_pen * tf.reduce_sum(
+                #     tf.nn.relu(self.bounds[0] - g_q), [1, 2])
+                # logdensity_g -= self.g_pen * tf.reduce_sum(
+                #     tf.nn.relu(g_q - self.bounds[1]), [1, 2])
 
         logdensity_u = 0.0
         with tf.name_scope("control_signal"):
