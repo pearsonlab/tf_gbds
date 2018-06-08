@@ -267,6 +267,14 @@ class GBDS(RandomVariable, Distribution):
                     tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3])
                 logdensity_g -= self.g_pen * tf.reduce_sum(
                     tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3])
+                # logdensity_g -= self.g_pen * tf.reduce_sum(
+                #     tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3]) / self.K
+                # logdensity_g -= self.g_pen * tf.reduce_sum(
+                #     tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3]) / self.K
+                # logdensity_g -= self.g_pen * tf.reduce_sum(
+                #     tf.nn.relu(self.bounds[0] - value), [1, 2])
+                # logdensity_g -= self.g_pen * tf.reduce_sum(
+                #     tf.nn.relu(value - self.bounds[1]), [1, 2])
 
         logdensity_u = 0.0
         with tf.name_scope("control_signal"):

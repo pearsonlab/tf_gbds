@@ -395,8 +395,7 @@ def run_model(FLAGS):
 
         if (i + 1) % FLAGS.freq_ckpt == 0:
             sess_saver.save(sess, FLAGS.model_dir + "/saved_model",
-                            global_step=(i + 1),
-                            latest_filename="ckpt")
+                            global_step=(i + 1), latest_filename="ckpt")
             print("Model saved after %s epochs." % (i + 1))
 
         if (i + 1) % FLAGS.freq_val_loss == 0:
@@ -411,24 +410,26 @@ def run_model(FLAGS):
                     break
 
             val_loss.append(np.array(curr_val_loss).mean())
-            print("Validation set loss after %s epochs is %.3f." % (
+            print("Validation set loss after epoch %s is %.3f." % (
                 (i + 1), val_loss[-1]))
             np.save(FLAGS.model_dir + "/val_loss", val_loss)
 
             if len(val_loss) > 1:
-                val_loss_change = (
-                    val_loss[-2] - val_loss[-1]) / val_loss[-2]
-                if (val_loss_change > 0
+                val_loss_change = np.abs(
+                    (val_loss[-1] - val_loss[-2]) / val_loss[-2])
+
+                if (val_loss[-1] < val_loss[-2]
                         and (val_loss_change < val_loss_change_cutoff)):
+                    print("Validation set loss decreases less than %s%%." % (
+                        val_loss_change_cutoff * 100,))
+                    val_loss_change_cutoff /= 10
+
                     n_ckpt_val_loss += 1
                     val_loss_saver.save(
-                        sess,
-                        FLAGS.model_dir + "/val_loss-%s" % n_ckpt_val_loss,
+                        sess, FLAGS.model_dir + "/val_loss",
+                        global_step=n_ckpt_val_loss,
                         latest_filename="ckpt_val_loss")
-                    print("Validation set loss decreases less than %s%%. \
-                          Model saved after %s epochs." % (
-                              val_loss_change_cutoff * 100, (i + 1)))
-                    val_loss_change_cutoff /= 10
+                    print("Model saved after %s epochs." % (i + 1))
 
     # if FLAGS.profile:
     #     fetched_timeline = timeline.Timeline(run_metadata.step_stats)
@@ -439,8 +440,8 @@ def run_model(FLAGS):
     #         f.write(chrome_trace)
     #         f.close()
 
-    sess_saver.save(sess, FLAGS.model_dir + "/final_model",
-                    latest_filename="ckpt")
+    # sess_saver.save(sess, FLAGS.model_dir + "/final_model",
+    #                 latest_filename="ckpt")
     inference.finalize()
     sess.close()
 
