@@ -39,18 +39,21 @@ class game_model(object):
             self.var_list += self.p.params
             self.log_vars += self.p.log_vars
 
+            # self.g_q = SmoothingPastLDSTimeSeries(
+            #     params["g_q_params"], self.traj[:, 1:], self.obs_dim,
+            #     self.obs_dim, self.extra_conds, name="recognition")
             self.g_q = SmoothingPastLDSTimeSeries(
-                params["g_q_params"], self.traj[:, 1:], self.obs_dim,
+                params["g_q_params"], self.traj, self.obs_dim,
                 self.obs_dim, self.extra_conds, name="recognition")
             self.var_list += self.g_q.params
             self.log_vars += self.g_q.log_vars
 
             self.latent_vars.update({self.p: self.g_q})
 
-            with tf.name_scope("initial_goal"):
-                self.g0 = tf.identity(self.p.sample_g0(), "sampler")
-                self.g0_samp = tf.identity(self.p.sample_g0(1000),
-                                           "samples")
+            # with tf.name_scope("initial_goal"):
+            #     self.g0 = tf.identity(self.p.sample_g0(), "sampler")
+            #     self.g0_samp = tf.identity(self.p.sample_g0(1000),
+            #                                "samples")
 
             with tf.name_scope("GMM"):
                 traj_i = tf.placeholder(
@@ -99,41 +102,41 @@ class game_model(object):
                 self.g_q_samp = tf.identity(
                     self.g_q.sample(n_samples), "samples")
 
-            with tf.name_scope("update_one_step"):
-                prev_y = tf.placeholder(tf.float32, self.obs_dim,
-                                        "previous_position")
-                curr_y = tf.placeholder(tf.float32, self.obs_dim,
-                                        "current_position")
-                v = tf.divide(curr_y - prev_y, max_vel, "current_velocity")
-                curr_s = tf.concat([curr_y, v], 0, "current_state")
+            # with tf.name_scope("update_one_step"):
+            #     prev_y = tf.placeholder(tf.float32, self.obs_dim,
+            #                             "previous_position")
+            #     curr_y = tf.placeholder(tf.float32, self.obs_dim,
+            #                             "current_position")
+            #     v = tf.divide(curr_y - prev_y, max_vel, "current_velocity")
+            #     curr_s = tf.concat([curr_y, v], 0, "current_state")
 
-                if extra_dim != 0:
-                    gen_extra_conds = tf.placeholder(
-                        tf.float32, extra_dim, "extra_conditions")
-                else:
-                    gen_extra_conds = None
+            #     if extra_dim != 0:
+            #         gen_extra_conds = tf.placeholder(
+            #             tf.float32, extra_dim, "extra_conditions")
+            #     else:
+            #         gen_extra_conds = None
 
-                with tf.name_scope("goal"):
-                    prev_g = tf.placeholder(tf.float32, self.obs_dim,
-                                            "previous")
-                    curr_g = tf.identity(
-                        self.p.update_goal(curr_s, prev_g, gen_extra_conds),
-                        "current")
+            #     with tf.name_scope("goal"):
+            #         prev_g = tf.placeholder(tf.float32, self.obs_dim,
+            #                                 "previous")
+            #         curr_g = tf.identity(
+            #             self.p.update_goal(curr_s, prev_g, gen_extra_conds),
+            #             "current")
 
-                with tf.name_scope("control"):
-                    with tf.name_scope("error"):
-                        curr_error = tf.subtract(curr_g, curr_y, "current")
-                        prev_error = tf.placeholder(tf.float32, self.obs_dim,
-                                                    "previous")
-                        prev2_error = tf.placeholder(tf.float32, self.obs_dim,
-                                                     "previous2")
-                        errors = tf.stack(
-                            [prev2_error, prev_error, curr_error], 0, "all")
-                    prev_u = tf.placeholder(tf.float32, self.obs_dim,
-                                            "previous")
-                    curr_u = tf.identity(self.p.update_ctrl(errors, prev_u),
-                                         "current")
+            #     with tf.name_scope("control"):
+            #         with tf.name_scope("error"):
+            #             curr_error = tf.subtract(curr_g, curr_y, "current")
+            #             prev_error = tf.placeholder(tf.float32, self.obs_dim,
+            #                                         "previous")
+            #             prev2_error = tf.placeholder(tf.float32, self.obs_dim,
+            #                                          "previous2")
+            #             errors = tf.stack(
+            #                 [prev2_error, prev_error, curr_error], 0, "all")
+            #         prev_u = tf.placeholder(tf.float32, self.obs_dim,
+            #                                 "previous")
+            #         curr_u = tf.identity(self.p.update_ctrl(errors, prev_u),
+            #                              "current")
 
-                next_y = tf.clip_by_value(
-                    curr_y + max_vel * tf.tanh(curr_u), -1., 1.,
-                    name="next_position")
+            #     next_y = tf.clip_by_value(
+            #         curr_y + max_vel * tf.tanh(curr_u), -1., 1.,
+            #         name="next_position")

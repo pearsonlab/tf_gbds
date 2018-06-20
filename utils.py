@@ -146,14 +146,17 @@ def load_data(data_dir, hps):
         features.update({"ctrl_obs": tf.FixedLenFeature(
             (), tf.string)})
 
-    y0 = tf.reshape([0., -0.58, 0.], [1, hps.obs_dim], "y0")
+    # y0 = tf.reshape([0., -0.58, 0.], [1, hps.obs_dim], "y0")
 
     def _read_data(example):
         parsed_features = tf.parse_single_example(example, features)
-        trajectory = tf.concat(
-            [y0, tf.reshape(
-                tf.decode_raw(parsed_features["trajectory"], tf.float32),
-                [-1, hps.obs_dim])], 0)
+        # trajectory = tf.concat(
+        #     [y0, tf.reshape(
+        #         tf.decode_raw(parsed_features["trajectory"], tf.float32),
+        #         [-1, hps.obs_dim])], 0)
+        trajectory = tf.reshape(
+            tf.decode_raw(parsed_features["trajectory"], tf.float32),
+            [-1, hps.obs_dim])
         data = (trajectory,)
 
         if "extra_conds" in parsed_features:
@@ -212,18 +215,20 @@ def get_max_velocities(data_dirs, dim):
     n_trials = []
 
     feature = {"trajectory": tf.FixedLenFeature((), tf.string)}
-    y0 = tf.reshape([0., -0.58, 0.], [1, dim])
-    def _read_data(example):
+    # y0 = tf.reshape([0., -0.58, 0.], [1, dim])
+    def _get_trial(example):
         data_dict = tf.parse_single_example(example, feature)
-        traj = tf.concat(
-            [y0, tf.reshape(tf.decode_raw(
-                data_dict["trajectory"], tf.float32), [-1, dim])], 0)
+        # traj = tf.concat(
+        #     [y0, tf.reshape(tf.decode_raw(
+        #         data_dict["trajectory"], tf.float32), [-1, dim])], 0)
+        traj = tf.reshape(tf.decode_raw(
+            data_dict["trajectory"], tf.float32), [-1, dim])
 
         return traj
 
     for data_dir in data_dirs:
         dataset = tf.data.TFRecordDataset(data_dir)
-        dataset = dataset.map(_read_data)
+        dataset = dataset.map(_get_trial)
         traj = dataset.make_one_shot_iterator().get_next()
         trial_max_vel = tf.reduce_max(tf.abs(traj[1:] - traj[:-1]), 0,
                                       name="trial_maximum_velocity")
@@ -462,9 +467,12 @@ def get_g0_params(dim, K):
     with tf.variable_scope("g0"):
         g0 = {}
         g0["K"] = K
-        g0["mu"] = tf.Variable(
+        # g0["mu"] = tf.Variable(
+        #     tf.random_normal([K, dim], name="mu_init_value"),
+        #     dtype=tf.float32, name="mu")
+        g0["unc_mu"] = tf.Variable(
             tf.random_normal([K, dim], name="mu_init_value"),
-            dtype=tf.float32, name="mu")
+            dtype=tf.float32, name="unc_mu")
         g0["unc_lambda"] = tf.Variable(
             tf.random_normal([K, dim], name="lambda_init_value"),
             dtype=tf.float32, name="unc_lambda")

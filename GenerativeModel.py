@@ -44,10 +44,13 @@ class GBDS(RandomVariable, Distribution):
             with tf.name_scope("g0"):
                 # initial goal distribution
                 g0 = params["g0"]
-                self.g0_mu = tf.identity(g0["mu"], "mu")
+                # self.g0_mu = tf.identity(g0["mu"], "mu")
+                self.g0_mu = tf.add(g0["unc_mu"], self.y[0, 0], "mu")
                 self.g0_lambda = tf.nn.softplus(g0["unc_lambda"], "lambda")
                 self.g0_w = tf.nn.softmax(g0["unc_w"], name="w")
-                self.g0_params = ([g0["mu"]] + [g0["unc_lambda"]] +
+                # self.g0_params = ([g0["mu"]] + [g0["unc_lambda"]] +
+                #                   [g0["unc_w"]])
+                self.g0_params = ([g0["unc_mu"]] + [g0["unc_lambda"]] +
                                   [g0["unc_w"]])
                 self.params += self.g0_params
                 self.log_vars += ([self.g0_mu] + [self.g0_lambda] +
@@ -267,6 +270,7 @@ class GBDS(RandomVariable, Distribution):
                     tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3])
                 logdensity_g -= self.g_pen * tf.reduce_sum(
                     tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3])
+                # logdensity_g -= .1 * tf.reduce_sum(1. / all_lambda, [1, 2, 3])
                 # logdensity_g -= self.g_pen * tf.reduce_sum(
                 #     tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3]) / self.K
                 # logdensity_g -= self.g_pen * tf.reduce_sum(
