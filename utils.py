@@ -156,7 +156,7 @@ def load_data(data_dir, hps):
         #         [-1, hps.obs_dim])], 0)
         trajectory = tf.reshape(
             tf.decode_raw(parsed_features["trajectory"], tf.float32),
-            [-1, hps.obs_dim])
+            [-1, hps.obs_dim])[1:]
         data = (trajectory,)
 
         if "extra_conds" in parsed_features:
@@ -222,7 +222,7 @@ def get_max_velocities(data_dirs, dim):
         #     [y0, tf.reshape(tf.decode_raw(
         #         data_dict["trajectory"], tf.float32), [-1, dim])], 0)
         traj = tf.reshape(tf.decode_raw(
-            data_dict["trajectory"], tf.float32), [-1, dim])
+            data_dict["trajectory"], tf.float32), [-1, dim])[1:]
 
         return traj
 
@@ -305,7 +305,7 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
 
                 priors.append(dict(
                     name=a["name"], col=a["col"], dim=a["dim"],
-                    g0=get_g0_params(a["dim"], GMM_K),
+                    # g0=get_g0_params(a["dim"], GMM_K),
                     GMM_NN=get_network(
                         "goal_GMM", (state_dim + extra_dim),
                         (GMM_K * a["dim"] * 2 + GMM_K),
@@ -463,23 +463,23 @@ def get_PID_params(dim, epoch):
         return PID
 
 
-def get_g0_params(dim, K):
-    with tf.variable_scope("g0"):
-        g0 = {}
-        g0["K"] = K
-        # g0["mu"] = tf.Variable(
-        #     tf.random_normal([K, dim], name="mu_init_value"),
-        #     dtype=tf.float32, name="mu")
-        g0["unc_mu"] = tf.Variable(
-            tf.random_normal([K, dim], name="mu_init_value"),
-            dtype=tf.float32, name="unc_mu")
-        g0["unc_lambda"] = tf.Variable(
-            tf.random_normal([K, dim], name="lambda_init_value"),
-            dtype=tf.float32, name="unc_lambda")
-        g0["unc_w"] = tf.Variable(
-            tf.ones([K], name="w_init_value"), dtype=tf.float32, name="unc_w")
+# def get_g0_params(dim, K):
+#     with tf.variable_scope("g0"):
+#         g0 = {}
+#         g0["K"] = K
+#         # g0["mu"] = tf.Variable(
+#         #     tf.random_normal([K, dim], name="mu_init_value"),
+#         #     dtype=tf.float32, name="mu")
+#         g0["unc_mu"] = tf.Variable(
+#             tf.random_normal([K, dim], name="mu_init_value"),
+#             dtype=tf.float32, name="unc_mu")
+#         g0["unc_lambda"] = tf.Variable(
+#             tf.random_normal([K, dim], name="lambda_init_value"),
+#             dtype=tf.float32, name="unc_lambda")
+#         g0["unc_w"] = tf.Variable(
+#             tf.ones([K], name="w_init_value"), dtype=tf.float32, name="unc_w")
 
-        return g0
+#         return g0
 
 
 def pad_batch(batch, mode="edge"):
