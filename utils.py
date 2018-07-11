@@ -450,11 +450,11 @@ def get_PID_params(dim, epoch):
 
         PID = {}
         PID["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
-        PID["Kp"] = tf.cond(tf.greater(epoch, 30),
+        PID["Kp"] = tf.cond(tf.greater(epoch, 0),
                             lambda: Kp, lambda: tf.stop_gradient(Kp))
-        PID["Ki"] = tf.cond(tf.greater(epoch, 30),
+        PID["Ki"] = tf.cond(tf.greater(epoch, 0),
                             lambda: Ki, lambda: tf.stop_gradient(Ki))
-        PID["Kd"] = tf.cond(tf.greater(epoch, 30),
+        PID["Kd"] = tf.cond(tf.greater(epoch, 0),
                             lambda: Kd, lambda: tf.stop_gradient(Kd))
         # PID["Kp"] = Kp
         # PID["Ki"] = Ki
