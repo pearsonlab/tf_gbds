@@ -10,7 +10,6 @@ import lib.blk_tridiag_chol_tools as blk
 from edward.models import RandomVariable
 from tensorflow.contrib.distributions import Distribution
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
-# from utils import pad_extra_conds
 
 
 class SmoothingLDSTimeSeries(RandomVariable, Distribution):
@@ -226,7 +225,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
             for i in range(self.lag):
                 lagged = tf.concat(
                     [tf.reshape(Input_[:, 0, :yDim], [-1, 1, yDim], "t0"),
-                     Input_[:, :-1, -yDim:]], 1, "lag")
+                     Input_[:, :-1, -yDim:]], 1, "lagged")
                 Input_ = tf.concat([Input_, lagged], -1)
 
         if "name" not in kwargs:

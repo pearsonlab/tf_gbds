@@ -78,59 +78,63 @@ def smooth_trial(trial, sigma=4.0, pad_method="extrapolate"):
     return rtrial
 
 
-def load_data(hps):
-    """ Generate synthetic data set or load real data from local directory
+def load_data(data_dir, hps):
+    """ Load data from given directory
     """
-    if hps.data_dir is not None:
-        features = {"trajectory": tf.FixedLenFeature((), tf.string)}
-        if hps.extra_conds:
-            features.update({"extra_conds": tf.FixedLenFeature(
-                (), tf.string)})
-        if hps.ctrl_obs:
-            features.update({"ctrl_obs": tf.FixedLenFeature(
-                (), tf.string)})
+    features = {"trajectory": tf.FixedLenFeature((), tf.string)}
+    if hps.extra_conds:
+        features.update({"extra_conds": tf.FixedLenFeature(
+            (), tf.string)})
+    if hps.ctrl_obs:
+        features.update({"ctrl_obs": tf.FixedLenFeature(
+            (), tf.string)})
 
-        def _read_data(example):
-            parsed_features = tf.parse_single_example(example, features)
-            data = ()
+    def _read_data(example):
+        parsed_features = tf.parse_single_example(example, features)
 
-            trajectory = tf.reshape(
-                tf.decode_raw(parsed_features["trajectory"], tf.float32),
+        trajectory = tf.reshape(
+            tf.decode_raw(parsed_features["trajectory"], tf.float32),
+            [-1, hps.obs_dim])
+        data = (trajectory,)
+
+        if "extra_conds" in parsed_features:
+            extra_conds = tf.reshape(
+                tf.decode_raw(parsed_features["extra_conds"], tf.float32),
+                [-1, hps.extra_dim])
+            data += (extra_conds,)
+        if "ctrl_obs" in parsed_features:
+            ctrl_obs = tf.reshape(
+                tf.decode_raw(parsed_features["ctrl_obs"], tf.float32),
                 [-1, hps.obs_dim])
-            data += (trajectory,)
+            data += (ctrl_obs,)
 
-            if "extra_conds" in parsed_features:
-                extra_conds = tf.reshape(
-                    tf.decode_raw(parsed_features["extra_conds"], tf.float32),
-                    [-1, hps.extra_dim])
-                data += (extra_conds,)
-            if "ctrl_obs" in parsed_features:
-                ctrl_obs = tf.reshape(
-                    tf.decode_raw(parsed_features["ctrl_obs"], tf.float32),
-                    [-1, hps.obs_dim])
-                data += (ctrl_obs,)
+        return data
 
-            return data
+    # def _pad_data(batch):
+    #     batch["trajectory"] = pad_batch(batch["trajectory"])
+    #     if "ctrl_obs" in batch:
+    #         batch["ctrl_obs"] = pad_batch(batch["ctrl_obs"],
+    #                                       mode="zero")
 
-        # def _pad_data(batch):
-        #     batch["trajectory"] = pad_batch(batch["trajectory"])
-        #     if "ctrl_obs" in batch:
-        #         batch["ctrl_obs"] = pad_batch(batch["ctrl_obs"],
-        #                                       mode="zero")
+    #     return batch
 
-        #     return batch
+    with tf.name_scope("preprocessing"):
+        if data_dir.split(".")[-1] == "tfrecords":
+            dataset = tf.data.TFRecordDataset(data_dir)
+            dataset = dataset.map(_read_data)
+            dataset = dataset.shuffle(
+                buffer_size=1000000, seed=tf.random_uniform(
+                    [], minval=-2**63+1, maxval=2**63-1, dtype=tf.int64))
+            dataset = dataset.apply(
+                tf.contrib.data.batch_and_drop_remainder(hps.B))
+            # if hps.B > 1:
+            #     dataset = dataset.map(_pad_data)
+            iterator = dataset.make_initializable_iterator("iterator")
+        else:
+            raise Exception("Data format in {} is not supported.".format(
+                data_dir))
 
-        with tf.name_scope("load_training_set"):
-            if hps.data_dir.split(".")[-1] == "tfrecords":
-                train_set = tf.data.TFRecordDataset(hps.data_dir)
-                train_set = train_set.map(_read_data)
-            else:
-                raise Exception("Data format not recognized.")
-
-    else:
-        raise Exception("Data must be provided (either real or synthetic).")
-
-    return train_set
+    return iterator
 
 
 # def get_max_velocities(datasets, dim):
@@ -147,23 +151,36 @@ def load_data(hps):
 #     return np.array([max(vel) for vel in max_vel], np.float32)
 
 
-def get_max_velocities(datasets, dim, clip):
+def get_max_velocities(data_dirs, dim, clip):
+    """Get the maximium velocities from datasets
+    """
     max_vel = np.zeros((dim), np.float32)
-    n_trials = 0
+    n_trials = []
 
-    for dataset in datasets:
-        traj = dataset.make_one_shot_iterator().get_next()[0]
+    feature = {"trajectory": tf.FixedLenFeature((), tf.string)}
+    def _get_trial(example):
+        data_dict = tf.parse_single_example(example, feature)
+        traj = tf.reshape(
+            tf.decode_raw(data_dict["trajectory"], tf.float32), [-1, dim])
+
+        return traj
+
+    for data_dir in data_dirs:
+        dataset = tf.data.TFRecordDataset(data_dir)
+        dataset = dataset.map(_get_trial)
+        traj = dataset.make_one_shot_iterator().get_next()
         trial_max_vel = tf.reduce_max(tf.abs(traj[1:] - traj[:-1]), 0,
                                       name="trial_maximum_velocity")
 
-        sess = tf.InteractiveSession()
-        while True:
-            try:
-                max_vel = np.maximum(trial_max_vel.eval(), max_vel)
-                n_trials += 1
-            except tf.errors.OutOfRangeError:
-                break
-        sess.close()
+        dataset_size = 0
+        with tf.Session() as sess:
+            while True:
+                try:
+                    max_vel = np.maximum(trial_max_vel.eval(), max_vel)
+                    dataset_size += 1
+                except tf.errors.OutOfRangeError:
+                    break
+        n_trials.append(dataset_size)
 
     if clip:
         return max_vel, n_trials
@@ -177,7 +194,7 @@ def get_vel(traj, max_vel):
     """
     with tf.name_scope("get_velocity"):
         vel = tf.pad(
-            tf.divide(traj[:, 1:] - traj[:, :-1], tf.to_float(max_vel),
+            tf.divide(traj[:, 1:] - traj[:, :-1], max_vel.astype(np.float32),
                       name="standardize"), [[0, 0], [1, 0], [0, 0]],
             name="pad_zero")
         states = tf.concat([traj, vel], -1, name="states")
@@ -192,7 +209,7 @@ def get_accel(traj, max_vel):
     with tf.name_scope("get_acceleration"):
         states = get_vel(traj, max_vel)
         accel = traj[:, 2:] - 2 * traj[1:-1] + traj[:-2]
-        accel = tf.pad(accel, [[0, 0], [2, 0], [0, 0]], name="pad_zero")
+        accel = tf.pad(accel, [[0, 0], [2, 0], [0, 0]], name="pad_zeros")
         states = tf.concat([states, accel], -1, name="states")
 
         return states
@@ -200,70 +217,74 @@ def get_accel(traj, max_vel):
 
 def get_model_params(name, agents, model_dim, obs_dim, state_dim, extra_dim,
                      gen_n_layers, gen_hidden_dim, GMM_K, PKLparams,
-                     sigma, sigma_trainable, sigma_penalty,
-                     goal_boundaries, goal_boundary_penalty, latent_ctrl,
-                     rec_lag, rec_n_layers, rec_hidden_dim, penalty_Q,
-                     epsilon, epsilon_trainable, epsilon_penalty,
+                     unc_sigma, sigma_trainable, sigma_penalty,
+                     goal_boundaries, goal_boundary_penalty,
+                     goal_precision_penalty, latent_ctrl, rec_lag,
+                     rec_n_layers, rec_hidden_dim, penalty_Q,
+                     unc_epsilon, epsilon_trainable, epsilon_penalty,
                      clip, clip_range, clip_tolerance,
-                     eta, eta_trainable, eta_penalty, epoch):
+                     unc_eta, eta_trainable, eta_penalty, epoch):
 
     with tf.variable_scope("model_parameters"):
         p_params = []
 
         for a in agents:
-            if sigma_trainable:
-                unc_sigma = tf.Variable(
-                    sigma * np.ones((1, a["dim"]), np.float32),
-                    name="unc_sigma_%s" % a["name"])
-            else:
-                unc_sigma = tf.constant(
-                    sigma * np.ones((1, a["dim"]), np.float32),
-                    name="unc_sigma_%s" % a["name"])
-            if epsilon_trainable:
-                unc_eps = tf.Variable(
-                    epsilon * np.ones((1, a["dim"]), np.float32),
-                    name="unc_eps_%s" % a["name"])
-            else:
-                unc_eps = tf.constant(
-                    epsilon * np.ones((1, a["dim"]), np.float32),
-                    name="unc_eps_%s" % a["name"])
-            if eta_trainable:
-                unc_eta = tf.Variable(
-                    eta * np.ones(a["dim"], np.float32),
-                    name="unc_eta_%s" % a["name"])
-            else:
-                unc_eta = tf.constant(
-                    eta * np.ones(a["dim"], np.float32),
-                    name="unc_eta_%s" % a["name"])
+            with tf.variable_scope("prior_%s" % a["name"]):
+                if sigma_trainable:
+                    unc_sigma_init = tf.Variable(
+                        unc_sigma * np.ones((1, a["dim"]), np.float32),
+                        name="unc_sigma")
+                else:
+                    unc_sigma_init = tf.constant(
+                        unc_sigma * np.ones((1, a["dim"]), np.float32),
+                        name="unc_sigma")
+                if epsilon_trainable:
+                    unc_eps_init = tf.Variable(
+                        unc_epsilon * np.ones((1, a["dim"]), np.float32),
+                        name="unc_eps")
+                else:
+                    unc_eps_init = tf.constant(
+                        unc_epsilon * np.ones((1, a["dim"]), np.float32),
+                        name="unc_eps")
+                if eta_trainable:
+                    unc_eta_init = tf.Variable(
+                        unc_eta * np.ones(a["dim"], np.float32),
+                        name="unc_eta")
+                else:
+                    unc_eta_init = tf.constant(
+                        unc_eta * np.ones(a["dim"], np.float32),
+                        name="unc_eta")
 
-            p_params.append(dict(
-                name=a["name"], col=a["col"], dim=a["dim"],
-                GMM_NN=get_network(
-                    "%s_goal_GMM" % a["name"], (state_dim + extra_dim),
-                    (GMM_K * a["dim"] * 2 + GMM_K),
-                    gen_hidden_dim, gen_n_layers, PKLparams)[0],
-                GMM_K=GMM_K, unc_sigma=unc_sigma,
-                sigma_trainable=sigma_trainable, sigma_pen=sigma_penalty,
-                g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
-                PID=get_PID(a["dim"], a["name"], epoch), latent_u=latent_ctrl,
-                unc_eps=unc_eps, eps_trainable=epsilon_trainable,
-                eps_pen=epsilon_penalty, clip=clip, clip_range=clip_range,
-                clip_tol=clip_tolerance, unc_eta=unc_eta,
-                eta_trainable=eta_trainable, eta_pen=eta_penalty))
+                p_params.append(dict(
+                    name=a["name"], col=a["col"], dim=a["dim"],
+                    GMM_NN=get_network(
+                        "goal_GMM", (state_dim + extra_dim),
+                        (GMM_K * a["dim"] * 2 + GMM_K),
+                        gen_hidden_dim, gen_n_layers, PKLparams)[0],
+                    GMM_K=GMM_K, unc_sigma=unc_sigma_init,
+                    sigma_trainable=sigma_trainable, sigma_pen=sigma_penalty,
+                    g_bounds=goal_boundaries,
+                    g_bounds_pen=goal_boundary_penalty,
+                    g_prec_pen=goal_precision_penalty, PID=get_PID(
+                        a["dim"], epoch), latent_u=latent_ctrl,
+                    unc_eps=unc_eps_init, eps_trainable=epsilon_trainable,
+                    eps_pen=epsilon_penalty, clip=clip, clip_range=clip_range,
+                    clip_tol=clip_tolerance, unc_eta=unc_eta_init,
+                    eta_trainable=eta_trainable, eta_pen=eta_penalty))
 
         if latent_ctrl:
             q_params = get_rec_params(
                 obs_dim, extra_dim, model_dim * 2, rec_lag, rec_n_layers,
-                rec_hidden_dim, penalty_Q, PKLparams, "posterior")
+                rec_hidden_dim, penalty_Q, PKLparams, "joint_posterior")
         else:
             q_params = get_rec_params(
                 obs_dim, extra_dim, model_dim, rec_lag, rec_n_layers,
-                rec_hidden_dim, penalty_Q, PKLparams, "posterior")
+                rec_hidden_dim, penalty_Q, PKLparams, "goal_posterior")
 
         params = dict(
             name=name, model_dim=model_dim, obs_dim=obs_dim,
             p_params=p_params, q_params=q_params, latent_u=latent_ctrl,
-            g_bounds=goal_boundaries, clip_range=clip_range)
+            clip_range=clip_range)
 
         return params
 
@@ -322,7 +343,7 @@ def get_rec_params(obs_dim, extra_dim, output_dim, lag, n_layers, hidden_dim,
        model
     """
 
-    with tf.variable_scope("%s_params" % name):
+    with tf.variable_scope(name):
         Mu_net, PKbias_layers_mu = get_network(
             "Mu_NN", (obs_dim * (lag + 1) + extra_dim), output_dim, hidden_dim,
             n_layers, PKLparams)
@@ -358,8 +379,8 @@ def get_rec_params(obs_dim, extra_dim, output_dim, lag, n_layers, hidden_dim,
         return rec_params
 
 
-def get_PID(dim, name, epoch):
-    with tf.variable_scope("%s_PID" % name):
+def get_PID(dim, epoch):
+    with tf.variable_scope("PID"):
         unc_Kp = tf.Variable(tf.multiply(
             softplus_inverse(1.), tf.ones(dim, tf.float32), "unc_Kp_init"),
                              name="unc_Kp")
@@ -424,142 +445,11 @@ def pad_batch(batch, mode="edge"):
                              "constant"), batch)
 
 
-def pad_extra_conds(data, extra_conds):
-    if extra_conds is not None:
-        extra_conds = tf.convert_to_tensor(extra_conds, dtype=tf.float32,
-                                           name="extra_conds")
-        extra_conds_repeat = tf.tile(
-            tf.reshape(extra_conds, [1, 1, -1]),
-            [tf.shape(data)[0], tf.shape(data)[1], 1],
-            name="repeat_extra_conds")
-        padded_data = tf.concat([data, extra_conds_repeat], axis=-1,
-                                name="pad_extra_conds")
-
-        return padded_data
-
-    else:
-        raise Exception("Must provide extra conditions.")
-
-
 def add_summary(summary_op, inference, session, feed_dict, step):
     if inference.n_print != 0:
         if step == 1 or step % inference.n_print == 0:
             summary = session.run(summary_op, feed_dict=feed_dict)
             inference.train_writer.add_summary(summary, step)
-
-
-class DatasetTrialIndexIterator(object):
-    """Basic trial iterator
-    """
-    def __init__(self, y, randomize=False, batch_size=1):
-        self.y = y
-        self.randomize = randomize
-
-    def __iter__(self):
-        n_batches = len(self.y)
-        if self.randomize:
-            indices = list(range(n_batches))
-            np.random.shuffle(indices)
-            for i in indices:
-                yield self.y[i]
-        else:
-            for i in range(n_batches):
-                yield self.y[i]
-
-
-class MultiDatasetTrialIndexIterator(object):
-    """Trial iterator over multiple datasets of shape
-    (ntrials, trial_len, trial_dimensions)
-    """
-    def __init__(self, data, randomize=False, batch_size=1):
-        self.data = data
-        self.randomize = randomize
-
-    def __iter__(self):
-        n_batches = len(self.data[0])
-        if self.randomize:
-            indices = list(range(n_batches))
-            np.random.shuffle(indices)
-            for i in indices:
-                yield tuple(dset[i] for dset in self.data)
-        else:
-            for i in range(n_batches):
-                yield tuple(dset[i] for dset in self.data)
-
-
-class DataSetTrialIndexTF(object):
-    """Tensor version of Minibatch iterator over one dataset of shape
-    (nobservations, ndimensions)
-    """
-    def __init__(self, data, batch_size=100):
-        self.data = data
-        self.batch_size = batch_size
-
-    def __iter__(self):
-        new_data = [tf.constant(d) for d in self.data]
-        data_iter_vb_new = tf.train.batch(new_data, self.batch_size,
-                                          dynamic_pad=True)
-        # data_iter_vb = [vb.eval() for vb in data_iter_vb_new]
-        return iter(data_iter_vb_new)
-
-
-class DatasetMiniBatchIterator(object):
-    """Minibatch iterator over one dataset of shape
-    (nobservations, ndimensions)
-    """
-    def __init__(self, data, batch_size, randomize=False):
-        super(DatasetMiniBatchIterator, self).__init__()
-        self.data = data  # tuple of datasets w/ same nobservations
-        self.batch_size = batch_size
-        self.randomize = randomize
-
-    def __iter__(self):
-        rows = range(len(self.data))
-        if self.randomize:
-            np.random.shuffle(rows)
-        beg_indices = range(0, len(self.data) - self.batch_size + 1,
-                            self.batch_size)
-        end_indices = range(self.batch_size, len(self.data) + 1,
-                            self.batch_size)
-        for beg, end in zip(beg_indices, end_indices):
-            curr_rows = rows[beg:end]
-            yield self.data[curr_rows, :]
-
-
-class MultiDatasetMiniBatchIterator(object):
-    """Minibatch iterator over multiple datasets of shape
-    (nobservations, ndimensions)
-    """
-    def __init__(self, data, batch_size, randomize=False):
-        super(MultiDatasetMiniBatchIterator, self).__init__()
-        self.data = data  # tuple of datasets w/ same nobservations
-        self.batch_size = batch_size
-        self.randomize = randomize
-
-    def __iter__(self):
-        rows = range(len(self.data[0]))
-        if self.randomize:
-            np.random.shuffle(rows)
-        beg_indices = range(0, len(self.data[0]) - self.batch_size + 1,
-                            self.batch_size)
-        end_indices = range(self.batch_size, len(self.data[0]) + 1,
-                            self.batch_size)
-        for beg, end in zip(beg_indices, end_indices):
-            curr_rows = rows[beg:end]
-            yield tuple(dset[curr_rows, :] for dset in self.data)
-
-
-# class hps_dict_to_obj(dict):
-#     """Helper class allowing us to access hps dictionary more easily.
-#     """
-#     def __getattr__(self, key):
-#         if key in self:
-#             return self[key]
-#         else:
-#             assert False, ("%s does not exist." % key)
-
-#     def __setattr__(self, key, value):
-#         self[key] = value
 
 
 class KLqp_profile(KLqp):

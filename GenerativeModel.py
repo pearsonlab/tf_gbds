@@ -5,7 +5,6 @@ from edward.models import RandomVariable
 from tensorflow.contrib.distributions import (Distribution,
                                               FULLY_REPARAMETERIZED)
 from tensorflow.python.ops.distributions.special_math import log_ndtr
-# from utils import pad_extra_conds
 
 
 def z(x, loc, scale):
@@ -142,6 +141,12 @@ class GBDS(RandomVariable, Distribution):
                 else:
                     self.g_pen = None
 
+                # penalty on the precision of GMM components
+                if params["g_prec_pen"] is not None:
+                    self.g_prec_pen = tf.constant(
+                        params["g_prec_pen"], tf.float32,
+                        name="goal_precision_penalty")
+
             with tf.name_scope("PID_control"):
                 PID_params = params["PID"]
                 self.Kp = PID_params["Kp"]
@@ -217,7 +222,6 @@ class GBDS(RandomVariable, Distribution):
         with tf.name_scope("pad_extra_conds"):
             if extra_conds is not None:
                 s = tf.concat([s, extra_conds], -1)
-                # s = pad_extra_conds(s, extra_conds)
 
         NN_output = tf.identity(self.GMM_NN(s), "NN_output")
         all_mu = tf.reshape(
@@ -275,8 +279,6 @@ class GBDS(RandomVariable, Distribution):
         all_mu, all_lambda, all_w, g_pred, u_pred = self.get_preds(
             self.s[:, :-1], self.y[:, :-1], g_q, u_q[:, :-1],
             self.extra_conds[:, :-1])
-        # _, all_lambda, all_w, g_pred, u_pred = self.get_preds(
-        #     self.s[:, :-1], self.y[:, :-1], g_q, self.extra_conds)
 
         logdensity_g = 0.0
         with tf.name_scope("goal_states"):
@@ -291,24 +293,28 @@ class GBDS(RandomVariable, Distribution):
             logdensity_g += tf.reduce_sum(
                 tf.reduce_logsumexp(gmm_term, -1), -1)
 
-            tf.summary.scalar("average_log_density", tf.reduce_mean(
-                tf.reduce_logsumexp(gmm_term, -1)))
+            # tf.summary.scalar("average_log_density", tf.reduce_mean(
+            #     tf.reduce_logsumexp(gmm_term, -1)))
 
-        with tf.name_scope("goal_boundary_penalty"):
+        with tf.name_scope("goal_penalty"):
             if self.g_pen is not None:
                 # penalty on goal state escaping game space
-                logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(self.bounds[0] - g_pred), [1, 2, 3])
-                logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(g_pred - self.bounds[1]), [1, 2, 3])
                 # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3]) / self.K
+                #     tf.nn.relu(self.bounds[0] - g_pred), [1, 2, 3])
                 # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3]) / self.K
+                #     tf.nn.relu(g_pred - self.bounds[1]), [1, 2, 3])
+                logdensity_g -= self.g_pen * tf.reduce_sum(
+                    tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3])
+                logdensity_g -= self.g_pen * tf.reduce_sum(
+                    tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3])
                 # logdensity_g -= self.g_pen * tf.reduce_sum(
                 #     tf.nn.relu(self.bounds[0] - g_q), [1, 2])
                 # logdensity_g -= self.g_pen * tf.reduce_sum(
                 #     tf.nn.relu(g_q - self.bounds[1]), [1, 2])
+
+                # penalty on GMM precision
+                logdensity_g -= self.g_prec_pen * tf.reduce_sum(
+                    1. / all_lambda, [1, 2, 3])
 
         logdensity_u = 0.0
         with tf.name_scope("control_signal"):
@@ -324,9 +330,9 @@ class GBDS(RandomVariable, Distribution):
                 (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
                  u_res ** 2 / (2 * self.eps ** 2)), [1, 2])
 
-            tf.summary.histogram("residual", u_res)
-            tf.summary.scalar("average_log_density", tf.reduce_mean(
-                logdensity_u))
+            # tf.summary.histogram("residual", u_res)
+            # tf.summary.scalar("average_log_density", tf.reduce_mean(
+            #     logdensity_u))
 
         if self.sigma_pen is not None:
             logdensity_g -= self.sigma_pen * tf.reduce_sum(self.unc_sigma)
@@ -351,7 +357,6 @@ class GBDS(RandomVariable, Distribution):
                 # Velocity is already part of the state.
                 extra_conds = tf.reshape(extra_conds, [1, 1, -1])
                 state = tf.concat([state, extra_conds], -1)
-                # state = pad_extra_conds(state, extra_conds)
 
         with tf.name_scope("mu"):
             all_mu = tf.reshape(
