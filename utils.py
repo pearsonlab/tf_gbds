@@ -119,20 +119,16 @@ def load_data(data_dir, hps):
     #     return batch
 
     with tf.name_scope("preprocessing"):
-        if data_dir.split(".")[-1] == "tfrecords":
-            dataset = tf.data.TFRecordDataset(data_dir)
-            dataset = dataset.map(_read_data)
-            dataset = dataset.shuffle(
-                buffer_size=1000000, seed=tf.random_uniform(
-                    [], minval=-2**63+1, maxval=2**63-1, dtype=tf.int64))
-            dataset = dataset.apply(
-                tf.contrib.data.batch_and_drop_remainder(hps.B))
-            # if hps.B > 1:
-            #     dataset = dataset.map(_pad_data)
-            iterator = dataset.make_initializable_iterator("iterator")
-        else:
-            raise Exception("Data format in {} is not supported.".format(
-                data_dir))
+        dataset = tf.data.TFRecordDataset(data_dir)
+        dataset = dataset.map(_read_data)
+        dataset = dataset.shuffle(
+            buffer_size=1000000, seed=tf.random_uniform(
+                [], minval=-2**63+1, maxval=2**63-1, dtype=tf.int64))
+        dataset = dataset.apply(
+            tf.contrib.data.batch_and_drop_remainder(hps.B))
+        # if hps.B > 1:
+        #     dataset = dataset.map(_pad_data)
+        iterator = dataset.make_initializable_iterator("iterator")
 
     return iterator
 

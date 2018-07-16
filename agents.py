@@ -1,7 +1,7 @@
 import tensorflow as tf
 from GenerativeModel import joint_GBDS
 from RecognitionModel import SmoothingPastLDSTimeSeries
-from utils import get_vel, pad_extra_conds
+from utils import get_vel
 # import numpy as np
 from tf_generate_trial import *
 

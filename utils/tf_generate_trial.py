@@ -72,7 +72,7 @@ def generate_ps_vect(prey_pos, subj_pos, npc_spd, weight_x, weight_y):
 
         w_x = tf.case({tf.greater_equal(orig_vect[0], lim_xscreen): f1_x,
                        tf.less_equal(orig_vect[0], 0): f2_x},
-                      default=f3_x, name="x_weight")
+                      default=f3_x, exclusive=False, name="x_weight")
 
         def f1_y(): return weight_y[-1]
         def f2_y(): return weight_y[0]
@@ -82,7 +82,7 @@ def generate_ps_vect(prey_pos, subj_pos, npc_spd, weight_x, weight_y):
 
         w_y = tf.case({tf.greater_equal(orig_vect[1], lim_yscreen): f1_y,
                        tf.less_equal(orig_vect[1], 0): f2_y},
-                      default=f3_y, name="y_weight")
+                      default=f3_y, exclusive=False, name="y_weight")
 
         real_vect = tf.multiply(norm_vect, tf.to_float([w_x, w_y]) * npc_spd,
                                 "reweighted")

@@ -3,7 +3,7 @@ import sys
 from os.path import join
 # Directory setup and add subfolders
 curr_dir = os.getcwd()
-sys.path.append(curr_dir + '/utils')
+sys.path.append(join(curr_dir, 'utils'))
 
 import numpy as np
 import tensorflow as tf
@@ -66,7 +66,7 @@ ETA = -11.
 ETA_TRAINABLE = False
 ETA_PENALTY = 1e5
 
-SEED = 1
+SEED = 1234
 OPTIMIZER = "Adam"
 LEARNING_RATE = 1e-3
 N_EPOCHS = 500
@@ -264,7 +264,7 @@ def run_model(FLAGS):
         with tf.name_scope("get_max_velocities"):
             max_vel, n_trials = get_max_velocities(
                 [FLAGS.train_data_dir, FLAGS.val_data_dir],
-                FLAGS.obs_dim)
+                FLAGS.obs_dim, FLAGS.clip)
             print("The maximum velocity is %s." % max_vel)
             print("The training set contains %s trials." % n_trials[0])
             print("The validation set contains %s trials." % n_trials[1])
