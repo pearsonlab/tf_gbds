@@ -146,17 +146,14 @@ def load_data(data_dir, hps):
         features.update({"ctrl_obs": tf.FixedLenFeature(
             (), tf.string)})
 
-    # y0 = tf.reshape([0., -0.58, 0.], [1, hps.obs_dim], "y0")
+    y0 = tf.reshape([0., -0.58, 0.], [1, hps.obs_dim], "y0")
 
     def _read_data(example):
         parsed_features = tf.parse_single_example(example, features)
-        # trajectory = tf.concat(
-        #     [y0, tf.reshape(
-        #         tf.decode_raw(parsed_features["trajectory"], tf.float32),
-        #         [-1, hps.obs_dim])], 0)
-        trajectory = tf.reshape(
-            tf.decode_raw(parsed_features["trajectory"], tf.float32),
-            [-1, hps.obs_dim])[1:]
+        trajectory = tf.concat(
+            [y0, tf.reshape(
+                tf.decode_raw(parsed_features["trajectory"], tf.float32),
+                [-1, hps.obs_dim])], 0)
         data = (trajectory,)
 
         if "extra_conds" in parsed_features:
@@ -215,20 +212,18 @@ def get_max_velocities(data_dirs, dim):
     n_trials = []
 
     feature = {"trajectory": tf.FixedLenFeature((), tf.string)}
-    # y0 = tf.reshape([0., -0.58, 0.], [1, dim])
-    def _get_trial(example):
+    y0 = tf.reshape([0., -0.58, 0.], [1, dim])
+    def _read_data(example):
         data_dict = tf.parse_single_example(example, feature)
-        # traj = tf.concat(
-        #     [y0, tf.reshape(tf.decode_raw(
-        #         data_dict["trajectory"], tf.float32), [-1, dim])], 0)
-        traj = tf.reshape(tf.decode_raw(
-            data_dict["trajectory"], tf.float32), [-1, dim])[1:]
+        traj = tf.concat(
+            [y0, tf.reshape(tf.decode_raw(
+                data_dict["trajectory"], tf.float32), [-1, dim])], 0)
 
         return traj
 
     for data_dir in data_dirs:
         dataset = tf.data.TFRecordDataset(data_dir)
-        dataset = dataset.map(_get_trial)
+        dataset = dataset.map(_read_data)
         traj = dataset.make_one_shot_iterator().get_next()
         trial_max_vel = tf.reduce_max(tf.abs(traj[1:] - traj[:-1]), 0,
                                       name="trial_maximum_velocity")
@@ -305,7 +300,7 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
 
                 priors.append(dict(
                     name=a["name"], col=a["col"], dim=a["dim"],
-                    # g0=get_g0_params(a["dim"], GMM_K),
+                    g0=get_g0_params(a["dim"], GMM_K),
                     GMM_NN=get_network(
                         "goal_GMM", (state_dim + extra_dim),
                         (GMM_K * a["dim"] * 2 + GMM_K),
@@ -450,11 +445,11 @@ def get_PID_params(dim, epoch):
 
         PID = {}
         PID["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
-        PID["Kp"] = tf.cond(tf.greater(epoch, 0),
+        PID["Kp"] = tf.cond(tf.greater(epoch, 30),
                             lambda: Kp, lambda: tf.stop_gradient(Kp))
-        PID["Ki"] = tf.cond(tf.greater(epoch, 0),
+        PID["Ki"] = tf.cond(tf.greater(epoch, 30),
                             lambda: Ki, lambda: tf.stop_gradient(Ki))
-        PID["Kd"] = tf.cond(tf.greater(epoch, 0),
+        PID["Kd"] = tf.cond(tf.greater(epoch, 30),
                             lambda: Kd, lambda: tf.stop_gradient(Kd))
         # PID["Kp"] = Kp
         # PID["Ki"] = Ki
@@ -463,23 +458,20 @@ def get_PID_params(dim, epoch):
         return PID
 
 
-# def get_g0_params(dim, K):
-#     with tf.variable_scope("g0"):
-#         g0 = {}
-#         g0["K"] = K
-#         # g0["mu"] = tf.Variable(
-#         #     tf.random_normal([K, dim], name="mu_init_value"),
-#         #     dtype=tf.float32, name="mu")
-#         g0["unc_mu"] = tf.Variable(
-#             tf.random_normal([K, dim], name="mu_init_value"),
-#             dtype=tf.float32, name="unc_mu")
-#         g0["unc_lambda"] = tf.Variable(
-#             tf.random_normal([K, dim], name="lambda_init_value"),
-#             dtype=tf.float32, name="unc_lambda")
-#         g0["unc_w"] = tf.Variable(
-#             tf.ones([K], name="w_init_value"), dtype=tf.float32, name="unc_w")
+def get_g0_params(dim, K):
+    with tf.variable_scope("g0"):
+        g0 = {}
+        g0["K"] = K
+        g0["mu"] = tf.Variable(
+            tf.random_normal([K, dim], name="mu_init_value"),
+            dtype=tf.float32, name="mu")
+        g0["unc_lambda"] = tf.Variable(
+            tf.random_normal([K, dim], name="lambda_init_value"),
+            dtype=tf.float32, name="unc_lambda")
+        g0["unc_w"] = tf.Variable(
+            tf.ones([K], name="w_init_value"), dtype=tf.float32, name="unc_w")
 
-#         return g0
+        return g0
 
 
 def pad_batch(batch, mode="edge"):

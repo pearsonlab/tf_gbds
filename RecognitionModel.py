@@ -233,19 +233,13 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
             else:
                 self.lag = 1
 
-            # y0 = [0., -0.58, 0.]
-            # y0 = tf.gather(Input, [0], axis=1, name="init_obs")
+            y0 = [0., -0.58, 0.]
             Input_ = tf.identity(Input)
-            # Input_ = tf.identity(Input[:, 1:])
             for i in range(self.lag):
-                # lagged = tf.concat(
-                #     [tf.tile(tf.reshape(y0, [1, 1, yDim]),
-                #              [tf.shape(Input_)[0], 1, 1]),
-                #      Input_[:, :-1, -yDim:]], 1, "lagged")
-                # lagged = tf.concat([y0, Input_[:, :-1, -yDim:]], 1)
                 lagged = tf.concat(
-                    [tf.reshape(Input_[:, 0, :yDim], [-1, 1, yDim], "t0"),
-                    Input_[:, :-1, -yDim:]], 1, "lagged")
+                    [tf.tile(tf.reshape(y0, [1, 1, yDim]),
+                             [tf.shape(Input_)[0], 1, 1]),
+                     Input_[:, :-1, -yDim:]], 1, "lagged")
                 Input_ = tf.concat([Input_, lagged], -1)
 
         if "name" not in kwargs:
