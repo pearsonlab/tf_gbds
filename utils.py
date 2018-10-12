@@ -4,8 +4,7 @@ from scipy.stats import norm
 from matplotlib.colors import Normalize
 import tensorflow as tf
 from tensorflow.contrib.distributions import bijectors, softplus_inverse
-from tensorflow.contrib.keras import layers
-from tensorflow.contrib.keras import models
+from tensorflow.contrib.keras import layers, models
 from edward import KLqp
 from edward.models import RandomVariable
 from edward.util import get_session, get_variables, Progbar, transform
@@ -16,10 +15,9 @@ from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
 
 
 class set_cbar_zero(Normalize):
-    """set_cbar_zero(midpoint = float)       default: midpoint = 0.
-    Normalizes and sets the center of any colormap to the desired value which
-    is set using midpoint.
+    """Normalize and center colormap at the desired value (midpoint).
     """
+
     def __init__(self, vmin=None, vmax=None, midpoint=0., clip=False):
         self.midpoint = midpoint
         Normalize.__init__(self, vmin, vmax, clip)
@@ -31,15 +29,14 @@ class set_cbar_zero(Normalize):
 
 
 def gauss_convolve(x, sigma, pad_method="edge_pad"):
-    """Smoothing with gaussian convolution
-    Pad Methods:
+    """Smoothe with gaussian filter with the following padding methods:
         * edge_pad: pad with the values on the edges
         * extrapolate: extrapolate the end pad based on dx at the end
         * zero_pad: pad with zeros
     """
     method_types = ["edge_pad", "extrapolate", "zero_pad"]
     if pad_method not in method_types:
-        raise Exception("Pad method not recognized")
+        raise Exception("Padding method not recognized")
     edge = int(math.ceil(5 * sigma))
     fltr = norm.pdf(range(-edge, edge), loc=0, scale=sigma)
     fltr = fltr / sum(fltr)
@@ -69,7 +66,7 @@ def gauss_convolve(x, sigma, pad_method="edge_pad"):
 
 
 def smooth_trial(trial, sigma=4.0, pad_method="extrapolate"):
-    """Apply Gaussian convolution Smoothing method to real data
+    """Apply Gaussian convolution Smoothing method to real data.
     """
     rtrial = trial.copy()
     for i in range(rtrial.shape[1]):
@@ -81,7 +78,7 @@ def smooth_trial(trial, sigma=4.0, pad_method="extrapolate"):
 # def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 2)))),
 #              eps=np.log1p(np.exp(-10.)), Kp=1, Ki=0, Kd=0,
 #              vel=1e-2 * np.ones((3))):
-#     """Generate fake data to test the accuracy of the model
+#     """Generate fake data to test the accuracy of the model.
 #     """
 #     p = []
 #     g = []
@@ -135,9 +132,8 @@ def smooth_trial(trial, sigma=4.0, pad_method="extrapolate"):
 
 
 def load_data(data_dir, hps):
-    """ Load data from given directory
+    """ Load data from the given directory.
     """
-
     features = {"trajectory": tf.FixedLenFeature((), tf.string)}
     if hps.extra_conds:
         features.update({"extra_conds": tf.FixedLenFeature(
@@ -146,6 +142,7 @@ def load_data(data_dir, hps):
         features.update({"ctrl_obs": tf.FixedLenFeature(
             (), tf.string)})
 
+    # the initial position
     y0 = tf.reshape([0., -0.58, 0.], [1, hps.obs_dim], "y0")
 
     def _read_data(example):
@@ -193,20 +190,6 @@ def load_data(data_dir, hps):
     return iterator
 
 
-# def get_max_velocities(datasets, dim):
-#     """Get the maximium velocities from datasets
-#     """
-#     max_vel = [[] for _ in range(dim)]
-#     for d in range(len(datasets)):
-#         for i in range(len(datasets[d])):
-#             for c in range(dim):
-#                 if np.abs(np.diff(datasets[d][i][:, c])).max() > 0.001:
-#                     max_vel[c].append(
-#                         np.abs(np.diff(datasets[d][i][:, c])).max())
-
-#     return np.array([max(vel) for vel in max_vel], np.float32)
-
-
 def get_max_velocities(data_dirs, dim):
     max_vel = np.zeros((dim), np.float32)
     n_trials = []
@@ -242,8 +225,8 @@ def get_max_velocities(data_dirs, dim):
 
 
 def get_vel(traj, max_vel):
-    """Input a time series of positions and include velocities for each
-    coordinate in each row
+    """Input a time series of trajectory and compute velocity for each
+    coordinate.
     """
     with tf.name_scope("get_velocity"):
         vel = tf.pad(
@@ -256,8 +239,8 @@ def get_vel(traj, max_vel):
 
 
 def get_accel(traj, max_vel):
-    """Input a time series of positions and include velocities and acceleration
-    for each coordinate in each row
+    """Input a time series of trajectory and compute velocity and
+    acceleration for each coordinate.
     """
     with tf.name_scope("get_acceleration"):
         states = get_vel(traj, max_vel)
@@ -275,7 +258,6 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                      rec_lag, rec_n_layers, rec_hidden_dim, penalty_Q,
                      unc_epsilon, epsilon_trainable, epsilon_penalty,
                      clip, clip_range, clip_tolerance, clip_penalty, epoch):
-
     with tf.variable_scope("model_parameters"):
         priors = []
 
@@ -308,7 +290,8 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                     GMM_K=GMM_K,
                     unc_sigma=unc_sigma_init,
                     sigma_trainable=sigma_trainable, sigma_pen=sigma_penalty,
-                    g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
+                    g_bounds=goal_boundaries,
+                    g_bounds_pen=goal_boundary_penalty,
                     PID=get_PID_params(a["dim"], epoch),
                     unc_eps=unc_eps_init,
                     eps_trainable=epsilon_trainable, eps_pen=epsilon_penalty,
@@ -333,13 +316,51 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
         return params
 
 
+def get_rec_params(obs_dim, extra_dim, lag, n_layers, hidden_dim,
+                   penalty_Q=None, PKLparams=None, name="recognition"):
+    """Return a dictionary of parameters for recognition model.
+    """
+    with tf.variable_scope("%s_params" % name):
+        Mu_net, PKbias_layers_mu = get_network(
+            "Mu_NN", (obs_dim * (lag + 1) + extra_dim), obs_dim, hidden_dim,
+            n_layers, PKLparams)
+        Lambda_net, PKbias_layers_lambda = get_network(
+            "Lambda_NN", obs_dim * (lag + 1) + extra_dim, obs_dim ** 2,
+            hidden_dim, n_layers, PKLparams)
+        LambdaX_net, PKbias_layers_lambdaX = get_network(
+            "LambdaX_NN", obs_dim * (lag + 1) + extra_dim, obs_dim ** 2,
+            hidden_dim, n_layers, PKLparams)
+
+        dyn_params = dict(
+            A=tf.Variable(
+                .9 * np.eye(obs_dim), name="A", dtype=tf.float32),
+            QinvChol=tf.Variable(
+                np.eye(obs_dim), name="QinvChol", dtype=tf.float32),
+            Q0invChol=tf.Variable(
+                np.eye(obs_dim), name="Q0invChol", dtype=tf.float32))
+
+        rec_params = dict(
+            dyn_params=dyn_params,
+            NN_Mu=dict(network=Mu_net,
+                       PKbias_layers=PKbias_layers_mu),
+            NN_Lambda=dict(network=Lambda_net,
+                           PKbias_layers=PKbias_layers_lambda),
+            NN_LambdaX=dict(network=LambdaX_net,
+                            PKbias_layers=PKbias_layers_lambdaX),
+            lag=lag)
+
+        with tf.name_scope("penalty_Q"):
+            if penalty_Q is not None:
+                rec_params["p"] = penalty_Q
+
+        return rec_params
+
+
 def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
                 PKLparams=None, batchnorm=False, is_shooter=False,
                 row_sparse=False, add_pklayers=False, filt_size=None):
-    """Returns a NN with the specified parameters.
-    Also returns a list of PKBias layers
+    """Return a NN with the specified parameters and a list of PKBias layers.
     """
-
     with tf.variable_scope(name):
         M = models.Sequential(name=name)
         PKbias_layers = []
@@ -377,48 +398,6 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers,
         return M, PKbias_layers
 
 
-def get_rec_params(obs_dim, extra_dim, lag, n_layers, hidden_dim,
-                   penalty_Q=None, PKLparams=None, name="recognition"):
-    """Return a dictionary of timeseries-specific parameters for recognition
-       model
-    """
-
-    with tf.variable_scope("%s_params" % name):
-        Mu_net, PKbias_layers_mu = get_network(
-            "Mu_NN", (obs_dim * (lag + 1) + extra_dim), obs_dim, hidden_dim,
-            n_layers, PKLparams)
-        Lambda_net, PKbias_layers_lambda = get_network(
-            "Lambda_NN", obs_dim * (lag + 1) + extra_dim, obs_dim ** 2,
-            hidden_dim, n_layers, PKLparams)
-        LambdaX_net, PKbias_layers_lambdaX = get_network(
-            "LambdaX_NN", obs_dim * (lag + 1) + extra_dim, obs_dim ** 2,
-            hidden_dim, n_layers, PKLparams)
-
-        dyn_params = dict(
-            A=tf.Variable(
-                .9 * np.eye(obs_dim), name="A", dtype=tf.float32),
-            QinvChol=tf.Variable(
-                np.eye(obs_dim), name="QinvChol", dtype=tf.float32),
-            Q0invChol=tf.Variable(
-                np.eye(obs_dim), name="Q0invChol", dtype=tf.float32))
-
-        rec_params = dict(
-            dyn_params=dyn_params,
-            NN_Mu=dict(network=Mu_net,
-                       PKbias_layers=PKbias_layers_mu),
-            NN_Lambda=dict(network=Lambda_net,
-                           PKbias_layers=PKbias_layers_lambda),
-            NN_LambdaX=dict(network=LambdaX_net,
-                            PKbias_layers=PKbias_layers_lambdaX),
-            lag=lag)
-
-        with tf.name_scope("penalty_Q"):
-            if penalty_Q is not None:
-                rec_params["p"] = penalty_Q
-
-        return rec_params
-
-
 def get_PID_params(dim, epoch):
     with tf.variable_scope("PID"):
         unc_Kp = tf.Variable(tf.multiply(
@@ -430,14 +409,6 @@ def get_PID_params(dim, epoch):
         unc_Kd = tf.Variable(tf.multiply(
             softplus_inverse(1e-6), tf.ones(dim, tf.float32), "unc_Kd_init"),
                              name="unc_Kd")
-        # if dim == 2:
-        #     unc_Kd = tf.Variable(
-        #         [softplus_inverse(1.), softplus_inverse(1e-6)],
-        #         name="unc_Kd", dtype=tf.float32)
-        # else:
-        #     unc_Kd = tf.Variable(
-        #         tf.multiply(softplus_inverse(1e-6), tf.ones(dim, tf.float32),
-        #                     "unc_Kd_init"), name="unc_Kd")
         
         Kp = tf.nn.softplus(unc_Kp, "Kp")
         Ki = tf.nn.softplus(unc_Ki, "Ki")

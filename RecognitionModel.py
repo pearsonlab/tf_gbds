@@ -8,8 +8,8 @@ import tensorflow as tf
 import numpy as np
 import tf_gbds.lib.blk_tridiag_chol_tools as blk
 from edward.models import RandomVariable
-from tensorflow.contrib.distributions import Distribution
-from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
+from tensorflow.contrib.distributions import (Distribution,
+                                              FULLY_REPARAMETERIZED)
 from tf_gbds.utils import pad_extra_conds
 
 
@@ -43,7 +43,6 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             name: Optional name for the random variable.
                   Default to "SmoothingLDSTimeSeries".
         """
-
         name = kwargs.get("name", "SmoothingLDSTimeSeries")
         with tf.name_scope(name):
             self.y = tf.identity(Input, "observations")
@@ -191,14 +190,6 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             lower=False, transpose=True), self.postX)
 
     def _log_prob(self, value):
-        # with tf.name_scope("weight_norm_sum"):
-        #     norm = 0.0
-        #     for layer in (self.NN_Mu.layers + self.NN_Lambda.layers +
-        #                   self.NN_LambdaX.layers):
-        #         if "Dense" in layer.name:
-        #             norm += tf.norm(layer.kernel)  # + tf.norm(layer.bias)
-
-        # return (tf.reduce_mean(self.eval_entropy()) + 1e-1 * norm)
         return tf.reduce_mean(self.eval_entropy())
 
     def eval_entropy(self):
@@ -217,17 +208,16 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
 
 
 class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
-    """SmoothingLDSTimeSeries that uses past observations (lag) in addition to
-    current to evaluate the latent.
+    """SmoothingLDSTimeSeries using past observations (lag) in addition to
+    current one to evaluate the latent state.
     """
 
     def __init__(self, params, Input, xDim, yDim, extra_conds=None, *args,
                  **kwargs):
         """Initialize SmoothingPastLDSTimeSeries random variable (batch)
         """
-
         with tf.name_scope("pad_lag"):
-            # manipulate input to include past observations (up to lag)
+            # include past observations (up to lag)
             if "lag" in params:
                 self.lag = params["lag"]
             else:

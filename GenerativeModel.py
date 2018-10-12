@@ -1,6 +1,5 @@
 import tensorflow as tf
 import numpy as np
-# import edward as ed
 from edward.models import RandomVariable
 from tensorflow.contrib.distributions import (Distribution,
                                               FULLY_REPARAMETERIZED)
@@ -267,6 +266,7 @@ class GBDS(RandomVariable, Distribution):
                     tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3])
                 logdensity_g -= self.g_pen * tf.reduce_sum(
                     tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3])
+                logdensity_g -= .1 * tf.reduce_sum(1. / all_lambda, [1, 2, 3])
                 # logdensity_g -= self.g_pen * tf.reduce_sum(
                 #     tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3]) / self.K
                 # logdensity_g -= self.g_pen * tf.reduce_sum(
