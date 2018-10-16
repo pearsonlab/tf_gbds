@@ -29,7 +29,6 @@ EXTRA_DIM = 0
 OBSERVED_CONTROL = False
 ADD_ACCEL = False
 
-GMM_K = 8
 GEN_N_LAYERS = 3
 GEN_HIDDEN_DIM = 64
 REC_LAG = 10
@@ -101,7 +100,6 @@ flags.DEFINE_boolean("ctrl_obs", OBSERVED_CONTROL, "Are observed control \
 flags.DEFINE_boolean("add_accel", ADD_ACCEL,
                      "Is acceleration included in state")
 
-flags.DEFINE_integer("GMM_K", GMM_K, "Number of components in GMM")
 flags.DEFINE_integer("gen_n_layers", GEN_N_LAYERS, "Number of layers in \
                      neural networks (generative model)")
 flags.DEFINE_integer("gen_hidden_dim", GEN_HIDDEN_DIM,
@@ -212,7 +210,6 @@ def run_model(FLAGS):
         clip_range = None
 
     print("--------------Generative Parameters---------------")
-    print("Number of GMM components: %s" % FLAGS.GMM_K)
     print("Number of layers in neural networks: %s" % FLAGS.gen_n_layers)
     print("Dimensions of hidden layers: %s" % FLAGS.gen_hidden_dim)
     if FLAGS.g_bounds_pen is not None:
@@ -270,9 +267,8 @@ def run_model(FLAGS):
         params = get_model_params(
             FLAGS.game_name, agents, FLAGS.obs_dim, state_dim,
             FLAGS.extra_dim, FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
-            FLAGS.GMM_K, PKLparams,
-            FLAGS.sigma_init, FLAGS.sigma_trainable, FLAGS.sigma_pen,
-            g_bounds, FLAGS.g_bounds_pen, FLAGS.latent_u,
+            PKLparams, FLAGS.sigma_init, FLAGS.sigma_trainable,
+            FLAGS.sigma_pen, g_bounds, FLAGS.g_bounds_pen, FLAGS.latent_u,
             FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
             penalty_Q, FLAGS.eps_init, FLAGS.eps_trainable, FLAGS.eps_pen,
             FLAGS.clip, clip_range, FLAGS.clip_tol, FLAGS.clip_pen, epoch)

@@ -252,7 +252,7 @@ def get_accel(traj, max_vel):
 
 
 def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
-                     gen_n_layers, gen_hidden_dim, GMM_K, PKLparams,
+                     gen_n_layers, gen_hidden_dim, PKLparams,
                      unc_sigma, sigma_trainable, sigma_penalty,
                      goal_boundaries, goal_boundary_penalty, latent_ctrl,
                      rec_lag, rec_n_layers, rec_hidden_dim, penalty_Q,
@@ -282,12 +282,10 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
 
                 priors.append(dict(
                     name=a["name"], col=a["col"], dim=a["dim"],
-                    g0=get_g0_params(a["dim"], GMM_K),
-                    GMM_NN=get_network(
-                        "goal_GMM", (state_dim + extra_dim),
-                        (GMM_K * a["dim"] * 2 + GMM_K),
+                    g0=get_g0_params(a["dim"]),
+                    G_NN=get_network(
+                        "goal_NN", state_dim + extra_dim, a["dim"] * 2,
                         gen_hidden_dim, gen_n_layers, PKLparams)[0],
-                    GMM_K=GMM_K,
                     unc_sigma=unc_sigma_init,
                     sigma_trainable=sigma_trainable, sigma_pen=sigma_penalty,
                     g_bounds=goal_boundaries,
@@ -429,18 +427,15 @@ def get_PID_params(dim, epoch):
         return PID
 
 
-def get_g0_params(dim, K):
+def get_g0_params(dim):
     with tf.variable_scope("g0"):
         g0 = {}
-        g0["K"] = K
         g0["mu"] = tf.Variable(
-            tf.random_normal([K, dim], name="mu_init_value"),
+            tf.random_normal([dim], name="mu_init_value"),
             dtype=tf.float32, name="mu")
         g0["unc_lambda"] = tf.Variable(
-            tf.random_normal([K, dim], name="lambda_init_value"),
+            tf.random_normal([dim], name="lambda_init_value"),
             dtype=tf.float32, name="unc_lambda")
-        g0["unc_w"] = tf.Variable(
-            tf.ones([K], name="w_init_value"), dtype=tf.float32, name="unc_w")
 
         return g0
 
