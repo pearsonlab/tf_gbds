@@ -21,8 +21,8 @@ from utils import (load_data, get_max_velocities, get_vel,
 
 # default flag values
 MODEL_DIR = "new_model"
-TRAINING_DATA_DIR = "tfrecord/[K]all_prey_train.tfrecords"
-VALIDATION_DATA_DIR = None
+TRAINING_DATA_DIR = "tfrecord/[K]1prey_train.tfrecords"
+VALIDATION_DATA_DIR = "tfrecord/[K]1prey_validation.tfrecords"
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False

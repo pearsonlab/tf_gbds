@@ -12,7 +12,7 @@ from edward.util import get_session, get_variables, Progbar, transform
 import six
 import os
 from datetime import datetime
-from layers import PKBiasLayer, PKRowBiasLayer
+from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
 
 
 class set_cbar_zero(Normalize):
@@ -404,14 +404,6 @@ def get_PID(dim, epoch):
         # PID["Kd"] = Kd
 
         return PID
-    # with tf.name_scope("%s_PID" % name):
-    #     PID = {}
-
-    #     PID["Kp"] = tf.ones(dim, tf.float32, "Kp")
-    #     PID["Ki"] = tf.zeros(dim, tf.float32, "Ki")
-    #     PID["Kd"] = tf.zeros(dim, tf.float32, "Kd")
-
-    #     return PID
 
 
 # def pad_batch(arrays, mode="edge"):
