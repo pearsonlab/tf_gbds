@@ -52,7 +52,7 @@ def recover_normalized(data):
     """
     Normalizes original coordinates
     """
-    return tf.to_float(2 * data / max_screen - 1.)
+    return 2 * data / max_screen - 1.
 
 
 def generate_ps_vect(prey_pos, subj_pos, npc_spd, weight_x, weight_y):

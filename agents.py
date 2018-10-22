@@ -159,18 +159,18 @@ class game_model(object):
                     orig_curr_y = recover_orig_val(curr_y)
 
                     with tf.name_scope("first"):
-                        npc_spd_1 = 10 + gen_extra_cond[4] * 4
+                        npc_spd_1 = 10 + gen_extra_cond[8] * 4
                         curr_prey_1 = gen_extra_cond[:2]
-                        next_prey_1 = tf.identity(
-                            recover_normalized(generate_prey_trajectory(
+                        next_prey_1 = recover_normalized(
+                            generate_prey_trajectory(
                                 orig_curr_y, recover_orig_val(curr_prey_1),
                                 npc_spd_1, cost_grid, weight_x, weight_y,
-                                rot_mat)), "next")
+                                rot_mat))
 
                     with tf.name_scope("second"):
                         def f1():
                             npc_spd_2 = 10 + gen_extra_cond[9] * 4
-                            curr_prey_2 = gen_extra_cond[5:7]
+                            curr_prey_2 = gen_extra_cond[4:6]
 
                             return recover_normalized(
                                 generate_second_prey_trajectory(
@@ -181,5 +181,8 @@ class game_model(object):
                         def f2():
                             return tf.random_uniform([2]) * 2 - 1
 
-                        next_prey_2 = tf.identity(tf.cond(
-                            tf.equal(gen_extra_cond[-1], 1), f1, f2), "next")
+                        next_prey_2 = tf.cond(
+                            tf.equal(gen_extra_cond[-1], 1), f1, f2)
+
+                    next_prey = tf.stack([next_prey_1, next_prey_2], 0,
+                                         "next_position")
