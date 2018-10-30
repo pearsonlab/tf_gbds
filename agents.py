@@ -5,7 +5,8 @@ from RecognitionModel import SmoothingPastLDSTimeSeries
 from tf_generate_trial import (recover_orig_val, recover_normalized,
                                generate_weight, generate_rotation_mat,
                                generate_prey_trajectory,
-                               generate_second_prey_trajectory)
+                               generate_second_prey_trajectory,
+                               generate_predator_trajectory)
 
 
 class game_model(object):
@@ -154,35 +155,46 @@ class game_model(object):
                             curr_y + max_vel * tf.tanh(curr_u), -1., 1.,
                             "next_position")
 
-                with tf.name_scope("prey"):
+                with tf.name_scope("npc"):
                     # requires both cost map and current subject location
                     orig_curr_y = recover_orig_val(curr_y)
 
                     with tf.name_scope("first"):
                         npc_spd_1 = 10 + gen_extra_cond[8] * 4
-                        curr_prey_1 = gen_extra_cond[:2]
-                        next_prey_1 = recover_normalized(
+                        curr_npc_1 = gen_extra_cond[:2]
+                        next_npc_1 = recover_normalized(
                             generate_prey_trajectory(
-                                orig_curr_y, recover_orig_val(curr_prey_1),
+                                orig_curr_y, recover_orig_val(curr_npc_1),
                                 npc_spd_1, cost_grid, weight_x, weight_y,
                                 rot_mat))
 
                     with tf.name_scope("second"):
-                        def f1():
+                        def prey():
                             npc_spd_2 = 10 + gen_extra_cond[9] * 4
-                            curr_prey_2 = gen_extra_cond[4:6]
+                            curr_npc_2 = gen_extra_cond[4:6]
 
                             return recover_normalized(
                                 generate_second_prey_trajectory(
-                                    orig_curr_y,
-                                    recover_orig_val(curr_prey_1),
-                                    recover_orig_val(curr_prey_2), npc_spd_2,
+                                    orig_curr_y, recover_orig_val(next_npc_1),
+                                    recover_orig_val(curr_npc_2), npc_spd_2,
                                     cost_grid, weight_x, weight_y, rot_mat))
-                        def f2():
-                            return tf.random_uniform([2]) * 2 - 1
 
-                        next_prey_2 = tf.cond(
-                            tf.equal(gen_extra_cond[-1], 1), f1, f2)
+                        def predator():
+                            npc_spd_2 = 10 + gen_extra_cond[9] * 4
+                            curr_npc_2 = gen_extra_cond[4:6]
 
-                    next_prey = tf.stack([next_prey_1, next_prey_2], 0,
-                                         "next_position")
+                            return recover_normalized(
+                                generate_predator_trajectory(
+                                    orig_curr_y, recover_orig_val(curr_npc_2),
+                                    npc_spd_2, weight_x, weight_y))
+
+                        def random():
+                            return tf.random_uniform([model_dim]) * 2 - 1
+
+                        next_npc_2 = tf.case({
+                            tf.equal(gen_extra_cond[-2], 1): prey,
+                            tf.equal(gen_extra_cond[-1], 1): predator},
+                            default=random, exclusive=True)
+
+                    next_npc = tf.stack([next_npc_1, next_npc_2], 0,
+                                        "next_position")

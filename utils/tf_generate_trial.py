@@ -27,8 +27,7 @@ def generate_weight(axis_start, axis_end, axis_res, x_shift, slope):
 
 
 def generate_rotation_mat():
-    """
-    Generates rotation vectors as a matrix (called once)
+    """Generates rotation vectors as a matrix (called once).
     """
     rot_mat = []
     for iRot in range(0, num_angles):
@@ -41,23 +40,20 @@ def generate_rotation_mat():
 
 
 def recover_orig_val(data):
-    """
-    Converts normalized coordinates to original scale (pixels on screen)
-    Input data is normalized, smoothed, and casted into tf.float32
+    """Converts normalized coordinates to original scale (pixels on screen).
+    Input data is normalized and smoothed.
     """
     return max_screen * (data + 1.) / 2
 
 
 def recover_normalized(data):
-    """
-    Normalizes original coordinates
+    """Normalizes original coordinates.
     """
     return 2 * data / max_screen - 1.
 
 
 def generate_ps_vect(prey_pos, subj_pos, npc_spd, weight_x, weight_y):
-    """
-    Generates the vector between prey and subject
+    """Generates the vector between prey and subject.
     """
     orig_vect = tf.subtract(prey_pos, subj_pos, "original")
     norm_vect = tf.divide(orig_vect, tf.norm(orig_vect), "normalized")
@@ -91,8 +87,7 @@ def generate_ps_vect(prey_pos, subj_pos, npc_spd, weight_x, weight_y):
 
 
 def compute_movement_angle(prey_pos, subj_pos, real_vect, cost_grid, rot_mat):
-    """
-    Schemes through angles and finds next movement of prey
+    """Scans through angles and finds next movement of prey.
     """
     tmp_vect = []
     ply_cost = []
@@ -124,26 +119,25 @@ def compute_movement_angle(prey_pos, subj_pos, real_vect, cost_grid, rot_mat):
 
 
 def check_outbound(curr_pos):
-    # Make sure that npc does not go out of arena.
-
+    """Make sure that npc does not go out of arena.
+    """
     return tf.clip_by_value(curr_pos, [npc_size, npc_size],
                             [lim_xscreen - npc_size, lim_yscreen - npc_size])
 
 
 def generate_prey_trajectory(subj_pos, prey_pos, npc_spd, cost_grid,
                              weight_x, weight_y, rot_mat):
-    """
-    Generates prey position at next time step (in original coordinates)
+    """Generates prey position at next time step (in original coordinates).
     """
     # normalize vector between prey and subject position by prey velocity
     real_vect = generate_ps_vect(prey_pos, subj_pos, npc_spd,
                                  weight_x, weight_y)
 
-    # Defining Prey movement
+    # define prey movement
     ls_cost, ply_cost, tmp_vect = compute_movement_angle(
         prey_pos, subj_pos, real_vect, cost_grid, rot_mat)
 
-    # Subject dynamic is considered.
+    # consider subject dynamic
     def f1(): return (dist_factor * (ply_cost - tf.reduce_min(ply_cost)) /
                       (tf.reduce_max(ply_cost) - tf.reduce_min(ply_cost)))
     def f2(): return (dist_factor * (ply_cost - tf.reduce_min(ply_cost)) /
@@ -153,7 +147,7 @@ def generate_prey_trajectory(subj_pos, prey_pos, npc_spd, cost_grid,
         tf.equal(tf.reduce_max(ply_cost), tf.reduce_min(ply_cost)), f2, f1)
     min_cost_ind = tf.argmin(ls_cost + subj_cost)
 
-    # Where actually npc moves (# Make sure that npc does not go out).
+    # generate next position
     prey_pos = prey_pos + tf.gather(tmp_vect, min_cost_ind)
     prey_pos = check_outbound(prey_pos)
 
@@ -162,10 +156,11 @@ def generate_prey_trajectory(subj_pos, prey_pos, npc_spd, cost_grid,
 
 def compute_npc_cost(first_prey_pos, second_prey_pos, vect_subj, rot_mat):
     npc_cost = []
+
     for iAng in range(0, num_angles):
         ang_pos_i = tf.clip_by_value(
-            tf.floor(second_prey_pos + tf.squeeze(
-                tf.matmul(rot_mat[iAng], tf.reshape(vect_subj[iAng], [2, 1])))),
+            tf.floor(second_prey_pos + tf.squeeze(tf.matmul(
+                rot_mat[iAng], tf.reshape(vect_subj[iAng], [2, 1])))),
             [npc_size, npc_size],
             [lim_xscreen - npc_size, lim_yscreen - npc_size])
 
@@ -179,22 +174,18 @@ def compute_npc_cost(first_prey_pos, second_prey_pos, vect_subj, rot_mat):
 def generate_second_prey_trajectory(subj_pos, first_prey_pos, second_prey_pos,
                                     npc_spd, cost_grid, weight_x, weight_y,
                                     rot_mat):
-    # The second prey has natural repulsion to first prey (not vice versa).
-    # This function is to generate prey position at next time step.
-    # In here, we need to inherit prey position generated in this round (not previous prey_pos but at t)
-    # Second prey position is where the second prey was at t-1.
-
-    # normalize vector between prey and self position, and scale according to speed of prey.
-    #   Generate prey-subject vector.
+    """Generate (second) prey position at next time step.
+    The second prey has natural repulsion to first prey (not vice versa).
+    """
+    # generate prey-subject vector
     second_prey_vect = generate_ps_vect(second_prey_pos, subj_pos, npc_spd,
                                         weight_x, weight_y)
 
-    # Calculating costs for next movement.
-    #   On current experiment, there are 15 positions considered.
+    # calculate costs for next movement (15 positions considered)
     ls_cost, ply_cost, tmp_vect = compute_movement_angle(
         second_prey_pos, subj_pos, second_prey_vect, cost_grid, rot_mat)
 
-    # Cost related with subject position is considered.
+    # consider cost related to subject position
     def f1(): return (dist_factor * (ply_cost - tf.reduce_min(ply_cost)) /
                       (tf.reduce_max(ply_cost) - tf.reduce_min(ply_cost)))
     def f2(): return (dist_factor * (ply_cost - tf.reduce_min(ply_cost)) /
@@ -202,9 +193,9 @@ def generate_second_prey_trajectory(subj_pos, first_prey_pos, second_prey_pos,
     subj_cost = tf.cond(
         tf.equal(tf.reduce_max(ply_cost), tf.reduce_min(ply_cost)), f2, f1)
 
-    # Cost related with other prey position is considered
-    #   Considering the distance with other prey.
-    npc_cost = compute_npc_cost(first_prey_pos, second_prey_pos, tmp_vect, rot_mat)
+    # consider cost based on the distance to other prey
+    npc_cost = compute_npc_cost(
+        first_prey_pos, second_prey_pos, tmp_vect, rot_mat)
 
     def n_f1(): return (npc_factor * (npc_cost - tf.reduce_min(npc_cost)) /
                         (tf.reduce_max(npc_cost) - tf.reduce_min(npc_cost)))
@@ -216,8 +207,23 @@ def generate_second_prey_trajectory(subj_pos, first_prey_pos, second_prey_pos,
     final_cost = ls_cost + subj_cost + npc_cost
     min_cost_ind = tf.argmin(final_cost)
 
-    # Where actually npc moves (# Make sure that npc does not go out).
+    # generate next position
     prey_pos = second_prey_pos + tf.gather(tmp_vect, min_cost_ind)
     prey_pos = check_outbound(prey_pos)
 
     return prey_pos
+
+
+def generate_predator_trajectory(subj_pos, pred_pos, pred_vel,
+                                 weight_x, weight_y):
+    """Generates predator position at next time step (in original coordinates).
+    """
+    # normalize vector between pred and subject position by prey velocity
+    real_vect = generate_ps_vect(pred_pos, subj_pos, pred_vel,
+                                 weight_x, weight_y)
+
+    # generate next position
+    pred_pos = pred_pos + real_vect
+    pred_pos = check_outbound(pred_pos)
+
+    return pred_pos
