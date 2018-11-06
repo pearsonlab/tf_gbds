@@ -4,8 +4,7 @@ from scipy.stats import norm
 from matplotlib.colors import Normalize
 import tensorflow as tf
 from tensorflow.contrib.distributions import bijectors, softplus_inverse
-from tensorflow.contrib.keras import layers
-from tensorflow.contrib.keras import models
+from tensorflow.contrib.keras import layers, models
 from edward import KLqp
 from edward.models import RandomVariable
 from edward.util import get_session, get_variables, Progbar, transform
@@ -78,62 +77,6 @@ def smooth_trial(trial, sigma=4.0, pad_method="extrapolate"):
     return rtrial
 
 
-# def gen_data(n_trials, n_obs, sigma=np.log1p(np.exp(-5. * np.ones((1, 2)))),
-#              eps=np.log1p(np.exp(-10.)), Kp=1, Ki=0, Kd=0,
-#              vel=1e-2 * np.ones((3))):
-#     """Generate fake data to test the accuracy of the model
-#     """
-#     p = []
-#     g = []
-
-#     for _ in range(n_trials):
-#         p_b = np.zeros((n_obs, 2), np.float32)
-#         p_g = np.zeros((n_obs, 1), np.float32)
-#         g_b = np.zeros((n_obs, 2), np.float32)
-#         prev_error_b = 0
-#         prev_error_g = 0
-#         int_error_b = 0
-#         int_error_g = 0
-
-#         init_b_x = np.pi * (np.random.rand() * 2 - 1)
-#         g_b_x_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-#                                        init_b_x))
-#         init_b_y = np.pi * (np.random.rand() * 2 - 1)
-#         g_b_y_mu = 0.25 * np.sin(2. * (np.linspace(0, 2 * np.pi, n_obs) -
-#                                        init_b_y))
-#         g_b_mu = np.hstack([g_b_x_mu.reshape(n_obs, 1),
-#                             g_b_y_mu.reshape(n_obs, 1)])
-#         g_b_lambda = np.array([16, 16], np.float32)
-#         g_b[0] = g_b_mu[0]
-
-#         for t in range(n_obs - 1):
-#             g_b[t + 1] = ((g_b[t] + g_b_lambda * g_b_mu[t + 1]) /
-#                           (1 + g_b_lambda))
-#             var = sigma ** 2 / (1 + g_b_lambda)
-#             g_b[t + 1] += (np.random.randn(1, 2) * np.sqrt(var)).reshape(2,)
-
-#             error_b = g_b[t + 1] - p_b[t]
-#             int_error_b += error_b
-#             der_error_b = error_b - prev_error_b
-#             u_b = (Kp * error_b + Ki * int_error_b + Kd * der_error_b +
-#                    eps * np.random.randn(2,))
-#             prev_error_b = error_b
-#             p_b[t + 1] = p_b[t] + vel[1:] * np.clip(u_b, -1, 1)
-
-#             error_g = p_b[t + 1, 1] - p_g[t]
-#             int_error_g += error_g
-#             der_error_g = error_g - prev_error_g
-#             u_g = (Kp * error_g + Ki * int_error_g + Kd * der_error_g +
-#                    eps * np.random.randn())
-#             prev_error_g = error_g
-#             p_g[t + 1] = p_g[t] + vel[0] * np.clip(u_g, -1, 1)
-
-#         p.append(np.hstack((p_g, p_b)))
-#         g.append(g_b)
-
-#     return p, g
-
-
 def load_data(data_dir, hps):
     """ Load data from given directory
     """
@@ -146,14 +89,8 @@ def load_data(data_dir, hps):
         features.update({"ctrl_obs": tf.FixedLenFeature(
             (), tf.string)})
 
-    # y0 = tf.reshape([0., -0.58, 0.], [1, hps.obs_dim], "y0")
-
     def _read_data(example):
         parsed_features = tf.parse_single_example(example, features)
-        # trajectory = tf.concat(
-        #     [y0, tf.reshape(
-        #         tf.decode_raw(parsed_features["trajectory"], tf.float32),
-        #         [-1, hps.obs_dim])], 0)
         trajectory = tf.reshape(
             tf.decode_raw(parsed_features["trajectory"], tf.float32),
             [-1, hps.obs_dim])[1:]
@@ -196,31 +133,13 @@ def load_data(data_dir, hps):
     return iterator
 
 
-# def get_max_velocities(datasets, dim):
-#     """Get the maximium velocities from datasets
-#     """
-#     max_vel = [[] for _ in range(dim)]
-#     for d in range(len(datasets)):
-#         for i in range(len(datasets[d])):
-#             for c in range(dim):
-#                 if np.abs(np.diff(datasets[d][i][:, c])).max() > 0.001:
-#                     max_vel[c].append(
-#                         np.abs(np.diff(datasets[d][i][:, c])).max())
-
-#     return np.array([max(vel) for vel in max_vel], np.float32)
-
-
 def get_max_velocities(data_dirs, dim):
     max_vel = np.zeros((dim), np.float32)
     n_trials = []
 
     feature = {"trajectory": tf.FixedLenFeature((), tf.string)}
-    # y0 = tf.reshape([0., -0.58, 0.], [1, dim])
     def _get_trial(example):
         data_dict = tf.parse_single_example(example, feature)
-        # traj = tf.concat(
-        #     [y0, tf.reshape(tf.decode_raw(
-        #         data_dict["trajectory"], tf.float32), [-1, dim])], 0)
         traj = tf.reshape(tf.decode_raw(
             data_dict["trajectory"], tf.float32), [-1, dim])[1:]
 
@@ -305,7 +224,6 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
 
                 priors.append(dict(
                     name=a["name"], col=a["col"], dim=a["dim"],
-                    # g0=get_g0_params(a["dim"], GMM_K),
                     GMM_NN=get_network(
                         "goal_GMM", (state_dim + extra_dim),
                         (GMM_K * a["dim"] * 2 + GMM_K),
@@ -313,7 +231,8 @@ def get_model_params(name, agents, obs_dim, state_dim, extra_dim,
                     GMM_K=GMM_K,
                     unc_sigma=unc_sigma_init,
                     sigma_trainable=sigma_trainable, sigma_pen=sigma_penalty,
-                    g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
+                    g_bounds=goal_boundaries,
+                    g_bounds_pen=goal_boundary_penalty,
                     PID=get_PID_params(a["dim"], epoch),
                     unc_eps=unc_eps_init,
                     eps_trainable=epsilon_trainable, eps_pen=epsilon_penalty,
@@ -435,14 +354,6 @@ def get_PID_params(dim, epoch):
         unc_Kd = tf.Variable(tf.multiply(
             softplus_inverse(1e-6), tf.ones(dim, tf.float32), "unc_Kd_init"),
                              name="unc_Kd")
-        # if dim == 2:
-        #     unc_Kd = tf.Variable(
-        #         [softplus_inverse(1.), softplus_inverse(1e-6)],
-        #         name="unc_Kd", dtype=tf.float32)
-        # else:
-        #     unc_Kd = tf.Variable(
-        #         tf.multiply(softplus_inverse(1e-6), tf.ones(dim, tf.float32),
-        #                     "unc_Kd_init"), name="unc_Kd")
         
         Kp = tf.nn.softplus(unc_Kp, "Kp")
         Ki = tf.nn.softplus(unc_Ki, "Ki")
@@ -450,36 +361,14 @@ def get_PID_params(dim, epoch):
 
         PID = {}
         PID["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
-        PID["Kp"] = tf.cond(tf.greater(epoch, 0),
+        PID["Kp"] = tf.cond(tf.greater(epoch, 10),
                             lambda: Kp, lambda: tf.stop_gradient(Kp))
-        PID["Ki"] = tf.cond(tf.greater(epoch, 0),
+        PID["Ki"] = tf.cond(tf.greater(epoch, 10),
                             lambda: Ki, lambda: tf.stop_gradient(Ki))
-        PID["Kd"] = tf.cond(tf.greater(epoch, 0),
+        PID["Kd"] = tf.cond(tf.greater(epoch, 10),
                             lambda: Kd, lambda: tf.stop_gradient(Kd))
-        # PID["Kp"] = Kp
-        # PID["Ki"] = Ki
-        # PID["Kd"] = Kd
 
         return PID
-
-
-# def get_g0_params(dim, K):
-#     with tf.variable_scope("g0"):
-#         g0 = {}
-#         g0["K"] = K
-#         # g0["mu"] = tf.Variable(
-#         #     tf.random_normal([K, dim], name="mu_init_value"),
-#         #     dtype=tf.float32, name="mu")
-#         g0["unc_mu"] = tf.Variable(
-#             tf.random_normal([K, dim], name="mu_init_value"),
-#             dtype=tf.float32, name="unc_mu")
-#         g0["unc_lambda"] = tf.Variable(
-#             tf.random_normal([K, dim], name="lambda_init_value"),
-#             dtype=tf.float32, name="unc_lambda")
-#         g0["unc_w"] = tf.Variable(
-#             tf.ones([K], name="w_init_value"), dtype=tf.float32, name="unc_w")
-
-#         return g0
 
 
 def pad_batch(batch, mode="edge"):

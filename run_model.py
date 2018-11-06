@@ -6,8 +6,6 @@ from tf_gbds.agents import game_model
 from tf_gbds.utils import (get_max_velocities, load_data, get_vel, get_accel,
                            get_model_params, pad_batch, add_summary,
                            KLqp_profile, KLqp_clipgrads)
-# import time
-# from tensorflow.python.client import timeline
 
 
 # default flag values
@@ -268,13 +266,6 @@ def run_model(FLAGS):
             inputs = {"trajectory": trajectory_in, "states": states_in,
                       "extra_conds": extra_conds_in, "ctrl_obs": ctrl_obs_in}
 
-            # train_set = load_data(FLAGS.train_data_dir, FLAGS)
-            # val_set = load_data(FLAGS.val_data_dir, FLAGS)
-            # iterator = tf.data.Iterator.from_structure(
-            #     train_set.output_types, train_set.output_shapes)
-            # train_init_op = iterator.make_initializer(train_set)
-            # val_init_op = iterator.make_initializer(val_set)
-
         params = get_model_params(
             FLAGS.game_name, agents, FLAGS.obs_dim, state_dim,
             FLAGS.extra_dim, FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
@@ -346,7 +337,6 @@ def run_model(FLAGS):
                                      model.latent_vars)
         else:
             inference = ed.KLqp(model.latent_vars)
-            # inference = KLqp_clipgrads(latent_vars=model.latent_vars)
 
         if FLAGS.opt == "Adam":
             optimizer = tf.train.AdamOptimizer(FLAGS.lr)
@@ -383,7 +373,6 @@ def run_model(FLAGS):
             print("Entering epoch %s ..." % (i + 1))
 
         iterator.initializer.run({data_dir: FLAGS.train_data_dir})
-        # sess.run(train_init_op)
         while True:
             try:
                 feed_dict = {epoch: (i + 1)}
@@ -401,7 +390,6 @@ def run_model(FLAGS):
         if (i + 1) % FLAGS.freq_val_loss == 0:
             curr_val_loss = []
             iterator.initializer.run({data_dir: FLAGS.val_data_dir})
-            # sess.run(val_init_op)
             while True:
                 try:
                     curr_val_loss.append(
@@ -431,17 +419,6 @@ def run_model(FLAGS):
                         latest_filename="ckpt_val_loss")
                     print("Model saved after %s epochs." % (i + 1))
 
-    # if FLAGS.profile:
-    #     fetched_timeline = timeline.Timeline(run_metadata.step_stats)
-    #     chrome_trace = fetched_timeline.generate_chrome_trace_format()
-    #     # use absolute path for FLAGS.model_dir
-    #     with open(FLAGS.model_dir + "/timeline_01_step_%d.json" %
-    #               step, "w") as f:
-    #         f.write(chrome_trace)
-    #         f.close()
-
-    # sess_saver.save(sess, FLAGS.model_dir + "/final_model",
-    #                 latest_filename="ckpt")
     inference.finalize()
     sess.close()
 

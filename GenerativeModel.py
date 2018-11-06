@@ -1,10 +1,8 @@
 import tensorflow as tf
 import numpy as np
-# import edward as ed
 from edward.models import RandomVariable
 from tensorflow.contrib.distributions import (Distribution,
                                               FULLY_REPARAMETERIZED)
-# from tensorflow.python.ops.distributions.special_math import log_ndtr
 from tf_gbds.utils import pad_extra_conds
 
 
@@ -40,21 +38,6 @@ class GBDS(RandomVariable, Distribution):
             self.GMM_NN = params["GMM_NN"]
             self.params += self.GMM_NN.variables
             self.log_vars += self.GMM_NN.variables
-
-            # with tf.name_scope("g0"):
-            #     # initial goal distribution
-            #     g0 = params["g0"]
-            #     # self.g0_mu = tf.identity(g0["mu"], "mu")
-            #     self.g0_mu = tf.add(g0["unc_mu"], self.y[0, 0], "mu")
-            #     self.g0_lambda = tf.nn.softplus(g0["unc_lambda"], "lambda")
-            #     self.g0_w = tf.nn.softmax(g0["unc_w"], name="w")
-            #     # self.g0_params = ([g0["mu"]] + [g0["unc_lambda"]] +
-            #     #                   [g0["unc_w"]])
-            #     self.g0_params = ([g0["unc_mu"]] + [g0["unc_lambda"]] +
-            #                       [g0["unc_w"]])
-            #     self.params += self.g0_params
-            #     self.log_vars += ([self.g0_mu] + [self.g0_lambda] +
-            #                       [self.g0_w])
 
             with tf.name_scope("goal_state_noise"):
                 # noise coefficient on goal states
@@ -97,20 +80,6 @@ class GBDS(RandomVariable, Distribution):
                 # concatenate coefficients into a filter
                 self.L = tf.stack([t2_coeff, t1_coeff, t_coeff], axis=1,
                                   name="convolution_filter")
-
-            # with tf.name_scope("control_signal_censoring"):
-            #     # clipping signal
-            #     self.clip = params["clip"]
-            #     if self.clip:
-            #         if params["clip_range"] is not None:
-            #             self.clip_range = params["clip_range"]
-            #         else:
-            #             self.clip_range = [-1., 1.]
-            #         self.clip_tol = tf.constant(
-            #             params["clip_tol"], tf.float32, name="clip_tolerance")
-            #         self.clip_pen = tf.constant(
-            #             params["clip_pen"], tf.float32, name="clip_penalty")
-            #         # self.eta = params["eta"]
 
             with tf.name_scope("control_signal_noise"):
                 # noise coefficient on control signals
@@ -165,7 +134,6 @@ class GBDS(RandomVariable, Distribution):
             tf.expand_dims(post_g[:, :-1], 2) + all_mu * all_lambda,
             1 + all_lambda, "next_goals")
 
-        # error = tf.subtract(post_g, y, "control_error")
         error = tf.subtract(post_g[:, 1:], y, "control_error")
 
         with tf.name_scope("convolution"):
@@ -191,49 +159,7 @@ class GBDS(RandomVariable, Distribution):
 
         return (all_mu, all_lambda, all_w, next_g, u_pred)
 
-    # def clip_log_prob(self, upsilon, u):
-    #     """upsilon (derived from time series of y) is a censored version of
-    #     a noisy control signal: \hat{u} ~ N(u, \eta^2).
-    #     log p(upsilon|u, g) = log p(upsilon|u) + log(u|g)
-    #     log p(upsilon|u) breaks down into three cases,
-    #     namely left-clipped (upsilon_t = -1), right-clipped (upsilon_t = 1),
-    #     and non-clipped (-1 < upsilon_t < 1). For the first two cases,
-    #     Normal CDF is used instead of PDF due to censoring.
-    #     The log density term is computed for each and then add up.
-    #     """
-
-    #     l_b = tf.add(self.clip_range[0], self.clip_tol, "lower_bound")
-    #     u_b = tf.subtract(self.clip_range[1], self.clip_tol, "upper_bound")
-    #     pen = self.clip_pen
-    #     # eta = self.eta
-
-    #     # def z(x, loc, scale):
-    #     #     return (x - loc) / scale
-
-    #     # def normal_logpdf(x, loc, scale):
-    #     #     return -(0.5 * np.log(2 * np.pi) + tf.log(scale) +
-    #     #              0.5 * tf.square(z(x, loc, scale)))
-
-    #     # def normal_logcdf(x, loc, scale):
-    #     #     return log_ndtr(z(x, loc, scale))
-
-    #     return tf.where(tf.less_equal(upsilon, l_b, name="left_clip"),
-    #                     # normal_logcdf(l_b, u, eta),
-    #                     pen * tf.nn.relu(u - l_b),
-    #                     tf.where(tf.greater_equal(upsilon, u_b,
-    #                                               name="right_clip"),
-    #                              # normal_logcdf(-u_b, -u, eta),
-    #                              pen * tf.nn.relu(u_b - u),
-    #                              # normal_logpdf(upsilon, u, eta)))
-    #                              pen * tf.nn.relu(tf.abs(u - upsilon) -
-    #                                               self.clip_tol)))
-
     def _log_prob(self, value):
-        # all_mu, all_lambda, all_w, g_pred, u_pred = self.get_preds(
-        #     self.s[:, 1:-1], self.y[:, :-1],
-        #     value, tf.pad(
-        #         self.ctrl_obs[:, :-1], [[0, 0], [1, 0], [0, 0]],
-        #         name="previous_control"), self.extra_conds)
         all_mu, all_lambda, all_w, g_pred, u_pred = self.get_preds(
             self.s[:, :-1], self.y[:, :-1],
             value, tf.pad(
@@ -253,38 +179,13 @@ class GBDS(RandomVariable, Distribution):
             logdensity_g += tf.reduce_sum(
                 tf.reduce_logsumexp(gmm_term, -1), -1)
 
-            # tf.summary.scalar("average_log_density", tf.reduce_mean(
-            #     tf.reduce_logsumexp(gmm_term, -1)))
-
-        # with tf.name_scope("g0"):
-        #     res_g0 = tf.subtract(tf.expand_dims(value[:, 0], 1), self.g0_mu,
-        #                          "g0_residual")
-        #     g0_term = tf.log(self.g0_w + 1e-8) - tf.reduce_sum(
-        #         self.g0_lambda * (res_g0 ** 2) / 2, -1)
-        #     g0_term += 0.5 * tf.reduce_sum(
-        #         tf.log(self.g0_lambda) - tf.log(2 * np.pi), -1)
-        #     logdensity_g += tf.reduce_logsumexp(g0_term, -1)
-
         with tf.name_scope("boundary_penalty"):
             if self.g_pen is not None:
-                # penalty on goal state escaping game space
-                # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(self.bounds[0] - g_pred), [1, 2, 3])
-                # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(g_pred - self.bounds[1]), [1, 2, 3])
                 logdensity_g -= self.g_pen * tf.reduce_sum(
                     tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3])
                 logdensity_g -= self.g_pen * tf.reduce_sum(
                     tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3])
                 logdensity_g -= .1 * tf.reduce_sum(1. / all_lambda, [1, 2, 3])
-                # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3]) / self.K
-                # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3]) / self.K
-                # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(self.bounds[0] - value), [1, 2])
-                # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(value - self.bounds[1]), [1, 2])
 
         logdensity_u = 0.0
         with tf.name_scope("control_signal"):
@@ -292,10 +193,6 @@ class GBDS(RandomVariable, Distribution):
             logdensity_u -= tf.reduce_sum(
                 (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
                  u_res ** 2 / (2 * self.eps ** 2)), [1, 2])
-
-            # tf.summary.histogram("residual", u_res)
-            # tf.summary.scalar("average_log_density", tf.reduce_mean(
-            #     logdensity_u))
 
         if self.sigma_pen is not None:
             logdensity_g -= self.sigma_pen * tf.reduce_sum(self.unc_sigma)
@@ -307,64 +204,6 @@ class GBDS(RandomVariable, Distribution):
             tf.cast(self.Tt, tf.float32))
 
         return logdensity
-
-    # def sample_g0(self, _=None):
-    #     # Sample from initial goal distribution
-    #     with tf.name_scope("select_component"):
-    #         k0 = tf.squeeze(tf.multinomial(tf.reshape(
-    #             tf.log(self.g0_w, name="log_g0_w"), [1, -1]), 1), name="k0")
-    #     with tf.name_scope("get_sample"):
-    #         g0 = tf.add(
-    #             (tf.random_normal([self.dim], name="std_normal") /
-    #              tf.sqrt(self.g0_lambda[k0], name="inv_std_dev")),
-    #             self.g0_mu[k0], name="g0")
-
-    #     return g0
-
-    # def sample_GMM(self, state, prev_g, extra_conds=None):
-    #     # Generate new goal given current state and previous goal
-    #     state = tf.reshape(state, [1, 1, -1], "reshape_state")
-    #     with tf.name_scope("pad_extra_conds"):
-    #         if extra_conds is not None:
-    #             state = pad_extra_conds(state, extra_conds)
-
-    #     NN_output = self.GMM_NN(state)
-    #     with tf.name_scope("mu"):
-    #         all_mu = tf.reshape(
-    #             NN_output[:, :, :(self.K * self.dim)],
-    #             [self.K, self.dim], "all_mu")
-    #     with tf.name_scope("lambda"):
-    #         all_lambda = tf.reshape(tf.nn.softplus(
-    #             NN_output[:, :, (self.K * self.dim):(
-    #                 2 * self.K * self.dim)], "softplus_lambda"),
-    #             [self.K, self.dim], "all_lambda")
-    #     with tf.name_scope("w"):
-    #         all_w = tf.nn.softmax(tf.reshape(
-    #             NN_output[:, :, (2 * self.K * self.dim):],
-    #             [1, self.K], "reshape_w"), -1, "all_w")
-
-    #     with tf.name_scope("select_component"):
-    #         k = tf.squeeze(tf.multinomial(
-    #             tf.reshape(tf.log(all_w, "log_w"), [1, -1]), 1), name="k")
-    #     with tf.name_scope("get_sample"):
-    #         g = tf.add(
-    #             tf.divide(prev_g + all_mu[k] * all_lambda[k],
-    #                       1 + all_lambda[k], name="mean"),
-    #             (tf.random_normal([self.dim], name="std_normal") *
-    #              tf.divide(tf.squeeze(self.sigma),
-    #                        tf.sqrt(1 + all_lambda[k]), name="std_dev")),
-    #             name="new_goal")
-
-    #     return g
-
-    # def update_ctrl(self, errors, prev_u):
-    #     # Update control signal given errors and previous control
-    #     u_diff = tf.reduce_sum(
-    #         tf.multiply(errors, tf.transpose(self.L), "convolve_signal"),
-    #         0, name="control_signal_change")
-    #     u = tf.add(prev_u, u_diff, "new_control")
-
-    #     return u
 
 
 class joint_GBDS(RandomVariable, Distribution):
@@ -407,21 +246,3 @@ class joint_GBDS(RandomVariable, Distribution):
     def _log_prob(self, value):
         return tf.add_n([agent.log_prob(tf.gather(value, agent.col, axis=-1))
                          for agent in self.agents])
-
-    # def sample_g0(self, n=1):
-    #     if n == 1:
-    #         return tf.concat([agent.sample_g0() for agent in self.agents], 0)
-    #     else:
-    #         return tf.concat([tf.map_fn(agent.sample_g0, tf.zeros(n))
-    #                           for agent in self.agents], -1)
-
-    # def update_goal(self, state, prev_g, extra_conds=None):
-    #     return tf.concat([agent.sample_GMM(
-    #       state, tf.gather(prev_g, agent.col, axis=-1), extra_conds)
-    #                       for agent in self.agents], 0)
-
-    # def update_ctrl(self, errors, prev_u):
-    #     return tf.concat([agent.update_ctrl(
-    #         tf.gather(errors, agent.col, axis=-1),
-    #         tf.gather(prev_u, agent.col, axis=-1))
-    #                       for agent in self.agents], 0)
