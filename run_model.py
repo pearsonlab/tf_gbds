@@ -14,15 +14,14 @@ from tensorflow.python.client import timeline
 # Load utilities
 from tf_util import *
 from agents import game_model
-from utils import (load_data, get_max_velocities, get_vel,
-                   get_accel, get_model_params, add_summary,
-                   KLqp_profile, KLqp_clipgrads)
+from utils import (load_data, get_vel, get_accel, get_model_params,
+                   add_summary, KLqp_profile, KLqp_clipgrads)
 
 
 # default flag values
 MODEL_DIR = "new_model"
-TRAINING_DATA_DIR = "tfrecord/[K]1prey_train.tfrecords"
-VALIDATION_DATA_DIR = "tfrecord/[K]1prey_validation.tfrecords"
+TRAINING_DATA_DIR = ""
+VALIDATION_DATA_DIR = ""
 SYNTHETIC_DATA = False
 SAVE_POSTERIOR = True
 LOAD_SAVED_MODEL = False
@@ -34,10 +33,10 @@ N_AGENTS = 1
 AGENT_NAME = "subject"
 AGENT_COLUMN = "0,1"
 OBSERVE_DIM = 2
-OBSERVED_CONTROL = False
 EXTRA_CONDITIONS = True
 EXTRA_DIM = 12
 ADD_ACCEL = False
+MAX_VEL = ".021,.021"
 
 GMM_K = 8
 GEN_N_LAYERS = 3
@@ -57,10 +56,10 @@ GOAL_PRECISION_PENALTY = None
 EPSILON = -11.
 EPSILON_TRAINABLE = False
 EPSILON_PENALTY = 1e5
-LATENT_CONTROL = False
+LATENT_CONTROL = True
 CLIP = True
-CLIP_RANGE_L = "-1,-1"
-CLIP_RANGE_U = ".95,.909"
+CLIP_RANGE_L = "-.9975,-.98"
+CLIP_RANGE_U = ".995,.95"
 CLIP_TOLERANCE = .075
 ETA = -11.
 ETA_TRAINABLE = False
@@ -106,13 +105,12 @@ flags.DEFINE_string("agent_name", AGENT_NAME, "Name of each agent \
 flags.DEFINE_string("agent_col", AGENT_COLUMN, "Columns of data \
                     corresponding to each agent (separated by ; and ,)")
 flags.DEFINE_integer("obs_dim", OBSERVE_DIM, "Dimension of observation")
-flags.DEFINE_boolean("ctrl_obs", OBSERVED_CONTROL, "Are observed control \
-                     signals included in the dataset")
 flags.DEFINE_boolean("extra_conds", EXTRA_CONDITIONS, "Are extra conditions \
                      included in the dataset")
 flags.DEFINE_integer("extra_dim", EXTRA_DIM, "Dimension of extra conditions")
 flags.DEFINE_boolean("add_accel", ADD_ACCEL,
                      "Is acceleration included in state")
+flags.DEFINE_string("max_vel", MAX_VEL, "Maximum velocity of agent")
 
 flags.DEFINE_integer("GMM_K", GMM_K, "Number of components in GMM")
 flags.DEFINE_integer("gen_n_layers", GEN_N_LAYERS, "Number of layers in \
@@ -207,6 +205,12 @@ def run_model(FLAGS):
         agents.append(
             dict(name=agent_name[i], col=agent_col[i], dim=agent_dim[i]))
 
+    if FLAGS.max_vel is not None:
+        max_vel = np.array([float(n) for n in FLAGS.max_vel.split(",")],
+                           dtype=np.float32)
+    else:
+        max_vel = None
+
     if FLAGS.add_accel:
         state_dim = FLAGS.obs_dim * 3
         get_state = get_accel
@@ -262,12 +266,11 @@ def run_model(FLAGS):
 
     with tf.device("/cpu:0"):
         with tf.name_scope("get_max_velocities"):
-            max_vel, n_trials = get_max_velocities(
-                [FLAGS.train_data_dir, FLAGS.val_data_dir],
-                FLAGS.obs_dim, FLAGS.clip)
+            if max_vel is None:
+                max_vel, _ = get_max_velocities(
+                    [FLAGS.train_data_dir, FLAGS.val_data_dir],
+                    FLAGS.obs_dim, FLAGS.clip)
             print("The maximum velocity is %s." % max_vel)
-            print("The training set contains %s trials." % n_trials[0])
-            print("The validation set contains %s trials." % n_trials[1])
 
         epoch = tf.placeholder(tf.int64, name="epoch")
         data_dir = tf.placeholder(tf.string, name="dataset_directory")
@@ -275,12 +278,8 @@ def run_model(FLAGS):
             iterator = load_data(data_dir, FLAGS)
             data = iterator.get_next("data")
 
-            if FLAGS.extra_conds and FLAGS.ctrl_obs:
-                (trajectory, extra_conds, ctrl_obs) = data
-            elif FLAGS.extra_conds:
+            if FLAGS.extra_conds:
                 (trajectory, extra_conds) = data
-            elif FLAGS.ctrl_obs:
-                (trajectory, ctrl_obs) = data
             else:
                 (trajectory,) = data
 
@@ -291,18 +290,16 @@ def run_model(FLAGS):
                 extra_conds_in = tf.identity(extra_conds, "extra_conditions")
             else:
                 extra_conds_in = None
-            if FLAGS.ctrl_obs:
-                ctrl_obs_in = tf.identity(ctrl_obs, "observed_control")
-            else:
-                with tf.name_scope("observed_control"):
-                    if FLAGS.clip:
-                        ctrl_obs_in = tf.divide(tf.subtract(
-                            trajectory_in[:, 1:], trajectory_in[:, :-1],
-                            "diff"), max_vel, "standardize")
-                    else:
-                        ctrl_obs_in = tf.atanh(tf.divide(tf.subtract(
-                            trajectory_in[:, 1:], trajectory_in[:, :-1],
-                            "diff"), max_vel, "standardize"), "arctanh")
+
+            with tf.name_scope("observed_control"):
+                if FLAGS.clip:
+                    ctrl_obs_in = tf.divide(tf.subtract(
+                        trajectory_in[:, 1:], trajectory_in[:, :-1],
+                        "diff"), max_vel, "standardize")
+                else:
+                    ctrl_obs_in = tf.atanh(tf.divide(tf.subtract(
+                        trajectory_in[:, 1:], trajectory_in[:, :-1],
+                        "diff"), max_vel, "standardize"), "arctanh")
 
             inputs = {"trajectory": trajectory_in, "states": states_in,
                       "extra_conds": extra_conds_in, "ctrl_obs": ctrl_obs_in}

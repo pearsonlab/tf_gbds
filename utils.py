@@ -85,9 +85,6 @@ def load_data(data_dir, hps):
     if hps.extra_conds:
         features.update({"extra_conds": tf.FixedLenFeature(
             (), tf.string)})
-    if hps.ctrl_obs:
-        features.update({"ctrl_obs": tf.FixedLenFeature(
-            (), tf.string)})
 
     def _read_data(example):
         parsed_features = tf.parse_single_example(example, features)
@@ -102,21 +99,8 @@ def load_data(data_dir, hps):
                 tf.decode_raw(parsed_features["extra_conds"], tf.float32),
                 [-1, hps.extra_dim])
             data += (extra_conds,)
-        if "ctrl_obs" in parsed_features:
-            ctrl_obs = tf.reshape(
-                tf.decode_raw(parsed_features["ctrl_obs"], tf.float32),
-                [-1, hps.obs_dim])
-            data += (ctrl_obs,)
 
         return data
-
-    # def _pad_data(batch):
-    #     batch["trajectory"] = pad_batch(batch["trajectory"])
-    #     if "ctrl_obs" in batch:
-    #         batch["ctrl_obs"] = pad_batch(batch["ctrl_obs"],
-    #                                       mode="zero")
-
-    #     return batch
 
     with tf.name_scope("preprocessing"):
         dataset = tf.data.TFRecordDataset(data_dir)
