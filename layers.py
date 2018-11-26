@@ -39,15 +39,14 @@ class DLGMLayer(keras_layers.Layer):
     J (theano symbolic matrix): Input to rec model
     k (float): regularization term on generative weights
     """
-    def __init__(self, incoming, num_units, srng, rec_nets, k,
+    def __init__(self, incoming, num_units, rec_nets, k,
                  output_layer=False, extra_noise=0.01,
-                 param_init=tf.random_normal_initializer(0, 0.01, seed=1234),
+                 param_init=tf.random_normal_initializer(0, 0.01),
                  nonlinearity=tf.nn.relu,
                  **kwargs):
         super(DLGMLayer, self).__init__(**kwargs)
 
         num_inputs = incoming.output_shape[1]
-        self.srng = srng
         self.num_units = num_units
         self.output_layer = output_layer
         self.extra_noise = extra_noise
@@ -61,7 +60,7 @@ class DLGMLayer(keras_layers.Layer):
                                        shape=(num_units, num_units),
                                        initializer=param_init)
         self.G = (tf.diag(tf.nn.softplus(tf.diag_part(self.unc_G))) +
-                  tf.matrix_band_part(self.unc_G, -1, 0))
+                  self.unc_G - tf.matrix_band_part(self.unc_G, 0, -1))
         self.nonlinearity = nonlinearity
 
         # regularization term
@@ -107,7 +106,7 @@ class DLGMLayer(keras_layers.Layer):
             # since softplus will turn low numbers into 0, which become NaNs
             # when inverted
             u, unc_d = inputs
-            d = tf.log(1+tf.exp(tf.maximum(unc_d, -15.0)))
+            d = tf.nn.softplus(tf.maximum(unc_d, -15.0))
             D_inv = tf.diag(1.0 / d)
             eta = 1.0 / (tf.matmul(tf.matmul(tf.transpose(u), D_inv), u) + 1.0)
             C = D_inv - eta*tf.matmul(tf.matmul(tf.matmul(D_inv, u),
@@ -186,14 +185,13 @@ class PKBiasLayer(keras_layers.Layer):
     3: muscimol and DLPFC, biases 0 and 2 are added
     4: muscimol and DMPFC, biases 1 and 3 are added
     """
-    def __init__(self, incoming, srng, params,
+    def __init__(self, incoming, params,
                  param_init=tf.random_normal_initializer(stddev=0.01),
                  num_biases=4, **kwargs):
         super(PKBiasLayer, self).__init__(**kwargs)
 
         num_inputs = incoming.output_shape[1]
         self.mode = tf.zeros(num_biases)
-        self.srng = srng
         self.k = np.cast[backend.floatx()](params['k'])
 
         self.m = self.add_variable(name='m', shape=[num_biases, num_inputs],
@@ -251,14 +249,13 @@ class PKRowBiasLayer(keras_layers.Layer):
     3: muscimol and DLPFC, biases 0 and 2 are added
     4: muscimol and DMPFC, biases 1 and 3 are added
     """
-    def __init__(self, incoming, srng, params,
+    def __init__(self, incoming, params,
                  param_init=tf.random_normal_initializer(stddev=0.01),
                  num_biases=4, **kwargs):
         super(PKRowBiasLayer, self).__init__(**kwargs)
 
         num_inputs = incoming.output_shape[1]
         self.mode = tf.zeros(num_biases)
-        self.srng = srng
         # parameters on prior
         self.a = np.cast[backend.floatx()](params['a'])  # shape
         self.b = np.cast[backend.floatx()](params['b'])  # rate
