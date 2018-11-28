@@ -314,12 +314,12 @@ def run_model(FLAGS):
             FLAGS.eps_trainable, FLAGS.eps_pen, FLAGS.clip, clip_range,
             FLAGS.clip_tol, FLAGS.eta_init, FLAGS.eta_trainable,
             FLAGS.eta_pen, epoch)
-        cost_grid = tf.constant(
-            load_cost(join(curr_dir, "data"), "/cost_grid.mat"),
-            tf.float32, name="cost_grid")
+        # cost_grid = tf.constant(
+        #     load_cost(join(curr_dir, "data"), "/cost_grid.mat"),
+        #     tf.float32, name="cost_grid")
 
-        model = game_model(params, inputs, max_vel, cost_grid,
-                           FLAGS.extra_dim, FLAGS.n_post_samp)
+        model = game_model(params, inputs, max_vel, FLAGS.extra_dim,
+                           FLAGS.n_post_samp)
 
         with tf.name_scope("parameters_summary"):
             summary_list = []
