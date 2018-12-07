@@ -237,10 +237,18 @@ def get_model_params(name, agents, model_dim, obs_dim, state_dim, extra_dim,
 
                 p_params.append(dict(
                     name=a["name"], col=a["col"], dim=a["dim"],
-                    GMM_NN=get_network(
-                        "goal_GMM", (state_dim + extra_dim),
-                        (GMM_K * a["dim"] * 2 + GMM_K),
-                        gen_hidden_dim, gen_n_layers, PKLparams)[0],
+                    state_dim=state_dim, extra_dim=extra_dim, GMM_NN=(
+                        get_network("G0", state_dim,
+                                    GMM_K * a["dim"] * 2 + GMM_K,
+                                    gen_hidden_dim, gen_n_layers,
+                                    PKLparams)[0],
+                        get_network("G1", state_dim * 2 + 2,
+                                    GMM_K * a["dim"] * 2 + GMM_K,
+                                    gen_hidden_dim, gen_n_layers,
+                                    PKLparams)[0],
+                        get_network("A", state_dim + extra_dim, 3,
+                                    gen_hidden_dim, gen_n_layers,
+                                    PKLparams)[0]),
                     GMM_K=GMM_K, unc_sigma=unc_sigma_init,
                     sigma_trainable=sigma_trainable, sigma_pen=sigma_penalty,
                     g_bounds=goal_boundaries,

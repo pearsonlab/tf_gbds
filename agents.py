@@ -9,11 +9,26 @@ from RecognitionModel import SmoothingPastLDSTimeSeries
 #                                generate_predator_trajectory)
 
 
+def get_GMM_params(NN, inputs, K, D, name="GMM"):
+    with tf.name_scope(name):
+        NN_output = tf.identity(NN(inputs), "NN_output")
+        mu = tf.reshape(
+            NN_output[:, :, :(K * D)],
+            [tf.shape(inputs)[0], -1, K, D], "mu")
+        lmbda = tf.reshape(tf.nn.softplus(
+            NN_output[:, :, (K * D):(2 * K * D)], "softplus_lambda"),
+            [tf.shape(inputs)[0], -1, K, D], "lambda")
+        w = tf.nn.softmax(tf.reshape(
+            NN_output[:, :, (2 * K * D):],
+            [tf.shape(inputs)[0], -1, K], "reshape_w"), -1, "w")
+
+        return mu, lmbda, w
+
 class game_model(object):
     """Auxiliary class to construct the computational graph
     (define generative and recognition models, draw samples, trial completion)
     """
-    def __init__(self, params, inputs, max_vel, extra_dim=0,
+    def __init__(self, params, inputs, max_vel, state_dim, extra_dim=0,
                  n_samples=50):
         with tf.name_scope(params["name"]):
             model_dim = params["model_dim"]
@@ -65,29 +80,65 @@ class game_model(object):
 
             self.latent_vars.update({self.p: self.q})
 
-            with tf.name_scope("GMM"):
+            with tf.name_scope("G"):
                 # game state includes both position and velocity
-                state = tf.placeholder(tf.float32, [None, None, obs_dim * 2],
-                                       "state")
-                # pad prey information
-                if extra_dim != 0:
-                    extra_cond = tf.placeholder(
-                        tf.float32, [None, None, extra_dim],
-                        "extra_condition")
-                    NN_input = tf.concat([state, extra_cond], -1, "NN_input")
+                s = tf.placeholder(tf.float32, [None, None, obs_dim * 2],
+                                   "state")
+                npcs = tf.placeholder(
+                    tf.float32, [None, None, extra_dim],
+                    "extra_conditions")
+
                 with tf.name_scope("subject"):
                     a = self.p.agents[0]
-                    NN_out = a.GMM_NN(NN_input)
-                    a_mu = tf.reshape(
-                        NN_out[:, :, :(a.K * a.dim)],
-                        [tf.shape(state)[0], -1, a.K, a.dim], "mu")
-                    a_lambda = tf.reshape(
-                        tf.nn.softplus(NN_out[:, :, (
-                            a.K * a.dim):(2 * a.K * a.dim)]),
-                        [tf.shape(state)[0], -1, a.K, a.dim], "lambda")
-                    a_w = tf.nn.softmax(tf.reshape(
-                        NN_out[:, :, (2 * a.K * a.dim):],
-                        [tf.shape(state)[0], -1, a.K]), -1, "w")
+                    G0_mu, G0_lambda, G0_w = get_GMM_params(
+                        a.G0_NN, s, a.K, a.dim, "G0")
+
+                    s1 = tf.pad(tf.concat([s, tf.gather(
+                        npcs, tf.concat(
+                            [tf.range(state_dim), [state_dim * 2]], 0),
+                        axis=-1)], -1), [[0, 0], [0, 0], [0, 1]], name="s1")
+                    G1_mu_1, G1_lambda_1, G1_w_1 = get_GMM_params(
+                        a.G1_NN, s1, a.K, a.dim, "G1_1")
+
+                    s2 = tf.concat([s, tf.gather(npcs, tf.concat(
+                        [tf.range(state_dim, state_dim * 2),
+                         [state_dim * 2 + 1], [extra_dim - 1]], 0),
+                                                 axis=-1)], -1, "s2")
+                    G1_mu_2, G1_lambda_2, G1_w_2 = get_GMM_params(
+                        a.G1_NN, s2, a.K, a.dim, "G1_2")
+
+                    second_npc = tf.reduce_any(tf.equal(tf.gather(
+                        npcs, [extra_dim - 2, extra_dim - 1],
+                        axis=-1), 1.), name="second_npc_bool")
+                    alpha = tf.cond(
+                        second_npc,
+                        lambda: tf.nn.softmax(
+                            a.A_NN(tf.concat([s, npcs], -1)), -1),
+                        lambda: tf.nn.softmax(tf.gather(
+                            a.A_NN(tf.concat([s, npcs], -1)), [0, 1],
+                            axis=-1), -1),
+                        name="alpha")
+
+                    G_mu = tf.cond(
+                        second_npc,
+                        lambda: tf.concat([G0_mu, G1_mu_1, G1_mu_2], 2),
+                        lambda: tf.concat([G0_mu, G1_mu_1], 2), name="mu")
+                    G_lambda = tf.cond(
+                        second_npc,
+                        lambda: tf.concat(
+                            [G0_lambda, G1_lambda_1, G1_lambda_2], 2),
+                        lambda: tf.concat([G0_lambda, G1_lambda_1], 2),
+                        name="lambda")
+                    G_w = tf.cond(
+                        second_npc,
+                        lambda: tf.concat(
+                            [G0_w * tf.gather(alpha, [0], axis=-1),
+                             G1_w_1 * tf.gather(alpha, [1], axis=-1),
+                             G1_w_2 * tf.gather(alpha, [2], axis=-1)], -1),
+                        lambda: tf.concat(
+                            [G0_w * tf.gather(alpha, [0], axis=-1),
+                             G1_w_1 * tf.gather(alpha, [1], axis=-1)], -1),
+                        name="w")
 
             with tf.name_scope("posterior"):
                 g_q_mu = tf.identity(
@@ -104,97 +155,48 @@ class game_model(object):
                         q_samp[:, :, :, model_dim:], "control_samples")
 
             with tf.name_scope("update_one_step"):
-                # weight_x = generate_weight(0, 10, 1920, 6, 2)
-                # weight_y = generate_weight(0, 10, 1080, 6, 2)
-                # rot_mat = generate_rotation_mat()
+                prev_y = tf.placeholder(
+                    tf.float32, obs_dim, "previous_position")
+                curr_y = tf.placeholder(
+                    tf.float32, obs_dim, "current_position")
+                v = tf.divide(curr_y - prev_y, max_vel,
+                              "current_velocity")
+                curr_s = tf.concat([curr_y, v], 0, "current_state")
 
-                with tf.name_scope("subject"):
-                    prev_y = tf.placeholder(
-                        tf.float32, obs_dim, "previous_position")
-                    curr_y = tf.placeholder(
-                        tf.float32, obs_dim, "current_position")
-                    v = tf.divide(curr_y - prev_y, max_vel,
-                                  "current_velocity")
-                    curr_s = tf.concat([curr_y, v], 0, "current_state")
+                if inputs["extra_conds"] is not None:
+                    gen_extra_conds = tf.placeholder(
+                        tf.float32, extra_dim, "extra_conditions")
+                else:
+                    gen_extra_conds = None
 
-                    if inputs["extra_conds"] is not None:
-                        gen_extra_cond = tf.placeholder(
-                            tf.float32, extra_dim, "extra_conditions")
-                    else:
-                        gen_extra_cond = None
+                with tf.name_scope("goal"):
+                    prev_g = tf.placeholder(
+                        tf.float32, model_dim, "previous")
+                    curr_g = tf.identity(self.p.update_goal(
+                        curr_s, prev_g, gen_extra_conds), "current")
 
-                    with tf.name_scope("goal"):
-                        prev_g = tf.placeholder(
+                with tf.name_scope("control"):
+                    with tf.name_scope("error"):
+                        curr_error = tf.subtract(
+                            curr_g, curr_y, "current")
+                        prev_error = tf.placeholder(
                             tf.float32, model_dim, "previous")
-                        curr_g = tf.identity(self.p.update_goal(
-                            curr_s, prev_g, gen_extra_cond), "current")
+                        prev2_error = tf.placeholder(
+                            tf.float32, model_dim, "previous2")
+                        errors = tf.stack(
+                            [prev2_error, prev_error, curr_error], 0,
+                            "all")
+                    prev_u = tf.placeholder(
+                        tf.float32, model_dim, "previous")
+                    curr_u = tf.identity(self.p.update_ctrl(
+                        errors, prev_u), "current")
 
-                    with tf.name_scope("control"):
-                        with tf.name_scope("error"):
-                            curr_error = tf.subtract(
-                                curr_g, curr_y, "current")
-                            prev_error = tf.placeholder(
-                                tf.float32, model_dim, "previous")
-                            prev2_error = tf.placeholder(
-                                tf.float32, model_dim, "previous2")
-                            errors = tf.stack(
-                                [prev2_error, prev_error, curr_error], 0,
-                                "all")
-                        prev_u = tf.placeholder(
-                            tf.float32, model_dim, "previous")
-                        curr_u = tf.identity(self.p.update_ctrl(
-                            errors, prev_u), "current")
-
-                    if latent_u:
-                        next_y = tf.clip_by_value(
-                            curr_y + max_vel * tf.clip_by_value(
-                                curr_u, clip_range[:, 0], clip_range[:, 1],
-                                "clip_control"), -1., 1., "next_position")
-                    else:
-                        next_y = tf.clip_by_value(
-                            curr_y + max_vel * tf.tanh(curr_u), -1., 1.,
-                            "next_position")
-
-            #     with tf.name_scope("npc"):
-            #         # requires both cost map and current subject location
-            #         orig_curr_y = recover_orig_val(curr_y)
-
-            #         with tf.name_scope("first"):
-            #             npc_spd_1 = 10 + gen_extra_cond[8] * 4
-            #             curr_npc_1 = gen_extra_cond[:2]
-            #             next_npc_1 = recover_normalized(
-            #                 generate_prey_trajectory(
-            #                     orig_curr_y, recover_orig_val(curr_npc_1),
-            #                     npc_spd_1, cost_grid, weight_x, weight_y,
-            #                     rot_mat))
-
-            #         with tf.name_scope("second"):
-            #             def prey():
-            #                 npc_spd_2 = 10 + gen_extra_cond[9] * 4
-            #                 curr_npc_2 = gen_extra_cond[4:6]
-
-            #                 return recover_normalized(
-            #                     generate_second_prey_trajectory(
-            #                         orig_curr_y, recover_orig_val(next_npc_1),
-            #                         recover_orig_val(curr_npc_2), npc_spd_2,
-            #                         cost_grid, weight_x, weight_y, rot_mat))
-
-            #             def predator():
-            #                 npc_spd_2 = 10 + gen_extra_cond[9] * 4
-            #                 curr_npc_2 = gen_extra_cond[4:6]
-
-            #                 return recover_normalized(
-            #                     generate_predator_trajectory(
-            #                         orig_curr_y, recover_orig_val(curr_npc_2),
-            #                         npc_spd_2, weight_x, weight_y))
-
-            #             def random():
-            #                 return tf.random_uniform([model_dim]) * 2 - 1
-
-            #             next_npc_2 = tf.case({
-            #                 tf.equal(gen_extra_cond[-2], 1): prey,
-            #                 tf.equal(gen_extra_cond[-1], 1): predator},
-            #                 default=random, exclusive=True)
-
-            #         next_npc = tf.stack([next_npc_1, next_npc_2], 0,
-            #                             "next_position")
+                if latent_u:
+                    next_y = tf.clip_by_value(
+                        curr_y + max_vel * tf.clip_by_value(
+                            curr_u, clip_range[:, 0], clip_range[:, 1],
+                            "clip_control"), -1., 1., "next_position")
+                else:
+                    next_y = tf.clip_by_value(
+                        curr_y + max_vel * tf.tanh(curr_u), -1., 1.,
+                        "next_position")

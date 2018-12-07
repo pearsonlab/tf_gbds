@@ -84,7 +84,7 @@ class GBDS(RandomVariable, Distribution):
     - extra_conds: time series of extra conditions
                    (prey positions, velocities, and values)
     """
-    def __init__(self, params, states, ctrl_obs, extra_conds=None,
+    def __init__(self, params, states, ctrl_obs, extra_conds,
                  *args, **kwargs):
         name = kwargs.get("name", "GBDS")
         with tf.name_scope(name):
@@ -99,10 +99,11 @@ class GBDS(RandomVariable, Distribution):
             self.ctrl_obs = tf.gather(ctrl_obs, self.col, axis=-1,
                                       name="observed_control")
             self.latent_u = params["latent_u"]
-
+            self.s_dim = params["state_dim"]
+            self.extra_dim = params["extra_dim"]
             if extra_conds is not None:
-                self.extra_conds = tf.identity(
-                    extra_conds, "extra_conditions")
+                self.extra_conds = tf.identity(extra_conds,
+                                               "extra_conditions")
             else:
                 self.extra_conds = None
 
@@ -111,9 +112,11 @@ class GBDS(RandomVariable, Distribution):
             # number of GMM components
             self.K = params["GMM_K"]
             # neural network to generate state-dependent goals
-            self.GMM_NN = params["GMM_NN"]
-            self.params += self.GMM_NN.variables
-            self.log_vars += self.GMM_NN.variables
+            self.G0_NN, self.G1_NN, self.A_NN = params["GMM_NN"]
+            self.params += (self.G0_NN.variables + self.G1_NN.variables +
+                            self.A_NN.variables)
+            self.log_vars += (self.G0_NN.variables + self.G1_NN.variables +
+                              self.A_NN.variables)
 
             with tf.name_scope("goal_state_noise"):
                 # noise coefficient on goal states
@@ -212,34 +215,74 @@ class GBDS(RandomVariable, Distribution):
 
         self._args = (params, states, ctrl_obs, extra_conds)
 
-    def get_preds(self, s, y, post_g, prev_u, extra_conds=None):
-    # def get_preds(self, s, y, post_g, extra_conds=None):
+    def get_GMM_params(self, NN, inputs, name="GMM"):
+        with tf.name_scope(name):
+            NN_output = tf.identity(NN(inputs), "NN_output")
+            mu = tf.reshape(
+                NN_output[:, :, :(self.K * self.dim)],
+                [self.B, -1, self.K, self.dim], "mu")
+            lmbda = tf.reshape(tf.nn.softplus(
+                NN_output[:, :, (self.K * self.dim):(
+                    2 * self.K * self.dim)], "softplus_lambda"),
+                [self.B, -1, self.K, self.dim], "lambda")
+            w = tf.nn.softmax(tf.reshape(
+                NN_output[:, :, (2 * self.K * self.dim):],
+                [self.B, -1, self.K], "reshape_w"), -1, "w")
+
+            return mu, lmbda, w
+
+    def get_preds(self, s, y, post_g, prev_u, extra_conds):
         """
         Return one-step-ahead prediction of goal and control signal,
         given state, current position, sample from goal posterior,
         and previous control (and extra conditions if provided).
         """
-        with tf.name_scope("pad_extra_conds"):
-            if extra_conds is not None:
-                s = tf.concat([s, extra_conds], -1)
+        G0_mu, G0_lambda, G0_w = self.get_GMM_params(self.G0_NN, s, "G0")
 
-        NN_output = tf.identity(self.GMM_NN(s), "NN_output")
-        all_mu = tf.reshape(
-            NN_output[:, :, :(self.K * self.dim)],
-            [self.B, -1, self.K, self.dim], "all_mu")
+        s1 = tf.pad(tf.concat([s, tf.gather(extra_conds, tf.concat(
+            [tf.range(self.s_dim), [self.s_dim * 2]], 0), axis=-1)], -1),
+                    [[0, 0], [0, 0], [0, 1]], name="s1")
+        G1_mu_1, G1_lambda_1, G1_w_1 = self.get_GMM_params(
+            self.G1_NN, s1, "G1_1")
 
-        all_lambda = tf.reshape(tf.nn.softplus(
-            NN_output[:, :, (self.K * self.dim):(
-                2 * self.K * self.dim)], "softplus_lambda"),
-            [self.B, -1, self.K, self.dim], "all_lambda")
+        s2 = tf.concat([s, tf.gather(extra_conds, tf.concat(
+            [tf.range(self.s_dim, self.s_dim * 2), [self.s_dim * 2 + 1],
+             [self.extra_dim - 1]], 0), axis=-1)], -1, "s2")
+        G1_mu_2, G1_lambda_2, G1_w_2 = self.get_GMM_params(
+            self.G1_NN, s2, "G1_2")
 
-        all_w = tf.nn.softmax(tf.reshape(
-            NN_output[:, :, (2 * self.K * self.dim):],
-            [self.B, -1, self.K], "reshape_w"), -1, "all_w")
+        second_npc = tf.reduce_any(tf.equal(
+            tf.gather(extra_conds, [self.extra_dim - 2, self.extra_dim - 1],
+                      axis=-1), 1.), name="second_npc_bool")
+        alpha = tf.cond(
+            second_npc,
+            lambda: tf.nn.softmax(self.A_NN(
+                tf.concat([s, extra_conds], -1)), -1),
+            lambda: tf.nn.softmax(tf.gather(self.A_NN(
+                tf.concat([s, extra_conds], -1)), [0, 1], axis=-1), -1),
+            name="alpha")
+
+        with tf.name_scope("G"):
+            G_mu = tf.cond(
+                second_npc, lambda: tf.concat([G0_mu, G1_mu_1, G1_mu_2], 2),
+                lambda: tf.concat([G0_mu, G1_mu_1], 2), name="mu")
+            G_lambda = tf.cond(
+                second_npc,
+                lambda: tf.concat([G0_lambda, G1_lambda_1, G1_lambda_2], 2),
+                lambda: tf.concat([G0_lambda, G1_lambda_1], 2), name="lambda")
+            G_w = tf.cond(
+                second_npc,
+                lambda: tf.concat(
+                    [G0_w * tf.gather(alpha, [0], axis=-1),
+                     G1_w_1 * tf.gather(alpha, [1], axis=-1),
+                     G1_w_2 * tf.gather(alpha, [2], axis=-1)], -1),
+                lambda: tf.concat(
+                    [G0_w * tf.gather(alpha, [0], axis=-1),
+                     G1_w_1 * tf.gather(alpha, [1], axis=-1)], -1), name="w")
 
         next_g = tf.divide(
-            tf.expand_dims(post_g[:, :-1], 2) + all_mu * all_lambda,
-            1 + all_lambda, "next_goals")
+            tf.expand_dims(post_g[:, :-1], 2) + G_mu * G_lambda,
+            1 + G_lambda, "next_goals")
 
         error = tf.subtract(post_g[:, 1:], y, "control_error")
 
@@ -265,7 +308,7 @@ class GBDS(RandomVariable, Distribution):
         u_pred = tf.add(prev_u, u_diff, "predicted_control_signal")
         # u_pred = tf.cumsum(u_diff, 1, name="predicted_control_signal")
 
-        return (all_mu, all_lambda, all_w, next_g, u_pred)
+        return (G_mu, G_lambda, G_w, next_g, u_pred)
 
     def _log_prob(self, value):
         if self.latent_u:
@@ -293,24 +336,13 @@ class GBDS(RandomVariable, Distribution):
             logdensity_g += tf.reduce_sum(
                 tf.reduce_logsumexp(gmm_term, -1), -1)
 
-            # tf.summary.scalar("average_log_density", tf.reduce_mean(
-            #     tf.reduce_logsumexp(gmm_term, -1)))
-
         with tf.name_scope("goal_penalty"):
             if self.g_pen is not None:
                 # penalty on goal state escaping game space
-                # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(self.bounds[0] - g_pred), [1, 2, 3])
-                # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(g_pred - self.bounds[1]), [1, 2, 3])
                 logdensity_g -= self.g_pen * tf.reduce_sum(
                     tf.nn.relu(self.bounds[0] - all_mu), [1, 2, 3])
                 logdensity_g -= self.g_pen * tf.reduce_sum(
                     tf.nn.relu(all_mu - self.bounds[1]), [1, 2, 3])
-                # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(self.bounds[0] - g_q), [1, 2])
-                # logdensity_g -= self.g_pen * tf.reduce_sum(
-                #     tf.nn.relu(g_q - self.bounds[1]), [1, 2])
 
                 # penalty on GMM precision
                 logdensity_g -= self.g_prec_pen * tf.reduce_sum(
@@ -330,10 +362,6 @@ class GBDS(RandomVariable, Distribution):
                 (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
                  u_res ** 2 / (2 * self.eps ** 2)), [1, 2])
 
-            # tf.summary.histogram("residual", u_res)
-            # tf.summary.scalar("average_log_density", tf.reduce_mean(
-            #     logdensity_u))
-
         if self.sigma_pen is not None:
             logdensity_g -= self.sigma_pen * tf.reduce_sum(self.unc_sigma)
         if self.eps_pen is not None:
@@ -347,41 +375,67 @@ class GBDS(RandomVariable, Distribution):
 
         return logdensity
 
-    def sample_GMM(self, state, prev_g, extra_conds=None):
+    def sample_GMM(self, s, prev_g, extra_conds):
         """
         Generate new goal given current state and previous goal
         """
-        state = tf.reshape(state, [1, 1, -1], "reshape_state")
-        with tf.name_scope("pad_extra_conds"):
-            if extra_conds is not None:
-                # Velocity is already part of the state.
-                extra_conds = tf.reshape(extra_conds, [1, 1, -1])
-                state = tf.concat([state, extra_conds], -1)
+        s = tf.reshape(s, [1, 1, -1], "state")
+        extra_conds = tf.reshape(extra_conds, [1, 1, -1], "extra_conditions")
 
-        with tf.name_scope("mu"):
-            all_mu = tf.reshape(
-                self.GMM_NN(state)[:, :, :(self.K * self.dim)],
-                [self.K, self.dim], "all_mu")
-        with tf.name_scope("lambda"):
-            all_lambda = tf.reshape(tf.nn.softplus(
-                self.GMM_NN(state)[:, :, (self.K * self.dim):(
-                    2 * self.K * self.dim)], "softplus_lambda"),
-                [self.K, self.dim], "all_lambda")
-        with tf.name_scope("w"):
-            all_w = tf.nn.softmax(tf.reshape(
-                self.GMM_NN(state)[:, :, (2 * self.K * self.dim):],
-                [1, self.K], "reshape_w"), -1, "all_w")
+        G0_mu, G0_lambda, G0_w = self.get_GMM_params(self.G0_NN, s, "G0")
+
+        s1 = tf.concat([s, tf.gather(extra_conds, tf.concat(
+            [tf.range(self.s_dim), [self.s_dim * 2]], 0), axis=-1),
+                        tf.zeros([1, 1, 1])], -1, "s1")
+        G1_mu_1, G1_lambda_1, G1_w_1 = self.get_GMM_params(
+            self.G1_NN, s1, "G1_1")
+
+        s2 = tf.concat([s, tf.gather(extra_conds, tf.concat(
+            [tf.range(self.s_dim, self.s_dim * 2), [self.s_dim * 2 + 1],
+             [self.extra_dim - 1]], 0), axis=-1)], -1, "s2")
+        G1_mu_2, G1_lambda_2, G1_w_2 = self.get_GMM_params(
+            self.G1_NN, s2, "G1_2")
+
+        second_npc = tf.reduce_any(tf.equal(
+            tf.gather(extra_conds, [self.extra_dim - 2, self.extra_dim - 1],
+                      axis=-1), 1.), name="second_npc_bool")
+        alpha = tf.cond(
+            second_npc, lambda: tf.nn.softmax(tf.squeeze(self.A_NN(
+                tf.concat([s, extra_conds], -1)))),
+            lambda: tf.nn.softmax(tf.squeeze(self.A_NN(
+                tf.concat([s, extra_conds], -1)))[:-1]), name="alpha")
+
+        with tf.name_scope("G"):
+            G_mu = tf.cond(
+                second_npc,
+                lambda: tf.squeeze(tf.concat([G0_mu, G1_mu_1, G1_mu_2], 2),
+                                   [0, 1]),
+                lambda: tf.squeeze(tf.concat([G0_mu, G1_mu_1], 2), [0, 1]),
+                name="mu")
+            G_lambda = tf.cond(
+                second_npc, lambda: tf.squeeze(tf.concat(
+                    [G0_lambda, G1_lambda_1, G1_lambda_2], 2), [0, 1]),
+                lambda: tf.squeeze(tf.concat(
+                    [G0_lambda, G1_lambda_1], 2), [0, 1]), name="lambda")
+            G_w = tf.cond(
+                second_npc, lambda: tf.concat(
+                    [tf.reshape(G0_w, [1, -1]) * alpha[0],
+                     tf.reshape(G1_w_1, [1, -1]) * alpha[1],
+                     tf.reshape(G1_w_2, [1, -1]) * alpha[2]], -1),
+                lambda: tf.concat(
+                    [tf.reshape(G0_w, [1, -1]) * alpha[0],
+                     tf.reshape(G1_w_1, [1, -1]) * alpha[1]], -1), name="w")
 
         with tf.name_scope("select_component"):
             k = tf.squeeze(tf.multinomial(
-                tf.log(all_w, "log_w"), 1, name="draw_sample"), name="k")
+                tf.log(G_w, "log_w"), 1, name="draw_sample"), name="k")
         with tf.name_scope("get_sample"):
             g = tf.add(
-                tf.divide(prev_g + all_mu[k] * all_lambda[k],
-                          1 + all_lambda[k], name="mean"),
+                tf.divide(prev_g + G_mu[k] * G_lambda[k],
+                          1. + G_lambda[k], name="mean"),
                 (tf.random_normal([self.dim], name="std_normal") *
-                 tf.divide(tf.squeeze(self.sigma),
-                           tf.sqrt(1 + all_lambda[k]), name="std_dev")),
+                 tf.divide(tf.reshape(self.sigma, [self.dim]),
+                           tf.sqrt(1. + G_lambda[k]), name="std_dev")),
                 name="new_goal")
 
         return g
@@ -412,7 +466,7 @@ class joint_GBDS(RandomVariable, Distribution):
     - latent_ctrl (like GBDS)
     """
     def __init__(self, all_params, model_dim, states, ctrl_obs,
-                 extra_conds=None, latent_ctrl=False, *args, **kwargs):
+                 extra_conds, latent_ctrl=False, *args, **kwargs):
         name = kwargs.get("name", "joint")
         value = kwargs.get("value", None)
         if value is None:
@@ -482,7 +536,7 @@ class joint_GBDS(RandomVariable, Distribution):
         return tf.add_n([agent.log_prob(value)
                          for agent, value in zip(self.agents, values)])
 
-    def update_goal(self, state, prev_g, extra_conds=None):
+    def update_goal(self, state, prev_g, extra_conds):
         return tf.concat([agent.sample_GMM(
           state, tf.gather(
               prev_g, col, axis=-1, name="prev_g_%s" % name), extra_conds)
