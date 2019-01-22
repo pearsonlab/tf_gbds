@@ -220,14 +220,14 @@ class GBDS(RandomVariable, Distribution):
             NN_output = tf.identity(NN(inputs), "NN_output")
             mu = tf.reshape(
                 NN_output[:, :, :(self.K * self.dim)],
-                [self.B, -1, self.K, self.dim], "mu")
+                [tf.shape(inputs)[0], -1, self.K, self.dim], "mu")
             lmbda = tf.reshape(tf.nn.softplus(
                 NN_output[:, :, (self.K * self.dim):(
                     2 * self.K * self.dim)], "softplus_lambda"),
-                [self.B, -1, self.K, self.dim], "lambda")
+                [tf.shape(inputs)[0], -1, self.K, self.dim], "lambda")
             w = tf.nn.softmax(tf.reshape(
                 NN_output[:, :, (2 * self.K * self.dim):],
-                [self.B, -1, self.K], "reshape_w"), -1, "w")
+                [tf.shape(inputs)[0], -1, self.K], "reshape_w"), -1, "w")
 
             return mu, lmbda, w
 
@@ -239,15 +239,15 @@ class GBDS(RandomVariable, Distribution):
         """
         G0_mu, G0_lambda, G0_w = self.get_GMM_params(self.G0_NN, s, "G0")
 
-        s1 = tf.pad(tf.concat([s, tf.gather(extra_conds, tf.concat(
-            [tf.range(self.s_dim), [self.s_dim * 2]], 0), axis=-1)], -1),
-                    [[0, 0], [0, 0], [0, 1]], name="s1")
+        s1 = tf.gather(extra_conds, tf.concat(
+            [tf.range(self.s_dim), [self.s_dim * 2],
+             [self.extra_dim - 2]], 0), axis=-1, name="s1")
         G1_mu_1, G1_lambda_1, G1_w_1 = self.get_GMM_params(
             self.G1_NN, s1, "G1_1")
 
-        s2 = tf.concat([s, tf.gather(extra_conds, tf.concat(
+        s2 = tf.gather(extra_conds, tf.concat(
             [tf.range(self.s_dim, self.s_dim * 2), [self.s_dim * 2 + 1],
-             [self.extra_dim - 1]], 0), axis=-1)], -1, "s2")
+             [self.extra_dim - 1]], 0), axis=-1, name="s2")
         G1_mu_2, G1_lambda_2, G1_w_2 = self.get_GMM_params(
             self.G1_NN, s2, "G1_2")
 
@@ -384,15 +384,15 @@ class GBDS(RandomVariable, Distribution):
 
         G0_mu, G0_lambda, G0_w = self.get_GMM_params(self.G0_NN, s, "G0")
 
-        s1 = tf.concat([s, tf.gather(extra_conds, tf.concat(
-            [tf.range(self.s_dim), [self.s_dim * 2]], 0), axis=-1),
-                        tf.zeros([1, 1, 1])], -1, "s1")
+        s1 = tf.gather(extra_conds, tf.concat(
+            [tf.range(self.s_dim), [self.s_dim * 2],
+            [self.extra_dim - 2]], 0), axis=-1, name="s1")
         G1_mu_1, G1_lambda_1, G1_w_1 = self.get_GMM_params(
             self.G1_NN, s1, "G1_1")
 
-        s2 = tf.concat([s, tf.gather(extra_conds, tf.concat(
+        s2 = tf.gather(extra_conds, tf.concat(
             [tf.range(self.s_dim, self.s_dim * 2), [self.s_dim * 2 + 1],
-             [self.extra_dim - 1]], 0), axis=-1)], -1, "s2")
+             [self.extra_dim - 1]], 0), axis=-1, name="s2")
         G1_mu_2, G1_lambda_2, G1_w_2 = self.get_GMM_params(
             self.G1_NN, s2, "G1_2")
 
