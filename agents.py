@@ -93,13 +93,13 @@ class game_model(object):
                     G0_mu, G0_lambda, G0_w = get_GMM_params(
                         a.G0_NN, s, a.K, a.dim, "G0")
 
-                    s1 = tf.gather(extra_conds, tf.concat(
+                    s1 = tf.gather(npcs, tf.concat(
                         [tf.range(state_dim), [state_dim * 2],
                          [extra_dim - 2]], 0), axis=-1, name="s1")
                     G1_mu_1, G1_lambda_1, G1_w_1 = get_GMM_params(
                         a.G1_NN, s1, a.K, a.dim, "G1_1")
 
-                    s2 = tf.gather(extra_conds, tf.concat(
+                    s2 = tf.gather(npcs, tf.concat(
                         [tf.range(state_dim, state_dim * 2), [state_dim * 2 + 1],
                          [extra_dim - 1]], 0), axis=-1, name="s2")
                     G1_mu_2, G1_lambda_2, G1_w_2 = get_GMM_params(
