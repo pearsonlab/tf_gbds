@@ -82,7 +82,7 @@ class game_model(object):
 
             with tf.name_scope("G"):
                 # game state includes both position and velocity
-                s = tf.placeholder(tf.float32, [None, None, obs_dim * 2],
+                s = tf.placeholder(tf.float32, [None, None, state_dim],
                                    "state")
                 npcs = tf.placeholder(
                     tf.float32, [None, None, extra_dim],
@@ -93,52 +93,61 @@ class game_model(object):
                     G0_mu, G0_lambda, G0_w = get_GMM_params(
                         a.G0_NN, s, a.K, a.dim, "G0")
 
-                    s1 = tf.pad(tf.concat([s, tf.gather(
-                        npcs, tf.concat(
-                            [tf.range(state_dim), [state_dim * 2]], 0),
-                        axis=-1)], -1), [[0, 0], [0, 0], [0, 1]], name="s1")
+                    s1 = tf.concat([s, npcs[:, :, :(extra_dim // 2)]], -1,
+                                   "s1")
                     G1_mu_1, G1_lambda_1, G1_w_1 = get_GMM_params(
                         a.G1_NN, s1, a.K, a.dim, "G1_1")
 
-                    s2 = tf.concat([s, tf.gather(npcs, tf.concat(
-                        [tf.range(state_dim, state_dim * 2),
-                         [state_dim * 2 + 1], [extra_dim - 1]], 0),
-                                                 axis=-1)], -1, "s2")
+                    s2 = tf.concat([s, npcs[:, :, (extra_dim // 2):]], -1,
+                                   "s2")
                     G1_mu_2, G1_lambda_2, G1_w_2 = get_GMM_params(
                         a.G1_NN, s2, a.K, a.dim, "G1_2")
 
-                    second_npc = tf.reduce_any(tf.equal(tf.gather(
-                        npcs, [extra_dim - 2, extra_dim - 1],
-                        axis=-1), 1.), name="second_npc_bool")
-                    alpha = tf.cond(
-                        second_npc,
-                        lambda: tf.nn.softmax(
+                    no_first_npc = tf.reduce_all(tf.equal(tf.gather(
+                        npcs, [extra_dim // 2 - 1], axis=-1), 0),
+                        name="first_npc_bool")
+                    no_second_npc = tf.reduce_all(tf.equal(tf.gather(
+                        npcs, [extra_dim - 1], axis=-1), 0),
+                        name="second_npc_bool")
+                    alpha = tf.identity(tf.case(
+                        {no_first_npc: lambda: tf.nn.softmax(
+                            tf.gather(a.A_NN(tf.concat([s, npcs], -1)),
+                                      [0, 2], axis=-1), -1),
+                         no_second_npc: lambda: tf.nn.softmax(
+                            tf.gather(a.A_NN(tf.concat([s, npcs], -1)),
+                                      [0, 1], axis=-1), -1)},
+                        default=lambda: tf.nn.softmax(
                             a.A_NN(tf.concat([s, npcs], -1)), -1),
-                        lambda: tf.nn.softmax(tf.gather(
-                            a.A_NN(tf.concat([s, npcs], -1)), [0, 1],
-                            axis=-1), -1),
-                        name="alpha")
+                        exclusive=True), "alpha")
 
-                    G_mu = tf.cond(
-                        second_npc,
-                        lambda: tf.concat([G0_mu, G1_mu_1, G1_mu_2], 2),
-                        lambda: tf.concat([G0_mu, G1_mu_1], 2), name="mu")
-                    G_lambda = tf.cond(
-                        second_npc,
-                        lambda: tf.concat(
+                    G_mu = tf.identity(tf.case(
+                        {no_first_npc: lambda: tf.concat(
+                            [G0_mu, G1_mu_2], 2),
+                         no_second_npc: lambda: tf.concat(
+                            [G0_mu, G1_mu_1], 2)},
+                        default=lambda: tf.concat(
+                            [G0_mu, G1_mu_1, G1_mu_2], 2),
+                        exclusive=True), "mu")
+                    G_lambda = tf.identity(tf.case(
+                        {no_first_npc: lambda: tf.concat(
+                            [G0_lambda, G1_lambda_2], 2),
+                         no_second_npc: lambda: tf.concat(
+                            [G0_lambda, G1_lambda_1], 2)},
+                        default=lambda: tf.concat(
                             [G0_lambda, G1_lambda_1, G1_lambda_2], 2),
-                        lambda: tf.concat([G0_lambda, G1_lambda_1], 2),
-                        name="lambda")
-                    G_w = tf.cond(
-                        second_npc,
-                        lambda: tf.concat(
+                        exclusive=True), "lambda")
+                    G_w = tf.identity(tf.case(
+                        {no_first_npc: lambda: tf.concat(
+                            [G0_w * tf.gather(alpha, [0], axis=-1),
+                             G1_w_2 * tf.gather(alpha, [1], axis=-1)], -1),
+                         no_second_npc: lambda: tf.concat(
+                            [G0_w * tf.gather(alpha, [0], axis=-1),
+                             G1_w_1 * tf.gather(alpha, [1], axis=-1)], -1)},
+                        default=lambda: tf.concat(
                             [G0_w * tf.gather(alpha, [0], axis=-1),
                              G1_w_1 * tf.gather(alpha, [1], axis=-1),
                              G1_w_2 * tf.gather(alpha, [2], axis=-1)], -1),
-                        lambda: tf.concat(
-                            [G0_w * tf.gather(alpha, [0], axis=-1),
-                             G1_w_1 * tf.gather(alpha, [1], axis=-1)], -1),
-                        name="w")
+                        exclusive=True), "w")
 
             with tf.name_scope("posterior"):
                 g_q_mu = tf.identity(

@@ -50,8 +50,8 @@ SIGMA_TRAINABLE = False
 SIGMA_PENALTY = 1e3
 GOAL_BOUNDARY_L = -1.
 GOAL_BOUNDARY_U = 1.
-GOAL_BOUNDARY_PENALTY = None
-GOAL_PRECISION_PENALTY = None
+GOAL_BOUNDARY_PENALTY = 1e3
+GOAL_PRECISION_PENALTY = 1
 
 EPSILON = -11.
 EPSILON_TRAINABLE = False
@@ -287,7 +287,12 @@ def run_model(FLAGS):
             states_in = tf.identity(get_state(trajectory_in, max_vel),
                                     "states")
             if FLAGS.extra_conds:
-                extra_conds_in = tf.identity(extra_conds, "extra_conditions")
+                extra_conds_in = tf.identity(tf.cond(
+                    tf.greater(tf.random_uniform([]), 0.5),
+                    lambda: tf.concat(
+                        [extra_conds[:, :, (FLAGS.extra_dim // 2):],
+                         extra_conds[:, :, :(FLAGS.extra_dim // 2)]], -1),
+                    lambda: tf.identity(extra_conds)), "extra_conditions")
             else:
                 extra_conds_in = None
 
