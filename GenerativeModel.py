@@ -239,9 +239,9 @@ class GBDS(RandomVariable, Distribution):
         """
         G0_mu, G0_lambda, G0_w = self.get_GMM_params(self.G0_NN, s, "G0")
 
-        s1 = tf.gather(extra_conds, tf.concat(
-            [tf.range(self.s_dim), [self.s_dim * 2],
-             [self.extra_dim - 2]], 0), axis=-1, name="s1")
+        s1 = tf.pad(tf.gather(extra_conds, tf.concat(
+            [tf.range(self.s_dim), [self.s_dim * 2]], 0), axis=-1),
+                    [[0, 0], [0, 0], [0, 1]], name="s1")
         G1_mu_1, G1_lambda_1, G1_w_1 = self.get_GMM_params(
             self.G1_NN, s1, "G1_1")
 
@@ -384,9 +384,9 @@ class GBDS(RandomVariable, Distribution):
 
         G0_mu, G0_lambda, G0_w = self.get_GMM_params(self.G0_NN, s, "G0")
 
-        s1 = tf.gather(extra_conds, tf.concat(
-            [tf.range(self.s_dim), [self.s_dim * 2],
-            [self.extra_dim - 2]], 0), axis=-1, name="s1")
+        s1 = tf.concat([tf.gather(extra_conds, tf.concat(
+            [tf.range(self.s_dim), [self.s_dim * 2]], 0), axis=-1),
+                        tf.zeros([1, 1, 1])], -1, "s1")
         G1_mu_1, G1_lambda_1, G1_w_1 = self.get_GMM_params(
             self.G1_NN, s1, "G1_1")
 
