@@ -7,6 +7,12 @@ from tensorflow.contrib.distributions import (Distribution,
 from tensorflow.python.ops.distributions.special_math import log_ndtr
 
 
+# GMM_init_ep = 10
+# sigma_init_ep = 0
+# PID_init_ep = 10
+# eps_init_ep = 10
+# eta_init_ep = 0
+
 def z(x, loc, scale):
     return (x - loc) / scale
 
@@ -84,8 +90,9 @@ class GBDS(RandomVariable, Distribution):
     - extra_conds: time series of extra conditions
                    (prey positions, velocities, and values)
     """
-    def __init__(self, params, states, ctrl_obs, extra_conds,
-                 *args, **kwargs):
+    def __init__(self, params, states, ctrl_obs, extra_conds,*args, **kwargs):
+    # def __init__(self, params, states, ctrl_obs, extra_conds, epoch,
+    #              *args, **kwargs):
         name = kwargs.get("name", "GBDS")
         with tf.name_scope(name):
             self.col = params["col"]
@@ -94,6 +101,7 @@ class GBDS(RandomVariable, Distribution):
                 self.B = tf.shape(states)[0]
             with tf.name_scope("trial_length"):
                 self.Tt = tf.shape(states)[1]
+            # self.epoch = epoch
             self.s = tf.identity(states, "states")
             self.y = tf.gather(states, self.col, axis=-1, name="positions")
             self.ctrl_obs = tf.gather(ctrl_obs, self.col, axis=-1,
@@ -107,27 +115,29 @@ class GBDS(RandomVariable, Distribution):
             else:
                 self.extra_conds = None
 
-            self.params = []
-            self.log_vars = []
             # number of GMM components
             self.K = params["GMM_K"]
             # neural network to generate state-dependent goals
             self.G0_NN, self.G1_NN, self.A_NN = params["GMM_NN"]
-            self.params += (self.G0_NN.variables + self.G1_NN.variables +
-                            self.A_NN.variables)
-            self.log_vars += (self.G0_NN.variables + self.G1_NN.variables +
-                              self.A_NN.variables)
+            self.var_list = params["GMM_NN_vars"]
+            self.log_vars = params["GMM_NN_vars"]
 
             with tf.name_scope("goal_state_noise"):
                 # noise coefficient on goal states
                 self.unc_sigma = params["unc_sigma"]
                 self.sigma = tf.nn.softplus(self.unc_sigma, "sigma")
+                # self.sigma = tf.identity(tf.cond(
+                #     tf.greater(self.epoch, sigma_init_ep),
+                #     lambda: tf.nn.softplus(self.unc_sigma),
+                #     lambda: tf.stop_gradient(tf.nn.softplus(self.unc_sigma))),
+                #     "sigma")
+                self.sigma_pen = params["sigma_pen"]
                 if params["sigma_trainable"]:
-                    self.params += [self.unc_sigma]
-                    self.sigma_pen = tf.constant(
-                        params["sigma_pen"], tf.float32, name="sigma_penalty")
-                else:
-                    self.sigma_pen = None
+                    self.var_list += [self.unc_sigma]
+                    # self.sigma_pen = tf.constant(
+                    #     params["sigma_pen"], tf.float32, name="sigma_penalty")
+                # else:
+                #     self.sigma_pen = None
 
             with tf.name_scope("goal_state_penalty"):
                 # penalty on goal state escaping boundaries
@@ -152,10 +162,32 @@ class GBDS(RandomVariable, Distribution):
 
             with tf.name_scope("PID_control"):
                 PID_params = params["PID"]
-                self.Kp = PID_params["Kp"]
-                self.Ki = PID_params["Ki"]
-                self.Kd = PID_params["Kd"]
-                self.params += PID_params["vars"]
+                self.Kp = tf.identity(PID_params["Kp"], "Kp")
+                self.Ki = tf.identity(PID_params["Ki"], "Ki")
+                self.Kd = tf.identity(PID_params["Kd"], "Kd")
+                # self.unc_Kp = PID_params["unc_Kp"]
+                # self.unc_Ki = PID_params["unc_Ki"]
+                # self.unc_Kd = PID_params["unc_Kd"]
+                # self.Kp = tf.nn.softplus(self.unc_Kp, "Kp")
+                # self.Ki = tf.nn.softplus(self.unc_Ki, "Ki")
+                # self.Kd = tf.nn.softplus(self.unc_Kd, "Kd")
+                # self.Kp = tf.identity(tf.cond(
+                #     tf.greater(self.epoch, PID_init_ep),
+                #     lambda: tf.nn.softplus(self.unc_Kp),
+                #     lambda: tf.stop_gradient(tf.nn.softplus(self.unc_Kp))),
+                #     "Kp")
+                # self.Ki = tf.identity(tf.cond(
+                #     tf.greater(self.epoch, PID_init_ep),
+                #     lambda: tf.nn.softplus(self.unc_Ki),
+                #     lambda: tf.stop_gradient(tf.nn.softplus(self.unc_Ki))),
+                #     "Ki")
+                # self.Kd = tf.identity(tf.cond(
+                #     tf.greater(self.epoch, PID_init_ep),
+                #     lambda: tf.nn.softplus(self.unc_Kd),
+                #     lambda: tf.stop_gradient(tf.nn.softplus(self.unc_Kd))),
+                #     "Kd")
+                self.var_list += PID_params["vars"]
+                # self.var_list += [self.unc_Kp] + [self.unc_Ki] + [self.unc_Kd]
                 # For details of PID control system, refer to
                 # https://en.wikipedia.org/wiki/PID_controller
                 # discrete implementation of PID control with convolution
@@ -170,12 +202,18 @@ class GBDS(RandomVariable, Distribution):
                 # noise coefficient on control signals
                 self.unc_eps = params["unc_eps"]
                 self.eps = tf.nn.softplus(self.unc_eps, "epsilon")
+                # self.eps = tf.identity(tf.cond(
+                #     tf.greater(self.epoch, eps_init_ep),
+                #     lambda: tf.nn.softplus(self.unc_eps),
+                #     lambda: tf.stop_gradient(tf.nn.softplus(self.unc_eps))),
+                #     "epsilon")
+                self.eps_pen = params["eps_pen"]
                 if params["eps_trainable"]:
-                    self.params += [self.unc_eps]
-                    self.eps_pen = tf.constant(
-                        params["eps_pen"], tf.float32, name="epsilon_penalty")
-                else:
-                    self.eps_pen = None
+                    self.var_list += [self.unc_eps]
+                #     self.eps_pen = tf.constant(
+                #         params["eps_pen"], tf.float32, name="epsilon_penalty")
+                # else:
+                #     self.eps_pen = None
 
             with tf.name_scope("control_signal_censoring"):
                 # clipping signal
@@ -193,12 +231,18 @@ class GBDS(RandomVariable, Distribution):
 
                     self.unc_eta = params["unc_eta"]
                     self.eta = tf.nn.softplus(self.unc_eta, "eta")
+                    # self.eta = tf.identity(tf.cond(
+                    #     tf.greater(self.epoch, eta_init_ep),
+                    #     lambda: tf.nn.softplus(self.unc_eta),
+                    #     lambda: tf.stop_gradient(
+                    #         tf.nn.softplus(self.unc_eta))), "eta")
+                    self.eta_pen = params["eta_pen"]
                     if params["eta_trainable"]:
-                        self.params += [self.unc_eta]
-                        self.eta_pen = tf.constant(
-                            params["eta_pen"], tf.float32, name="eta_penalty")
-                    else:
-                        self.eta_pen = None
+                        self.var_list += [self.unc_eta]
+                    #     self.eta_pen = tf.constant(
+                    #         params["eta_pen"], tf.float32, name="eta_penalty")
+                    # else:
+                    #     self.eta_pen = None
 
         if "name" not in kwargs:
             kwargs["name"] = name
@@ -214,10 +258,14 @@ class GBDS(RandomVariable, Distribution):
         super(GBDS, self).__init__(*args, **kwargs)
 
         self._args = (params, states, ctrl_obs, extra_conds)
+        # self._args = (params, states, ctrl_obs, extra_conds, epoch)
 
     def get_GMM_params(self, NN, inputs, name="GMM"):
         with tf.name_scope(name):
-            NN_output = tf.identity(NN(inputs), "NN_output")
+            NN_output = NN(inputs)
+            # NN_output = tf.identity(tf.cond(
+            #     tf.greater(self.epoch, GMM_init_ep), lambda: NN(inputs),
+            #     lambda: tf.stop_gradient(NN(inputs))), "NN_output")
             mu = tf.reshape(
                 NN_output[:, :, :(self.K * self.dim)],
                 [self.B, -1, self.K, self.dim], "mu")
@@ -264,10 +312,23 @@ class GBDS(RandomVariable, Distribution):
         #     default=lambda: tf.nn.softmax(self.A_NN(
         #         tf.concat([s, extra_conds], -1)), -1),
         #     exclusive=True), "alpha")
-        O1 = self.A_NN(tf.concat([s, extra_conds], -1))
-        O2 = self.A_NN(tf.concat([s, tf.concat(
+        A_NN_input_1 = tf.concat([s, extra_conds], -1, "A_NN_input_1")
+        A_NN_input_2 = tf.concat([s, tf.concat(
             [extra_conds[:, :, (self.extra_dim // 2):],
-             extra_conds[:, :, :(self.extra_dim // 2)]], -1)], -1))
+             extra_conds[:, :, :(self.extra_dim // 2)]], -1, "swap_npc")],
+            -1, "A_NN_input_2")
+        O1 = self.A_NN(A_NN_input_1)
+        O2 = self.A_NN(A_NN_input_2)
+        # O1 = tf.identity(tf.cond(
+        #     tf.greater(self.epoch, GMM_init_ep),
+        #     lambda: self.A_NN(A_NN_input_1),
+        #     lambda: tf.stop_gradient(self.A_NN(A_NN_input_1))),
+        #     "preactivation_1")
+        # O2 = tf.identity(tf.cond(
+        #     tf.greater(self.epoch, GMM_init_ep),
+        #     lambda: self.A_NN(A_NN_input_2),
+        #     lambda: tf.stop_gradient(self.A_NN(A_NN_input_2))),
+        #     "preactivation_2")
         A0 = (tf.gather(O1, [0], axis=-1) + tf.gather(O2, [0], axis=-1)) / 2.
         A1 = tf.gather(O1, [1], axis=-1)
         A2 = tf.gather(O2, [1], axis=-1)
@@ -447,10 +508,13 @@ class GBDS(RandomVariable, Distribution):
         #     default=lambda: tf.nn.softmax(tf.squeeze(self.A_NN(
         #         tf.concat([s, extra_conds], -1)))),
         #     exclusive=True), "alpha")
-        O1 = tf.squeeze(self.A_NN(tf.concat([s, extra_conds], -1)))
-        O2 = tf.squeeze(self.A_NN(tf.concat([s, tf.concat(
+        A_NN_input_1 = tf.concat([s, extra_conds], -1, "A_NN_input_1")
+        A_NN_input_2 = tf.concat([s, tf.concat(
             [extra_conds[:, :, (self.extra_dim // 2):],
-             extra_conds[:, :, :(self.extra_dim // 2)]], -1)], -1)))
+             extra_conds[:, :, :(self.extra_dim // 2)]], -1, "swap_npc")],
+            -1, "A_NN_input_2")
+        O1 = tf.squeeze(self.A_NN(A_NN_input_1))
+        O2 = tf.squeeze(self.A_NN(A_NN_input_2))
         A0 = (tf.gather(O1, [0]) + tf.gather(O2, [0])) / 2.
         A1 = tf.gather(O1, [1])
         A2 = tf.gather(O2, [1])
@@ -547,8 +611,10 @@ class joint_GBDS(RandomVariable, Distribution):
     - extra_conds (like GBDS)
     - latent_ctrl (like GBDS)
     """
-    def __init__(self, all_params, model_dim, states, ctrl_obs,
-                 extra_conds, latent_ctrl=False, *args, **kwargs):
+    def __init__(self, all_params, model_dim, states, ctrl_obs, extra_conds,
+                 latent_ctrl=False, *args, **kwargs):
+    # def __init__(self, all_params, model_dim, states, ctrl_obs,
+    #              extra_conds, epoch, latent_ctrl=False, *args, **kwargs):
         name = kwargs.get("name", "joint")
         value = kwargs.get("value", None)
         if value is None:
@@ -580,11 +646,15 @@ class joint_GBDS(RandomVariable, Distribution):
                                 name=name, value=value)
                            for params, name, value in zip(
                                all_params, self.names, all_values)]
+            # self.agents = [GBDS(params, states, ctrl_obs, extra_conds, epoch,
+            #                     name=name, value=value)
+            #                for params, name, value in zip(
+            #                    all_params, self.names, all_values)]
 
-            self.params = []
+            self.var_list = []
             self.log_vars = []
             for agent in self.agents:
-                self.params += agent.params
+                self.var_list += agent.var_list
                 self.log_vars += agent.log_vars
 
         if "name" not in kwargs:
@@ -600,8 +670,10 @@ class joint_GBDS(RandomVariable, Distribution):
 
         super(joint_GBDS, self).__init__(*args, **kwargs)
 
-        self._args = (all_params, model_dim, states, ctrl_obs,
-                      extra_conds, latent_ctrl)
+        self._args = (all_params, model_dim, states, ctrl_obs, extra_conds,
+                      latent_ctrl)
+        # self._args = (all_params, model_dim, states, ctrl_obs,
+        #               extra_conds, epoch, latent_ctrl)
 
     def _log_prob(self, value):
         values = []

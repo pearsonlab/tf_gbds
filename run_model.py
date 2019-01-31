@@ -47,7 +47,7 @@ REC_HIDDEN_DIM = 32
 
 SIGMA = -7.
 SIGMA_TRAINABLE = False
-SIGMA_PENALTY = 1e3
+SIGMA_PENALTY = 1
 GOAL_BOUNDARY_L = -1.
 GOAL_BOUNDARY_U = 1.
 GOAL_BOUNDARY_PENALTY = 1e3
@@ -55,7 +55,7 @@ GOAL_PRECISION_PENALTY = 1
 
 EPSILON = -11.
 EPSILON_TRAINABLE = False
-EPSILON_PENALTY = 1e5
+EPSILON_PENALTY = 10
 LATENT_CONTROL = True
 CLIP = True
 CLIP_RANGE_L = "-.9975,-.98"
@@ -63,7 +63,7 @@ CLIP_RANGE_U = ".995,.95"
 CLIP_TOLERANCE = .075
 ETA = -11.
 ETA_TRAINABLE = False
-ETA_PENALTY = 1e5
+ETA_PENALTY = 10
 
 SEED = 1234
 OPTIMIZER = "Adam"
@@ -347,21 +347,27 @@ def run_model(FLAGS):
                     "sigma/subject_x", model.p.agents[0].sigma[0, 0])
                 sigma_subject_y = tf.summary.scalar(
                     "sigma/subject_y", model.p.agents[0].sigma[0, 1])
-                summary_list += [sigma_subject_x, sigma_subject_y]
+                sigma_pen = tf.summary.scalar(
+                    "sigma/penalty", model.p.agents[0].sigma_pen)
+                summary_list += [sigma_subject_x, sigma_subject_y, sigma_pen]
 
             if FLAGS.eps_trainable:
                 eps_subject_x = tf.summary.scalar(
                     "epsilon/subject_x", model.p.agents[0].eps[0, 0])
                 eps_subject_y = tf.summary.scalar(
                     "epsilon/subject_y", model.p.agents[0].eps[0, 1])
-                summary_list += [eps_subject_x, eps_subject_y]
+                eps_pen = tf.summary.scalar(
+                    "epsilon/penalty", model.p.agents[0].eps_pen)
+                summary_list += [eps_subject_x, eps_subject_y, eps_pen]
 
             if FLAGS.eta_trainable:
                 eta_subject_x = tf.summary.scalar(
                     "eta/subject_x", model.p.agents[0].eta[0])
                 eta_subject_y = tf.summary.scalar(
                     "eta/subject_y", model.p.agents[0].eta[1])
-                summary_list += [eta_subject_x, eta_subject_y]
+                eta_pen = tf.summary.scalar(
+                    "eta/penalty", model.p.agents[0].eta_pen)
+                summary_list += [eta_subject_x, eta_subject_y, eta_pen]
 
             all_summary = tf.summary.merge(summary_list)
 
