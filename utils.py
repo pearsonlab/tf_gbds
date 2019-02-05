@@ -238,7 +238,7 @@ def get_model_params(name, agents, model_dim, obs_dim, state_dim, extra_dim,
                         unc_epsilon * np.ones((1, a["dim"]), np.float32),
                         name="unc_eps")
                     eps_pen = tf.to_float(tf.minimum(
-                        epsilon_penalty * (10. ** ((epoch - 1) / 20)), 1e5),
+                        epsilon_penalty * (10. ** ((epoch - 1) / 10)), 1e5),
                         "epsilon_penalty")
                 else:
                     unc_eps_init = tf.constant(
@@ -405,6 +405,7 @@ def get_rec_params(obs_dim, extra_dim, output_dim, lag, n_layers, hidden_dim,
 
 
 def get_PID(dim, epoch):
+    fix_ep = 40
     with tf.variable_scope("PID"):
         unc_Kp = tf.Variable(tf.multiply(
             softplus_inverse(1.), tf.ones(dim, tf.float32), "unc_Kp_init"),
@@ -422,11 +423,11 @@ def get_PID(dim, epoch):
 
         PID = {}
         PID["vars"] = [unc_Kp] + [unc_Ki] + [unc_Kd]
-        PID["Kp"] = tf.cond(tf.greater(epoch, 10),
+        PID["Kp"] = tf.cond(tf.greater(epoch, fix_ep),
                             lambda: Kp, lambda: tf.stop_gradient(Kp))
-        PID["Ki"] = tf.cond(tf.greater(epoch, 10),
+        PID["Ki"] = tf.cond(tf.greater(epoch, fix_ep),
                             lambda: Ki, lambda: tf.stop_gradient(Ki))
-        PID["Kd"] = tf.cond(tf.greater(epoch, 10),
+        PID["Kd"] = tf.cond(tf.greater(epoch, fix_ep),
                             lambda: Kd, lambda: tf.stop_gradient(Kd))
         # PID["Kp"] = Kp
         # PID["Ki"] = Ki
