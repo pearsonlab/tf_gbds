@@ -386,7 +386,7 @@ def run_model(FLAGS):
         inference.initialize(n_samples=FLAGS.n_samp,
                              var_list=model.var_list,
                              optimizer=optimizer,
-                             logdir=FLAGS.model_dir + "/log",
+                             # logdir=FLAGS.model_dir + "/log",
                              log_vars=model.log_vars)
 
     print("Computational graph constructed.")
@@ -415,8 +415,8 @@ def run_model(FLAGS):
             try:
                 feed_dict = {epoch: (i + 1)}
                 info_dict = inference.update(feed_dict=feed_dict)
-                add_summary(all_summary, inference, sess, feed_dict,
-                            info_dict["t"])
+                # add_summary(all_summary, inference, sess, feed_dict,
+                #             info_dict["t"])
             except tf.errors.OutOfRangeError:
                 break
 

@@ -7,9 +7,100 @@ https://github.com/earcher/vilds/blob/master/code/RecognitionModel.py
 import tensorflow as tf
 import numpy as np
 import lib.blk_tridiag_chol_tools as blk
-from edward.models import RandomVariable
+from edward.models import RandomVariable, Dirichlet
 from tensorflow.contrib.distributions import Distribution
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
+
+
+# def get_alpha_rec(NN, Input, extra_conds, yDim, extra_dim, lag,
+#                   name="q_alpha"):
+#     with tf.name_scope("pad_lag"):
+#         Input_ = tf.identity(Input)
+#         for i in range(lag):
+#             lagged = tf.concat(
+#                 [tf.reshape(Input_[:, 0, :yDim], [-1, 1, yDim], "t0"),
+#                  Input_[:, :-1, -yDim:]], 1, "lagged")
+#             Input_ = tf.concat([Input_, lagged], -1)
+
+#     with tf.name_scope(name):
+#         no_second_npc = tf.reduce_all(tf.equal(
+#             tf.gather(extra_conds, [extra_dim - 1], axis=-1), 0),
+#             name="second_npc_bool")
+#         input_1 = tf.concat([Input_, extra_conds], -1, "NN_input_1")
+#         input_2 = tf.concat([Input_, tf.concat(
+#             [extra_conds[:, :, (extra_dim // 2):],
+#              extra_conds[:, :, :(extra_dim // 2)]], -1, "swap_npc")],
+#             -1, "NN_input_2")
+#         O1 = NN(input_1)
+#         O2 = NN(input_2)
+#         A0 = (tf.gather(O1, [0], axis=-1) + tf.gather(O2, [0], axis=-1)) / 2.
+#         A1 = tf.gather(O1, [1], axis=-1)
+#         A2 = tf.gather(O2, [1], axis=-1)
+
+#         params = tf.cond(
+#             no_second_npc, lambda: tf.nn.softplus(tf.concat([A0, A1], -1)),
+#             lambda: tf.nn.softplus(tf.concat([A0, A1, A2], -1)),
+#             name="params")
+#         alpha = Dirichlet(params)
+
+#     return NN.variables, params, alpha
+
+
+# class Alpha_rec(Dirichlet):
+#     def __init__(self, NN, traj, extra_conds, yDim, extra_dim, lag, *args,
+#                  **kwargs):
+#         name = kwargs.get("name", "q_alpha")
+#         with tf.name_scope(name):
+#             with tf.name_scope("pad_lag"):
+#                 Input = tf.identity(traj)
+#                 for i in range(lag):
+#                     lagged = tf.concat(
+#                         [tf.reshape(Input[:, 0, :yDim], [-1, 1, yDim], "t0"),
+#                          Input[:, :-1, -yDim:]], 1, "lagged")
+#                     Input = tf.concat([Input, lagged], -1)
+
+#             self.traj = tf.identity(Input, "lagged_traj")
+#             self.extra_conds = tf.identity(extra_conds, "extra_conds")
+#             self.NN = NN
+#             self.vars = NN.variables
+#             self.d = yDim
+#             self.extra_dim = extra_dim
+
+#             no_second_npc = tf.reduce_all(tf.equal(
+#                 tf.gather(self.extra_conds, [self.extra_dim - 1], axis=-1),
+#                 0), name="second_npc_bool")
+#             input_1 = tf.concat(
+#                 [self.traj, self.extra_conds], -1, "NN_input_1")
+#             input_2 = tf.concat([self.traj, tf.concat(
+#                 [self.extra_conds[:, :, (self.extra_dim // 2):],
+#                  self.extra_conds[:, :, :(self.extra_dim // 2)]],
+#                 -1, "swap_npc")], -1, "NN_input_2")
+#             O1 = self.NN(input_1)
+#             O2 = self.NN(input_2)
+#             A0 = (tf.gather(O1, [0], axis=-1) +
+#                   tf.gather(O2, [0], axis=-1)) / 2.
+#             A1 = tf.gather(O1, [1], axis=-1)
+#             A2 = tf.gather(O2, [1], axis=-1)
+
+#             concentration = tf.cond(
+#                 no_second_npc,
+#                 lambda: tf.nn.softplus(tf.concat([A0, A1], -1)),
+#                 lambda: tf.nn.softplus(tf.concat([A0, A1, A2], -1)),
+#                 name="concentration")
+
+#             if "name" not in kwargs:
+#                 kwargs["name"] = name
+#             # if "dtype" not in kwargs:
+#             #     kwargs["dtype"] = tf.float32
+#             # if "reparameterization_type" not in kwargs:
+#             #     kwargs["reparameterization_type"] = FULLY_REPARAMETERIZED
+#             if "validate_args" not in kwargs:
+#                 kwargs["validate_args"] = True
+#             if "allow_nan_stats" not in kwargs:
+#                 kwargs["allow_nan_stats"] = False
+
+#             super(Alpha_rec, self).__init__(concentration, *args, **kwargs)
+#             self._args = (NN, traj, extra_conds, yDim, extra_dim, lag)
 
 
 class SmoothingLDSTimeSeries(RandomVariable, Distribution):
@@ -45,10 +136,11 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
         """
         name = kwargs.get("name", "SmoothingLDSTimeSeries")
         with tf.name_scope(name):
-            self.y = tf.identity(Input, "observations")
+            self.y_t = tf.identity(Input, "observations")
             self.dyn_params = params["dyn_params"]
             self.xDim = xDim
             self.yDim = yDim
+            self.extra_dim = params["extra_dim"]
             with tf.name_scope("batch_size"):
                 self.B = tf.shape(Input)[0]
             with tf.name_scope("trial_length"):
@@ -58,7 +150,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                 if extra_conds is not None:
                     self.extra_conds = tf.identity(
                         extra_conds, "extra_conditions")
-                    self.y = tf.concat([self.y, self.extra_conds], -1)
+                    self.y = tf.concat([self.y_t, self.extra_conds], -1)
                 else:
                     self.extra_conds = None
 
@@ -96,9 +188,12 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             with tf.name_scope("init_posterior"):
                 self._initialize_posterior_distribution(params)
 
+            self.NN_Alpha = params["NN_Alpha"]
+            self.alpha = self.get_alpha()
+
             var_list = (self.NN_Mu.variables + self.NN_Lambda.variables +
-                        self.NN_LambdaX.variables + [self.A] +
-                        [self.QinvChol] + [self.Q0invChol])
+                        self.NN_LambdaX.variables + self.NN_Alpha.variables +
+                        [self.A] + [self.QinvChol] + [self.Q0invChol])
             self.var_list = var_list
             self.log_vars = var_list
 
@@ -220,6 +315,33 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                 comp_log_det,
                 [tf.transpose(self.the_chol[0], [1, 0, 2, 3])],
                 initializer=tf.zeros([self.B]))), -1, name="log_determinant")
+
+    def get_alpha(self, name="q_alpha"):
+        with tf.name_scope(name):
+            no_second_npc = tf.reduce_all(tf.equal(
+                tf.gather(self.extra_conds, [self.extra_dim - 1], axis=-1),
+                0), name="second_npc_bool")
+            input_1 = tf.concat(
+                [self.y_t, self.extra_conds], -1, "NN_input_1")
+            input_2 = tf.concat([self.y_t, tf.concat(
+                [self.extra_conds[:, :, (self.extra_dim // 2):],
+                 self.extra_conds[:, :, :(self.extra_dim // 2)]],
+                -1, "swap_npc")], -1, "NN_input_2")
+            O1 = self.NN_Alpha(input_1)
+            O2 = self.NN_Alpha(input_2)
+            A0 = (tf.gather(O1, [0], axis=-1) +
+                  tf.gather(O2, [0], axis=-1)) / 2.
+            A1 = tf.gather(O1, [1], axis=-1)
+            A2 = tf.gather(O2, [1], axis=-1)
+
+            concentration = tf.cond(
+                no_second_npc,
+                lambda: tf.nn.softplus(tf.concat([A0, A1], -1)),
+                lambda: tf.nn.softplus(tf.concat([A0, A1, A2], -1)),
+                name="concentration")
+            alpha = Dirichlet(concentration)
+
+        return alpha
 
     def _sample_n(self, n, seed=None):
         return tf.squeeze(tf.map_fn(self.get_sample, tf.zeros([n, self.B])),

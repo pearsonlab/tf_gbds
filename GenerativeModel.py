@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 # import edward as ed
-from edward.models import RandomVariable
+from edward.models import RandomVariable, Dirichlet
 from tensorflow.contrib.distributions import (Distribution,
                                               FULLY_REPARAMETERIZED)
 from tensorflow.python.ops.distributions.special_math import log_ndtr
@@ -51,6 +51,77 @@ def clip_log_prob(upsilon, u, bounds, tol, eta):
                              normal_logpdf(upsilon, u, eta)))
 
 
+# def get_alpha_gen(NN, states, extra_conds, extra_dim, name="p_alpha"):
+#     with tf.name_scope(name):
+#         no_second_npc = tf.reduce_all(tf.equal(
+#             tf.gather(extra_conds, [extra_dim - 1], axis=-1), 0),
+#             name="second_npc_bool")
+#         input_1 = tf.concat([states, extra_conds], -1, "NN_input_1")
+#         input_2 = tf.concat([states, tf.concat(
+#             [extra_conds[:, :, (extra_dim // 2):],
+#              extra_conds[:, :, :(extra_dim // 2)]], -1, "swap_npc")],
+#             -1, "NN_input_2")
+#         O1 = NN(input_1)
+#         O2 = NN(input_2)
+#         A0 = (tf.gather(O1, [0], axis=-1) + tf.gather(O2, [0], axis=-1)) / 2.
+#         A1 = tf.gather(O1, [1], axis=-1)
+#         A2 = tf.gather(O2, [1], axis=-1)
+
+#         params = tf.cond(
+#             no_second_npc, lambda: tf.nn.softplus(tf.concat([A0, A1], -1)),
+#             lambda: tf.nn.softplus(tf.concat([A0, A1, A2], -1)),
+#             name="params")
+#         alpha = Dirichlet(params)
+
+#     return NN.variables, params, alpha
+
+
+# class Alpha_gen(Dirichlet):
+#     def __init__(self, NN, states, extra_conds, extra_dim, *args, **kwargs):
+#         name = kwargs.get("name", "p_alpha")
+#         with tf.name_scope(name):
+#             self.s = tf.identity(states, "states")
+#             self.extra_conds = tf.identity(extra_conds, "extra_conds")
+#             self.NN = NN
+#             self.vars = NN.variables
+#             self.extra_dim = extra_dim
+
+#             no_second_npc = tf.reduce_all(tf.equal(
+#                 tf.gather(self.extra_conds, [self.extra_dim - 1], axis=-1),
+#                 0), name="second_npc_bool")
+#             input_1 = tf.concat([self.s, self.extra_conds], -1, "NN_input_1")
+#             input_2 = tf.concat([self.s, tf.concat(
+#                 [self.extra_conds[:, :, (self.extra_dim // 2):],
+#                  self.extra_conds[:, :, :(self.extra_dim // 2)]],
+#                 -1, "swap_npc")], -1, "NN_input_2")
+#             O1 = self.NN(input_1)
+#             O2 = self.NN(input_2)
+#             A0 = (tf.gather(O1, [0], axis=-1) +
+#                   tf.gather(O2, [0], axis=-1)) / 2.
+#             A1 = tf.gather(O1, [1], axis=-1)
+#             A2 = tf.gather(O2, [1], axis=-1)
+
+#             concentration = tf.cond(
+#                 no_second_npc,
+#                 lambda: tf.nn.softplus(tf.concat([A0, A1], -1)),
+#                 lambda: tf.nn.softplus(tf.concat([A0, A1, A2], -1)),
+#                 name="concentration")
+
+#             if "name" not in kwargs:
+#                 kwargs["name"] = name
+#             # if "dtype" not in kwargs:
+#             #     kwargs["dtype"] = tf.float32
+#             # if "reparameterization_type" not in kwargs:
+#             #     kwargs["reparameterization_type"] = FULLY_REPARAMETERIZED
+#             if "validate_args" not in kwargs:
+#                 kwargs["validate_args"] = True
+#             if "allow_nan_stats" not in kwargs:
+#                 kwargs["allow_nan_stats"] = False
+
+#             super(Alpha_gen, self).__init__(concentration, *args, **kwargs)
+#             self._args = (NN, states, extra_conds, extra_dim)
+
+
 class GBDS(RandomVariable, Distribution):
     """
     Goal-Based Dynamical System (generative model; for one agent)
@@ -90,7 +161,8 @@ class GBDS(RandomVariable, Distribution):
     - extra_conds: time series of extra conditions
                    (prey positions, velocities, and values)
     """
-    def __init__(self, params, states, ctrl_obs, extra_conds,*args, **kwargs):
+    def __init__(self, params, states, ctrl_obs, extra_conds, *args,
+                 **kwargs):
     # def __init__(self, params, states, ctrl_obs, extra_conds, epoch,
     #              *args, **kwargs):
         name = kwargs.get("name", "GBDS")
@@ -118,9 +190,14 @@ class GBDS(RandomVariable, Distribution):
             # number of GMM components
             self.K = params["GMM_K"]
             # neural network to generate state-dependent goals
-            self.G0_NN, self.G1_NN, self.A_NN = params["GMM_NN"]
-            self.var_list = params["GMM_NN_vars"]
-            self.log_vars = params["GMM_NN_vars"]
+            self.G0_NN, self.G1_NN = params["GMM_NN"]
+            # self.alpha = tf.identity(alpha, "alpha")
+            self.A_NN = params["A_NN"]
+            self.var_list = params["GMM_NN_vars"] + params["A_NN_vars"]
+            self.log_vars = params["GMM_NN_vars"] + params["A_NN_vars"]
+
+            self.alpha, self.G_mu, self.G_lambda, self.G_w = self.get_G(
+                self.s, self.extra_conds)
 
             with tf.name_scope("goal_state_noise"):
                 # noise coefficient on goal states
@@ -260,7 +337,50 @@ class GBDS(RandomVariable, Distribution):
         self._args = (params, states, ctrl_obs, extra_conds)
         # self._args = (params, states, ctrl_obs, extra_conds, epoch)
 
-    def get_GMM_params(self, NN, inputs, name="GMM"):
+    
+    def get_alpha(self, s, extra_conds, no_second_npc, name="p_alpha"):
+        with tf.name_scope(name):
+            # alpha = tf.identity(tf.case(
+            #     {no_first_npc: lambda: tf.nn.softmax(tf.gather(self.A_NN(
+            #         tf.concat([s, extra_conds], -1)), [0, 2], axis=-1), -1),
+            #      no_second_npc: lambda: tf.nn.softmax(tf.gather(self.A_NN(
+            #         tf.concat([s, extra_conds], -1)), [0, 1], axis=-1), -1)},
+            #     default=lambda: tf.nn.softmax(self.A_NN(
+            #         tf.concat([s, extra_conds], -1)), -1),
+            #     exclusive=True), "alpha")
+            A_NN_input_1 = tf.concat([s, extra_conds], -1, "A_NN_input_1")
+            A_NN_input_2 = tf.concat([s, tf.concat(
+                [extra_conds[:, :, (self.extra_dim // 2):],
+                 extra_conds[:, :, :(self.extra_dim // 2)]], -1, "swap_npc")],
+                -1, "A_NN_input_2")
+            O1 = self.A_NN(A_NN_input_1)
+            O2 = self.A_NN(A_NN_input_2)
+            # O1 = tf.identity(tf.cond(
+            #     tf.greater(self.epoch, GMM_init_ep),
+            #     lambda: self.A_NN(A_NN_input_1),
+            #     lambda: tf.stop_gradient(self.A_NN(A_NN_input_1))),
+            #     "preactivation_1")
+            # O2 = tf.identity(tf.cond(
+            #     tf.greater(self.epoch, GMM_init_ep),
+            #     lambda: self.A_NN(A_NN_input_2),
+            #     lambda: tf.stop_gradient(self.A_NN(A_NN_input_2))),
+            #     "preactivation_2")
+            A0 = (tf.gather(O1, [0], axis=-1) +
+                  tf.gather(O2, [0], axis=-1)) / 2.
+            A1 = tf.gather(O1, [1], axis=-1)
+            A2 = tf.gather(O2, [1], axis=-1)
+
+            concentration = tf.cond(
+                no_second_npc,
+                lambda: tf.nn.softplus(tf.concat([A0, A1], -1)),
+                lambda: tf.nn.softplus(tf.concat([A0, A1, A2], -1)),
+                name="concentration")
+
+            alpha = Dirichlet(concentration)
+
+        return alpha
+
+    def get_GMM(self, NN, inputs, name="GMM"):
         with tf.name_scope(name):
             NN_output = NN(inputs)
             # NN_output = tf.identity(tf.cond(
@@ -277,16 +397,9 @@ class GBDS(RandomVariable, Distribution):
                 NN_output[:, :, (2 * self.K * self.dim):],
                 [self.B, -1, self.K], "reshape_w"), -1, "w")
 
-            return mu, lmbda, w
+        return mu, lmbda, w
 
-    def get_preds(self, s, y, post_g, prev_u, extra_conds):
-        """
-        Return one-step-ahead prediction of goal and control signal,
-        given state, current position, sample from goal posterior,
-        and previous control (and extra conditions if provided).
-        """
-        G0_mu, G0_lambda, G0_w = self.get_GMM_params(self.G0_NN, s, "G0")
-
+    def get_G(self, s, extra_conds):
         # no_first_npc = tf.reduce_all(tf.equal(
         #     tf.gather(extra_conds, [self.extra_dim // 2 - 1], axis=-1), 0),
         #     name="first_npc_bool")
@@ -294,48 +407,18 @@ class GBDS(RandomVariable, Distribution):
             tf.gather(extra_conds, [self.extra_dim - 1], axis=-1), 0),
             name="second_npc_bool")
 
+        alpha_dist = self.get_alpha(s, extra_conds, no_second_npc)
+        alpha = alpha_dist.sample()
+
+        G0_mu, G0_lambda, G0_w = self.get_GMM(self.G0_NN, s, "G0")
+
         s1 = tf.concat([s, extra_conds[:, :, :(self.extra_dim // 2)]],
                        -1, "s1")
-        G1_mu_1, G1_lambda_1, G1_w_1 = self.get_GMM_params(
-            self.G1_NN, s1, "G1_1")
+        G1_mu_1, G1_lambda_1, G1_w_1 = self.get_GMM(self.G1_NN, s1, "G1_1")
 
         s2 = tf.concat([s, extra_conds[:, :, (self.extra_dim // 2):]],
                        -1, "s2")
-        G1_mu_2, G1_lambda_2, G1_w_2 = self.get_GMM_params(
-            self.G1_NN, s2, "G1_2")
-
-        # alpha = tf.identity(tf.case(
-        #     {no_first_npc: lambda: tf.nn.softmax(tf.gather(self.A_NN(
-        #         tf.concat([s, extra_conds], -1)), [0, 2], axis=-1), -1),
-        #      no_second_npc: lambda: tf.nn.softmax(tf.gather(self.A_NN(
-        #         tf.concat([s, extra_conds], -1)), [0, 1], axis=-1), -1)},
-        #     default=lambda: tf.nn.softmax(self.A_NN(
-        #         tf.concat([s, extra_conds], -1)), -1),
-        #     exclusive=True), "alpha")
-        A_NN_input_1 = tf.concat([s, extra_conds], -1, "A_NN_input_1")
-        A_NN_input_2 = tf.concat([s, tf.concat(
-            [extra_conds[:, :, (self.extra_dim // 2):],
-             extra_conds[:, :, :(self.extra_dim // 2)]], -1, "swap_npc")],
-            -1, "A_NN_input_2")
-        O1 = self.A_NN(A_NN_input_1)
-        O2 = self.A_NN(A_NN_input_2)
-        # O1 = tf.identity(tf.cond(
-        #     tf.greater(self.epoch, GMM_init_ep),
-        #     lambda: self.A_NN(A_NN_input_1),
-        #     lambda: tf.stop_gradient(self.A_NN(A_NN_input_1))),
-        #     "preactivation_1")
-        # O2 = tf.identity(tf.cond(
-        #     tf.greater(self.epoch, GMM_init_ep),
-        #     lambda: self.A_NN(A_NN_input_2),
-        #     lambda: tf.stop_gradient(self.A_NN(A_NN_input_2))),
-        #     "preactivation_2")
-        A0 = (tf.gather(O1, [0], axis=-1) + tf.gather(O2, [0], axis=-1)) / 2.
-        A1 = tf.gather(O1, [1], axis=-1)
-        A2 = tf.gather(O2, [1], axis=-1)
-
-        alpha = tf.identity(tf.cond(
-            no_second_npc, lambda: tf.nn.softmax(tf.concat([A0, A1], -1), -1),
-            lambda: tf.nn.softmax(tf.concat([A0, A1, A2], -1), -1)), "alpha")
+        G1_mu_2, G1_lambda_2, G1_w_2 = self.get_GMM(self.G1_NN, s2, "G1_2")
 
         with tf.name_scope("G"):
             # G_mu = tf.identity(tf.case(
@@ -379,11 +462,20 @@ class GBDS(RandomVariable, Distribution):
                      G1_w_1 * tf.gather(alpha, [1], axis=-1),
                      G1_w_2 * tf.gather(alpha, [2], axis=-1)], -1)), "w")
 
-        next_g = tf.divide(
-            tf.expand_dims(post_g[:, :-1], 2) + G_mu * G_lambda,
-            1 + G_lambda, "next_goals")
+        return alpha_dist, G_mu, G_lambda, G_w
 
-        error = tf.subtract(post_g[:, 1:], y, "control_error")
+    def get_preds(self, post_g, prev_u):
+        """
+        Return one-step-ahead prediction of goal and control signal,
+        given state, current position, sample from goal posterior,
+        and previous control (and extra conditions if provided).
+        """
+        g_pred = tf.divide(
+            (tf.expand_dims(post_g[:, :-1], 2) +
+             self.G_mu[:, :-1] * self.G_lambda[:, :-1]),
+            1 + self.G_lambda[:, :-1], "next_goals")
+
+        error = tf.subtract(post_g[:, 1:], self.y[:, :-1], "control_error")
 
         with tf.name_scope("convolution"):
             u_diff = []
@@ -407,7 +499,8 @@ class GBDS(RandomVariable, Distribution):
         u_pred = tf.add(prev_u, u_diff, "predicted_control_signal")
         # u_pred = tf.cumsum(u_diff, 1, name="predicted_control_signal")
 
-        return (G_mu, G_lambda, G_w, next_g, u_pred)
+        # return (G_mu, G_lambda, G_w, g_pred, u_pred)
+        return g_pred, u_pred
 
     def _log_prob(self, value):
         if self.latent_u:
@@ -418,20 +511,19 @@ class GBDS(RandomVariable, Distribution):
             u_q = tf.pad(self.ctrl_obs, [[0, 0], [1, 0], [0, 0]],
                          name="control_posterior")
 
-        all_mu, all_lambda, all_w, g_pred, u_pred = self.get_preds(
-            self.s[:, :-1], self.y[:, :-1], g_q, u_q[:, :-1],
-            self.extra_conds[:, :-1])
+        g_pred, u_pred = self.get_preds(g_q, u_q[:, :-1])
 
         logdensity_g = 0.0
         with tf.name_scope("goal_states"):
             gmm_res = tf.subtract(
                 tf.expand_dims(g_q[:, 1:], 2, "reshape_samples"), g_pred,
                 "GMM_residual")
-            gmm_term = tf.log(all_w + 1e-8) - tf.reduce_sum(
-                (1 + all_lambda) * (gmm_res ** 2) / (2 * self.sigma ** 2), -1)
-            gmm_term += (0.5 * tf.reduce_sum(tf.log(1 + all_lambda), -1) -
-                         tf.reduce_sum(0.5 * tf.log(2 * np.pi) +
-                                       tf.log(self.sigma), -1))
+            gmm_term = tf.log(self.G_w[:, :-1] + 1e-8) - tf.reduce_sum(
+                (1 + self.G_lambda[:, :-1]) * (gmm_res ** 2) / (
+                    2 * self.sigma ** 2), -1)
+            gmm_term += (0.5 * tf.reduce_sum(
+                tf.log(1 + self.G_lambda[:, :-1]), -1) - tf.reduce_sum(
+                    0.5 * tf.log(2 * np.pi) + tf.log(self.sigma), -1))
             logdensity_g += tf.reduce_sum(
                 tf.reduce_logsumexp(gmm_term, -1), -1)
 
@@ -439,13 +531,13 @@ class GBDS(RandomVariable, Distribution):
             if self.g_pen is not None:
                 # penalty on goal state escaping game space
                 logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(self.bounds[0] - all_mu) ** 2, [1, 2, 3])
+                    tf.nn.relu(self.bounds[0] - self.G_mu) ** 2, [1, 2, 3])
                 logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(all_mu - self.bounds[1]) ** 2, [1, 2, 3])
+                    tf.nn.relu(self.G_mu - self.bounds[1]) ** 2, [1, 2, 3])
 
                 # penalty on GMM precision
                 logdensity_g -= self.g_prec_pen * tf.reduce_sum(
-                    1. / all_lambda, [1, 2, 3])
+                    1. / self.G_lambda, [1, 2, 3])
 
         logdensity_u = 0.0
         with tf.name_scope("control_signal"):
@@ -481,7 +573,7 @@ class GBDS(RandomVariable, Distribution):
         s = tf.reshape(s, [1, 1, -1], "state")
         extra_conds = tf.reshape(extra_conds, [1, 1, -1], "extra_conditions")
 
-        G0_mu, G0_lambda, G0_w = self.get_GMM_params(self.G0_NN, s, "G0")
+        G0_mu, G0_lambda, G0_w = self.get_GMM(self.G0_NN, s, "G0")
 
         # no_first_npc = tf.reduce_all(tf.equal(
         #     tf.gather(extra_conds, [self.extra_dim // 2 - 1], axis=-1), 0),
@@ -492,13 +584,11 @@ class GBDS(RandomVariable, Distribution):
 
         s1 = tf.concat([s, extra_conds[:, :, :(self.extra_dim // 2)]],
                        -1, "s1")
-        G1_mu_1, G1_lambda_1, G1_w_1 = self.get_GMM_params(
-            self.G1_NN, s1, "G1_1")
+        G1_mu_1, G1_lambda_1, G1_w_1 = self.get_GMM(self.G1_NN, s1, "G1_1")
 
         s2 = tf.concat([s, extra_conds[:, :, (self.extra_dim // 2):]],
                        -1, "s2")
-        G1_mu_2, G1_lambda_2, G1_w_2 = self.get_GMM_params(
-            self.G1_NN, s2, "G1_2")
+        G1_mu_2, G1_lambda_2, G1_w_2 = self.get_GMM(self.G1_NN, s2, "G1_2")
 
         # alpha = tf.identity(tf.case(
         #     {no_first_npc: lambda: tf.nn.softmax(tf.gather(tf.squeeze(
@@ -519,9 +609,10 @@ class GBDS(RandomVariable, Distribution):
         A1 = tf.gather(O1, [1])
         A2 = tf.gather(O2, [1])
 
-        alpha = tf.identity(tf.cond(
-            no_second_npc, lambda: tf.nn.softmax(tf.concat([A0, A1], 0)),
-            lambda: tf.nn.softmax(tf.concat([A0, A1, A2], 0))), "alpha")
+        alpha = tf.identity(Dirichlet(tf.cond(
+            no_second_npc, lambda: tf.nn.softplus(tf.concat([A0, A1], 0)),
+            lambda: tf.nn.softplus(tf.concat([A0, A1, A2], 0)))).sample(),
+            "alpha")
 
         with tf.name_scope("G"):
             # G_mu = tf.identity(tf.case(

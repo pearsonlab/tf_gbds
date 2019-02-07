@@ -216,10 +216,10 @@ def get_model_params(name, agents, model_dim, obs_dim, state_dim, extra_dim,
                 G1_NN = get_network("G1", state_dim + extra_dim // 2,
                                     GMM_K * a["dim"] * 2 + GMM_K,
                                     gen_hidden_dim, gen_n_layers)
+                GMM_NN_vars = G0_NN.variables + G1_NN.variables
                 A_NN = get_network("A", state_dim + extra_dim, 2,
                                    gen_hidden_dim, gen_n_layers)
-                GMM_NN_vars = (G0_NN.variables + G1_NN.variables +
-                               A_NN.variables)
+                A_NN_vars = A_NN.variables
 
                 if sigma_trainable:
                     unc_sigma_init = tf.Variable(
@@ -261,10 +261,10 @@ def get_model_params(name, agents, model_dim, obs_dim, state_dim, extra_dim,
                 p_params.append(dict(
                     name=a["name"], col=a["col"], dim=a["dim"],
                     state_dim=state_dim, extra_dim=extra_dim,
-                    GMM_NN=(G0_NN, G1_NN, A_NN), GMM_NN_vars=GMM_NN_vars,
-                    GMM_K=GMM_K, unc_sigma=unc_sigma_init,
-                    sigma_trainable=sigma_trainable, sigma_pen=sigma_pen,
-                    g_bounds=goal_boundaries,
+                    GMM_NN=(G0_NN, G1_NN), GMM_NN_vars=GMM_NN_vars,
+                    GMM_K=GMM_K, A_NN=A_NN, A_NN_vars=A_NN_vars,
+                    unc_sigma=unc_sigma_init, sigma_trainable=sigma_trainable,
+                    sigma_pen=sigma_pen, g_bounds=goal_boundaries,
                     g_bounds_pen=goal_boundary_penalty,
                     g_prec_pen=goal_precision_penalty,
                     PID=get_PID(a["dim"], epoch), latent_u=latent_ctrl,
@@ -384,6 +384,8 @@ def get_rec_params(obs_dim, extra_dim, output_dim, lag, n_layers, hidden_dim,
         LambdaX_net = get_network(
             "LambdaX_NN", obs_dim * (lag + 1) + extra_dim, output_dim ** 2,
             hidden_dim, n_layers)
+        Alpha_net = get_network("Alpha_NN", obs_dim * (lag + 1) + extra_dim,
+                                2, hidden_dim, n_layers)
 
         dyn_params = dict(
             A=tf.Variable(
@@ -395,7 +397,8 @@ def get_rec_params(obs_dim, extra_dim, output_dim, lag, n_layers, hidden_dim,
 
         rec_params = dict(
             dyn_params=dyn_params, NN_Mu=Mu_net, NN_Lambda=Lambda_net,
-            NN_LambdaX=LambdaX_net, lag=lag)
+            NN_LambdaX=LambdaX_net, NN_Alpha=Alpha_net, lag=lag,
+            extra_dim=extra_dim)
 
         with tf.name_scope("penalty_Q"):
             if penalty_Q is not None:
