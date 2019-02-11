@@ -167,6 +167,10 @@ class game_model(object):
                           tf.gather(O2, [0], axis=-1)) / 2.
                     A1 = tf.gather(O1, [1], axis=-1)
                     A2 = tf.gather(O2, [1], axis=-1)
+                    # A1 = (tf.gather(O1, [1], axis=-1) +
+                    #       tf.gather(O2, [2], axis=-1)) / 2.
+                    # A2 = (tf.gather(O1, [2], axis=-1) +
+                    #       tf.gather(O2, [1], axis=-1)) / 2.
 
                     # alpha = tf.identity(tf.cond(
                     #     no_second_npc,

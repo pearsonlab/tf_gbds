@@ -12,7 +12,7 @@ import edward as ed
 from tensorflow.python.client import timeline
 
 # Load utilities
-from tf_util import *
+# from tf_util import *
 from agents import game_model
 from utils import (load_data, get_vel, get_accel, get_model_params,
                    add_summary, KLqp_profile, KLqp_clipgrads)

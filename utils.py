@@ -363,6 +363,7 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers):
                 M.add(layers.Dense(
                     hidden_dim, activation="relu",
                     kernel_initializer=tf.orthogonal_initializer(),
+                    # kernel_initializer=tf.glorot_normal_initializer(),
                     name="Dense_%s" % (i + 1)))
 
         return M

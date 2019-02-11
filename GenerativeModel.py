@@ -369,6 +369,10 @@ class GBDS(RandomVariable, Distribution):
                   tf.gather(O2, [0], axis=-1)) / 2.
             A1 = tf.gather(O1, [1], axis=-1)
             A2 = tf.gather(O2, [1], axis=-1)
+            # A1 = (tf.gather(O1, [1], axis=-1) +
+            #       tf.gather(O2, [2], axis=-1)) / 2.
+            # A2 = (tf.gather(O1, [2], axis=-1) +
+            #       tf.gather(O2, [1], axis=-1)) / 2.
 
             concentration = tf.cond(
                 no_second_npc,
@@ -407,8 +411,7 @@ class GBDS(RandomVariable, Distribution):
             tf.gather(extra_conds, [self.extra_dim - 1], axis=-1), 0),
             name="second_npc_bool")
 
-        alpha_dist = self.get_alpha(s, extra_conds, no_second_npc)
-        alpha = alpha_dist.sample()
+        alpha = self.get_alpha(s, extra_conds, no_second_npc)
 
         G0_mu, G0_lambda, G0_w = self.get_GMM(self.G0_NN, s, "G0")
 
@@ -462,7 +465,7 @@ class GBDS(RandomVariable, Distribution):
                      G1_w_1 * tf.gather(alpha, [1], axis=-1),
                      G1_w_2 * tf.gather(alpha, [2], axis=-1)], -1)), "w")
 
-        return alpha_dist, G_mu, G_lambda, G_w
+        return alpha, G_mu, G_lambda, G_w
 
     def get_preds(self, post_g, prev_u):
         """
@@ -608,6 +611,8 @@ class GBDS(RandomVariable, Distribution):
         A0 = (tf.gather(O1, [0]) + tf.gather(O2, [0])) / 2.
         A1 = tf.gather(O1, [1])
         A2 = tf.gather(O2, [1])
+        # A1 = (tf.gather(O1, [1]) + tf.gather(O2, [2])) / 2.
+        # A2 = (tf.gather(O1, [2]) + tf.gather(O2, [1])) / 2.
 
         alpha = tf.identity(Dirichlet(tf.cond(
             no_second_npc, lambda: tf.nn.softplus(tf.concat([A0, A1], 0)),

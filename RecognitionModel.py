@@ -152,6 +152,7 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                         extra_conds, "extra_conditions")
                     self.y = tf.concat([self.y_t, self.extra_conds], -1)
                 else:
+                    self.y = self.y_t
                     self.extra_conds = None
 
             # self.trainable = trainable
@@ -333,6 +334,10 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                   tf.gather(O2, [0], axis=-1)) / 2.
             A1 = tf.gather(O1, [1], axis=-1)
             A2 = tf.gather(O2, [1], axis=-1)
+            # A1 = (tf.gather(O1, [1], axis=-1) +
+            #       tf.gather(O2, [2], axis=-1)) / 2.
+            # A2 = (tf.gather(O1, [2], axis=-1) +
+            #       tf.gather(O2, [1], axis=-1)) / 2.
 
             concentration = tf.cond(
                 no_second_npc,
