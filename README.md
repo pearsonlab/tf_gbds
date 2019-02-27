@@ -1,17 +1,14 @@
 # tf-gbds
-TensorFlow + Edward implementation of [goal-based dynamical system model](https://github.com/pearsonlab/gbds)
+TensorFlow + Edward implementation of [goal-based dynamical system model](https://github.com/pearsonlab/gbds).
 
-Implementation of
+Relevant papers:
+> SN Iqbal, L Yin, CB Drucker, Q Kuang, J Gariépy, ML Platt, JM Pearson (2018). Latent goal models for dynamic strategic interaction (PLOS Computational Biology, accepted)
 
-S Iqbal, L Yin, CB Drucker, Q Kuang, J Gariépy, ML Platt, JM Pearson (2018). Latent goal models for dynamic strategic interaction (PLOS Computational Biology, in revision)
+> S Iqbal, J Pearson (2017). [Learning to Draw Dynamic Agent Goals with Generative Adversarial Networks](https://arxiv.org/abs/1702.07319v2)
 
-and
+Code for approximate time series posterior is written by Evan Archer. Algorithm is described in
 
-S Iqbal, J Pearson (2017). [Learning to Draw Dynamic Agent Goals with Generative Adversarial Networks](https://arxiv.org/abs/1702.07319v2)
-
-Code for approximate time series posterior written by Evan Archer. Algorithm described in
-
->  E Archer, IM Park, L Buesing, J Cunningham, L Paninski (2015). [Black box variational inference for state space models](http://arxiv.org/abs/1511.07367)
+> E Archer, IM Park, L Buesing, J Cunningham, L Paninski (2015). [Black box variational inference for state space models](http://arxiv.org/abs/1511.07367)
 
 
 ## Contents
@@ -32,7 +29,7 @@ Our model follows TensoFlow data input pipeline to read in experiment data as [T
 
 ## Prerequisites
 The code is written in Python 3.6.x. You will also need:
-* **TensorFlow-gpu** version 1.6.0 ([install](https://www.tensorflow.org/install/)) (and [**TensorBoard**](https://www.tensorflow.org/guide/summaries_and_tensorboard) for [visualization](#visualize-a-training-model))
+* **TensorFlow** or **TensorFlow-GPU** version 1.6.0 ([install](https://www.tensorflow.org/install/)) (and [**TensorBoard**](https://www.tensorflow.org/guide/summaries_and_tensorboard) for [visualization](#visualize-a-training-model))
 * **Edward** version 1.3.5 ([install](http://edwardlib.org/getting-started))
 * **NumPy, SciPy, Matplotlib** ([install SciPy stack](https://www.scipy.org/install.html), contains all of them)
 
