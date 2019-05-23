@@ -204,7 +204,7 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                      temperature, epoch):
 
     with tf.variable_scope("model_parameters"):
-        with tf.variable_scope("generative_%s" % agent_name):
+        with tf.variable_scope(agent_name):
             GMM_NN = get_network(
                 "GMM", state_dim + extra_dim, GMM_K * agent_dim * 2,
                 gen_hidden_dim, gen_n_layers)
@@ -213,6 +213,15 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
             A_NN = get_network("A", GMM_K + state_dim + extra_dim, GMM_K,
                                gen_hidden_dim, gen_n_layers)
             A_NN_vars = A_NN.variables
+
+            unc_Kp = tf.Variable(
+                tf.multiply(softplus_inverse(1.),
+                            tf.ones(agent_dim, tf.float32), "unc_Kp_init"),
+                name="unc_Kp")
+            Kp = tf.nn.softplus(unc_Kp, "Kp")
+            fix_ep = 40
+            Kp_cond = tf.cond(tf.greater(epoch, fix_ep),
+                              lambda: Kp, lambda: tf.stop_gradient(Kp))
 
             if epsilon_trainable:
                 unc_eps_init = tf.Variable(
@@ -235,7 +244,8 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                 g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
                 g_prec_pen=goal_precision_penalty,
                 unc_eps=unc_eps_init, eps_trainable=epsilon_trainable,
-                eps_pen=eps_pen, temperature=temperature)
+                eps_pen=eps_pen, unc_Kp=unc_Kp, Kp=Kp_cond,
+                temperature=temperature)
 
         q_params = get_rec_params(
             agent_dim, extra_dim, agent_dim + GMM_K, rec_lag,

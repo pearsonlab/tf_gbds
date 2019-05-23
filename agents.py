@@ -23,7 +23,8 @@ class game_model(object):
         with tf.name_scope(params["name"]):
             traj = inputs["trajectory"]
             states = inputs["states"]
-            extra_conds = inputs["extra_conds"]
+            ctrl_obs = inputs["observed_control"]
+            extra_conds = inputs["extra_conditions"]
             K = params["p_params"]["GMM_K"]
 
             self.var_list = []
@@ -43,8 +44,8 @@ class game_model(object):
                 value_shape = [B, Tt, model_dim + K]
 
             self.p = GBDS(
-                params["p_params"], states, extra_conds, name="generative",
-                value=tf.zeros(value_shape))
+                params["p_params"], states, ctrl_obs, extra_conds,
+                name="generative", value=tf.zeros(value_shape))
             self.var_list += self.p.var_list
             self.log_vars += self.p.log_vars
 
@@ -68,7 +69,7 @@ class game_model(object):
                 prev_z = tf.placeholder(
                     tf.float32, [None, None, K], "previous_state")
 
-                logits = self.p.transition(prev_z, s, npcs)
+                logits = self.p.get_logits(prev_z, s, npcs)
 
             with tf.name_scope("posterior"):
                 with tf.name_scope("means"):

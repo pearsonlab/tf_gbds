@@ -4,26 +4,25 @@ import numpy as np
 from edward.models import RandomVariable, ExpRelaxedOneHotCategorical
 from tensorflow.contrib.distributions import (Distribution,
                                               FULLY_REPARAMETERIZED)
-from tensorflow.python.ops.distributions.special_math import log_ndtr
 
 
 class GBDS(RandomVariable, Distribution):
-    def __init__(self, params, states, extra_conds, *args, **kwargs):
+    def __init__(self, params, states, ctrl_obs, extra_conds, *args,
+                 **kwargs):
         name = kwargs.get("name", "GBDS")
         with tf.name_scope(name):
             self.col = params["col"]
             self.dim = params["dim"]
-            with tf.name_scope("batch_size"):
-                self.B = tf.shape(states)[0]
             with tf.name_scope("trial_length"):
                 self.Tt = tf.shape(states)[1]
             # self.epoch = epoch
             self.s = tf.identity(states, "states")
             self.y = tf.gather(states, self.col, axis=-1, name="positions")
+            self.ctrl_obs = tf.gather(ctrl_obs, self.col, axis=-1,
+                                      name="observed_control")
             self.s_dim = params["state_dim"]
             self.extra_dim = params["extra_dim"]
-            self.extra_conds = tf.identity(
-                extra_conds, "extra_conditions")
+            self.extra_conds = tf.identity(extra_conds, "extra_conditions")
             self.temperature = params["temperature"]
 
             # number of GMM components
@@ -32,8 +31,14 @@ class GBDS(RandomVariable, Distribution):
             self.G_NN = params["GMM_NN"]
             # neural network for latent state transition
             self.A_NN = params["A_NN"]
-            self.var_list = params["GMM_NN_vars"] + params["A_NN_vars"]
-            self.log_vars = params["GMM_NN_vars"] + params["A_NN_vars"]
+            # coefficient for proportional control
+            self.unc_Kp = params["unc_Kp"]
+            self.Kp = params["Kp"]
+
+            self.var_list = (params["GMM_NN_vars"] + params["A_NN_vars"] +
+                             [self.unc_Kp])
+            self.log_vars = (params["GMM_NN_vars"] + params["A_NN_vars"] +
+                             [self.Kp])
 
             with tf.name_scope("goal_state_penalty"):
                 # penalty on goal state escaping boundaries
@@ -76,73 +81,81 @@ class GBDS(RandomVariable, Distribution):
             kwargs["allow_nan_stats"] = False
 
         super(GBDS, self).__init__(*args, **kwargs)
-        self._args = (params, states, extra_conds)
+        self._args = (params, states, ctrl_obs, extra_conds)
 
     def get_GMM(self, s, extra_conds):
+        B = tf.shape(s)[0]
         NN_output = self.G_NN(tf.concat([s, extra_conds], -1))
         mu = tf.reshape(
             NN_output[:, :, :(self.K * self.dim)],
-            [self.B, -1, self.K, self.dim], "mu")
+            [B, -1, self.K, self.dim], "mu")
         lmbda = tf.reshape(
             tf.nn.softplus(NN_output[:, :, (self.K * self.dim):]),
-            [self.B, -1, self.K, self.dim], "lambda")
+            [B, -1, self.K, self.dim], "lambda")
 
         return mu, lmbda
 
-    def transition(self, z, s, extra_conds):
+    def get_logits(self, z, s, extra_conds):
         log_alphas = tf.identity(
             self.A_NN(tf.concat([z, s, extra_conds], -1)), "logits")
 
         return log_alphas
 
     def _log_prob(self, value):
-        g_q = tf.identity(value[:, :, :self.dim], "goal_posterior")
-        z_q = tf.nn.log_softmax(
-            value[:, :, self.dim:], -1, "latent_state_posterior")
+        with tf.name_scope("posterior"):
+            g_q = tf.identity(value[:, :, :self.dim], "goal")
+            z_q = tf.nn.log_softmax(
+                value[:, :, self.dim:], -1, "latent_state")
 
-        G_mu, G_lambda = self.get_GMM(self.s, self.extra_conds)
-
-        logdensity_g = 0.0
         with tf.name_scope("goals"):
+            logdensity_g = 0.0
+
+            G_mu, G_lambda = self.get_GMM(self.s, self.extra_conds)
             gmm_res = tf.subtract(
                 tf.expand_dims(g_q[:, 1:], 2, "reshape_samples"),
                 G_mu[:, :-1], "GMM_residual")
-            gmm_term = -tf.reduce_sum(
+            gmm_term = z_q[:, 1:] - tf.reduce_sum(
                 (0.5 * tf.log(2 * np.pi) - tf.log(G_lambda[:, :-1]) +
-                    (gmm_res * G_lambda[:, :-1]) ** 2 / 2), -1) + z_q[:, 1:]
+                    (gmm_res * G_lambda[:, :-1]) ** 2 / 2), -1)
             logdensity_g += tf.reduce_sum(
                 tf.reduce_logsumexp(gmm_term, -1), -1)
 
-        with tf.name_scope("goal_penalty"):
-            if self.g_pen is not None:
-                # penalty on goal state escaping game space
-                logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(self.bounds[0] - G_mu) ** 2, [1, 2, 3])
-                logdensity_g -= self.g_pen * tf.reduce_sum(
-                    tf.nn.relu(G_mu - self.bounds[1]) ** 2, [1, 2, 3])
+            with tf.name_scope("penalty"):
+                if self.g_pen is not None:
+                    # penalty on goal state escaping game space
+                    logdensity_g -= self.g_pen * tf.reduce_sum(
+                        tf.nn.relu(self.bounds[0] - G_mu) ** 2, [1, 2, 3])
+                    logdensity_g -= self.g_pen * tf.reduce_sum(
+                        tf.nn.relu(G_mu - self.bounds[1]) ** 2, [1, 2, 3])
 
-                # penalty on GMM precision
-                logdensity_g -= self.g_prec_pen * tf.reduce_sum(
-                    1. / G_lambda, [1, 2, 3])
+                    # penalty on GMM precision
+                    logdensity_g -= self.g_prec_pen * tf.reduce_sum(
+                        1. / G_lambda, [1, 2, 3])
 
-        logits = self.transition(
-            z_q[:, :-1], self.s[:, :-1], self.extra_conds[:, :-1])
+        with tf.name_scope("latent_states"):
+            logits = self.get_logits(
+                z_q[:, :-1], self.s[:, :-1], self.extra_conds[:, :-1])
+            logdensity_z = tf.reduce_sum(ExpRelaxedOneHotCategorical(
+                self.temperature, logits=logits).log_prob(z_q[:, 1:]), -1)
 
-        logdensity_z = tf.reduce_sum(ExpRelaxedOneHotCategorical(
-            self.temperature, logits=logits).log_prob(z_q[:, 1:]), -1)
+        with tf.name_scope("control_signal"):
+            logdensity_u = 0.0
 
-        logdensity_y = 0.0
-        with tf.name_scope("positions"):
-            y_res = tf.subtract(self.y[:, :-1], g_q[:, 1:], "residual")
-            logdensity_y -= tf.reduce_sum(
+            du_obs = tf.subtract(
+                self.ctrl_obs[:, 1:], self.ctrl_obs[:, :-1], "observed")
+            du_pred = tf.multiply(
+                g_q[:, 1:] - self.y[:, :-1], self.Kp, "predicted")
+            u_res = tf.subtract(du_obs, du_pred[:, :-1], "residual")
+            logdensity_u -= tf.reduce_sum(
                 (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
-                 y_res ** 2 / (2 * self.eps ** 2)), [1, 2])
+                 u_res ** 2 / (2 * self.eps ** 2)), [1, 2])
 
-        if self.eps_pen is not None:
-            logdensity_y -= self.eps_pen * tf.reduce_sum(self.unc_eps)
+            with tf.name_scope("penalty"):
+                if self.eps_pen is not None:
+                    logdensity_u -= self.eps_pen * tf.reduce_sum(self.unc_eps)
 
         logdensity = tf.reduce_mean(tf.divide(
-            tf.add_n([logdensity_g, logdensity_z, logdensity_y]),
+            tf.add_n([logdensity_g, logdensity_z, logdensity_u]),
             tf.cast(self.Tt - 1, tf.float32)))
 
         return logdensity

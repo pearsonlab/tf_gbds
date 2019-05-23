@@ -208,8 +208,14 @@ def run_model(FLAGS):
             else:
                 extra_conds_in = None
 
+            with tf.name_scope("observed_control"):
+                ctrl_obs_in = tf.divide(tf.subtract(
+                    trajectory_in[:, 1:], trajectory_in[:, :-1],
+                    "diff"), max_vel, "standardize")
+
             inputs = {"trajectory": trajectory_in, "states": states_in,
-                      "extra_conds": extra_conds_in}
+                      "observed_control": ctrl_obs_in,
+                      "extra_conditions": extra_conds_in}
 
         params = get_model_params(
             FLAGS.game_name, FLAGS.agent_name, agent_col, agent_dim,
@@ -226,11 +232,15 @@ def run_model(FLAGS):
         with tf.name_scope("parameters_summary"):
             summary_list = []
 
+            Kp_x = tf.summary.scalar("PID/Kp_x", model.p.Kp[0])
+            Kp_y = tf.summary.scalar("PID/Kp_y", model.p.Kp[1])
+            summary_list += [Kp_x, Kp_y]
+
             if FLAGS.eps_trainable:
                 eps_subject_x = tf.summary.scalar(
-                    "epsilon/subject_x", model.p.eps[0, 0])
+                    "epsilon/x", model.p.eps[0, 0])
                 eps_subject_y = tf.summary.scalar(
-                    "epsilon/subject_y", model.p.eps[0, 1])
+                    "epsilon/y", model.p.eps[0, 1])
                 eps_pen = tf.summary.scalar(
                     "epsilon/penalty", model.p.eps_pen)
                 summary_list += [eps_subject_x, eps_subject_y, eps_pen]
