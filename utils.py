@@ -265,12 +265,22 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                 eps_pen=eps_pen, unc_Kp=unc_Kp, Kp=Kp_cond,
                 temperature=temperature)
 
-        q_params = get_rec_params(
-            agent_dim, extra_dim, agent_dim + GMM_K, rec_lag,
-            rec_n_layers, rec_hidden_dim, penalty_Q, "joint_posterior")
+        # q_params = get_rec_params(
+        #     agent_dim, extra_dim, agent_dim + GMM_K, rec_lag,
+        #     rec_n_layers, rec_hidden_dim, penalty_Q, "joint_posterior")
+
+        qg_params = get_rec_params(
+            agent_dim, extra_dim, agent_dim, rec_lag,
+            rec_n_layers, rec_hidden_dim, penalty_Q, "posterior_goal")
+
+        qz_params = get_rec_params(
+            agent_dim, extra_dim, GMM_K, rec_lag, rec_n_layers, rec_hidden_dim,
+            penalty_Q, "posterior_latent_state")
 
         params = dict(
-            name=game_name, p_params=p_params, q_params=q_params)
+            # name=game_name, p_params=p_params, q_params=q_params)
+            name=game_name, p_params=p_params,
+            qg_params=qg_params, qz_params=qz_params)
 
         return params
 

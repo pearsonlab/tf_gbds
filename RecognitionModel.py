@@ -262,3 +262,38 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
             params, Input_[:, 1:], xDim, yDim, extra_conds[:, 1:],
             *args, **kwargs)
         self._args = (params, Input, xDim, yDim, extra_conds)
+
+
+class joint_recognition(RandomVariable, Distribution):
+    def __init__(self, qg, qz, *args, **kwargs):
+        name = kwargs.get("name", "joint_recognition")
+        self.qg = qg
+        self.qz = qz
+        self.agent_dim = self.qg.xDim
+
+        self.var_list = qg.var_list + qz.var_list
+        self.log_vars = qg.log_vars + qz.log_vars
+
+        if "name" not in kwargs:
+            kwargs["name"] = name
+        if "dtype" not in kwargs:
+            kwargs["dtype"] = tf.float32
+        if "reparameterization_type" not in kwargs:
+            kwargs["reparameterization_type"] = FULLY_REPARAMETERIZED
+        if "validate_args" not in kwargs:
+            kwargs["validate_args"] = True
+        if "allow_nan_stats" not in kwargs:
+            kwargs["allow_nan_stats"] = False
+
+        super(joint_recognition, self).__init__(*args, **kwargs)
+        self._args = (qg, qz)
+
+    def _log_prob(self, value):
+
+        return tf.add(self.qg.log_prob(value[:, :, :self.agent_dim]),
+                      self.qz.log_prob(value[:, :, self.agent_dim:]))
+
+    def _sample_n(self, n, seed=None):
+
+        return tf.concat([self.qg.sample(n), self.qz.sample(n)], -1,
+                         name="sample")

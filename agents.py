@@ -1,8 +1,7 @@
 import tensorflow as tf
 from edward.models import ExpRelaxedOneHotCategorical
 from GenerativeModel import GBDS
-from RecognitionModel import SmoothingPastLDSTimeSeries
-# from RecognitionModel import SmoothingPastLDSTimeSeries, joint_recognition
+from RecognitionModel import SmoothingPastLDSTimeSeries, joint_recognition
 # from utils import get_vel
 # from tf_generate_trial import (recover_orig_val, recover_normalized,
 #                                generate_weight, generate_rotation_mat,
@@ -49,9 +48,16 @@ class game_model(object):
             self.var_list += self.p.var_list
             self.log_vars += self.p.log_vars
 
-            self.q = SmoothingPastLDSTimeSeries(
-                params["q_params"], traj, model_dim + K, model_dim,
-                extra_conds, name="recognition")
+            # self.q = SmoothingPastLDSTimeSeries(
+            #     params["q_params"], traj, model_dim + K, model_dim,
+            #     extra_conds, name="recognition")
+            qg = SmoothingPastLDSTimeSeries(
+                params["qg_params"], traj, model_dim, model_dim, extra_conds,
+                name="recognition_goal")
+            qz = SmoothingPastLDSTimeSeries(
+                params["qz_params"], traj, K, model_dim, extra_conds,
+                name="recognition_latent_state")
+            self.q = joint_recognition(qg, qz, name="recognition")
             self.var_list += self.q.var_list
             self.log_vars += self.q.log_vars
 
@@ -75,18 +81,26 @@ class game_model(object):
 
             with tf.name_scope("posterior"):
                 with tf.name_scope("means"):
-                    q_g_mu = tf.identity(
-                        tf.squeeze(self.q.postX, -1)[:, :, :model_dim],
-                        "goal")
-                    q_z_mu = tf.identity(
-                        tf.squeeze(self.q.postX, -1)[:, :, model_dim:],
-                        "latent_state")
+                    # qg_mu = tf.identity(
+                    #     tf.squeeze(self.q.postX, -1)[:, :, :model_dim],
+                    #     "goal")
+                    # qz_mu = tf.identity(
+                    #     tf.squeeze(self.q.postX, -1)[:, :, model_dim:],
+                    #     "latent_state")
+                    qg_mu = tf.identity(
+                        tf.squeeze(self.q.qg.postX, -1), "goal")
+                    qz_mu = tf.identity(
+                        tf.squeeze(self.q.qz.postX, -1), "latent_state")
                 with tf.name_scope("samples"):
-                    q_samp = self.q.sample(n_samples)
-                    q_g_samp = tf.identity(
-                        q_samp[:, :, :, :model_dim], "goal")
-                    q_z_samp = tf.identity(
-                        q_samp[:, :, :, model_dim:], "latent_state")
+                    # q_samp = self.q.sample(n_samples)
+                    # qg_samp = tf.identity(
+                    #     q_samp[:, :, :, :model_dim], "goal")
+                    # qz_samp = tf.identity(
+                    #     q_samp[:, :, :, model_dim:], "latent_state")
+                    qg_samp = tf.identity(
+                        self.q.qg.sample(n_samples), "goal")
+                    qz_samp = tf.identity(
+                        self.q.qz.sample(n_samples), "latent_state")
 
             # with tf.name_scope("update_one_step"):
             #     prev_y = tf.placeholder(
