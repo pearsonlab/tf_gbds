@@ -188,7 +188,7 @@ def run_model(FLAGS):
     print("Lag of input: %i" % FLAGS.rec_lag)
 
     with tf.device("/cpu:0"):
-        temperature = tf.placeholder(tf.float32, name="temperature")
+        init_temperature = 1.
         epoch = tf.placeholder(tf.int64, name="epoch")
         data_dir = tf.placeholder(tf.string, name="dataset_directory")
         with tf.name_scope("load_data"):
@@ -224,7 +224,7 @@ def run_model(FLAGS):
             FLAGS.GMM_K, g_bounds, FLAGS.g_bounds_pen, FLAGS.g_prec_pen,
             FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
             penalty_Q, FLAGS.eps_init, FLAGS.eps_trainable, FLAGS.eps_pen,
-            temperature, epoch)
+            init_temperature, epoch)
 
         model = game_model(params, inputs, max_vel, agent_dim, state_dim,
                            FLAGS.extra_dim, FLAGS.n_post_samp)
@@ -232,8 +232,8 @@ def run_model(FLAGS):
         with tf.name_scope("parameters_summary"):
             summary_list = []
 
-            Kp_x = tf.summary.scalar("PID/Kp_x", model.p.Kp[0])
-            Kp_y = tf.summary.scalar("PID/Kp_y", model.p.Kp[1])
+            Kp_x = tf.summary.scalar("Kp/x", model.p.Kp[0])
+            Kp_y = tf.summary.scalar("Kp/y", model.p.Kp[1])
             summary_list += [Kp_x, Kp_y]
 
             if FLAGS.eps_trainable:
@@ -244,6 +244,9 @@ def run_model(FLAGS):
                 eps_pen = tf.summary.scalar(
                     "epsilon/penalty", model.p.eps_pen)
                 summary_list += [eps_subject_x, eps_subject_y, eps_pen]
+
+            summary_list += [tf.summary.scalar(
+                "temperature", model.p.temperature)]
 
             all_summary = tf.summary.merge(summary_list)
 
@@ -289,7 +292,7 @@ def run_model(FLAGS):
         iterator.initializer.run({data_dir: FLAGS.train_data_dir})
         while True:
             try:
-                feed_dict = {epoch: (i + 1), temperature: 0.1}
+                feed_dict = {epoch: (i + 1)}
                 info_dict = inference.update(feed_dict=feed_dict)
                 add_summary(all_summary, inference, sess, feed_dict,
                             info_dict["t"])
@@ -306,8 +309,8 @@ def run_model(FLAGS):
             iterator.initializer.run({data_dir: FLAGS.val_data_dir})
             while True:
                 try:
-                    curr_val_loss.append(
-                        sess.run(inference.loss, {epoch: (i + 1)}))
+                    curr_val_loss.append(sess.run(
+                        inference.loss, {epoch: (i + 1)}))
                 except tf.errors.OutOfRangeError:
                     break
 

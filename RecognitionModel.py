@@ -232,20 +232,19 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
         """Initialize SmoothingPastLDSTimeSeries random variable (batch)
         """
         name = kwargs.get("name", "SmoothingPastLDSTimeSeries")
-        with tf.name_scope(name):
-            with tf.name_scope("pad_lag"):
-                # manipulate input to include past observations (up to lag)
-                if "lag" in params:
-                    self.lag = params["lag"]
-                else:
-                    self.lag = 1
+        with tf.name_scope("pad_lag"):
+            # manipulate input to include past observations (up to lag)
+            if "lag" in params:
+                self.lag = params["lag"]
+            else:
+                self.lag = 1
 
-                Input_ = tf.identity(Input)
-                for i in range(self.lag):
-                    lagged = tf.concat(
-                        [tf.reshape(Input_[:, 0, :yDim], [-1, 1, yDim], "t0"),
-                         Input_[:, :-1, -yDim:]], 1, "lagged")
-                    Input_ = tf.concat([Input_, lagged], -1)
+            Input_ = tf.identity(Input)
+            for i in range(self.lag):
+                lagged = tf.concat(
+                    [tf.reshape(Input_[:, 0, :yDim], [-1, 1, yDim], "t0"),
+                     Input_[:, :-1, -yDim:]], 1, "lagged")
+                Input_ = tf.concat([Input_, lagged], -1)
 
         if "name" not in kwargs:
             kwargs["name"] = name
@@ -259,5 +258,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
             kwargs["allow_nan_stats"] = False
 
         super(SmoothingPastLDSTimeSeries, self).__init__(
-            params, Input_, xDim, yDim, extra_conds, *args, **kwargs)
+            # params, Input_, xDim, yDim, extra_conds, *args, **kwargs)
+            params, Input_[:, 1:], xDim, yDim, extra_conds[:, 1:],
+            *args, **kwargs)
         self._args = (params, Input, xDim, yDim, extra_conds)

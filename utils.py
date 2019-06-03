@@ -201,14 +201,26 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                      goal_precision_penalty, rec_lag,
                      rec_n_layers, rec_hidden_dim, penalty_Q,
                      unc_epsilon, epsilon_trainable, epsilon_penalty,
-                     temperature, epoch):
+                     init_temperature, epoch):
 
     with tf.variable_scope("model_parameters"):
         with tf.variable_scope(agent_name):
-            GMM_NN = get_network(
-                "GMM", state_dim + extra_dim, GMM_K * agent_dim * 2,
-                gen_hidden_dim, gen_n_layers)
-            GMM_NN_vars = GMM_NN.variables + GMM_NN.variables
+            # GMM_NN = get_network(
+            #     "GMM", state_dim + extra_dim, GMM_K * agent_dim * 2,
+            #     gen_hidden_dim, gen_n_layers)
+            # GMM_NN_vars = GMM_NN.variables
+            with tf.variable_scope("GMM"):
+                GMM_mu = models.Sequential(name="GMM_mu")
+                GMM_mu.add(layers.Dense(
+                    GMM_K * agent_dim,
+                    kernel_initializer=tf.random_normal_initializer(
+                        stddev=0.1),
+                    input_shape=(None, state_dim + extra_dim),
+                    name="GMM_mu_Dense"))
+                GMM_mu_vars = GMM_mu.variables
+
+                unc_GMM_lambda = tf.Variable(
+                    tf.random_normal([GMM_K, agent_dim]), name="unc_lambda")
 
             A_NN = get_network("A", GMM_K + state_dim + extra_dim, GMM_K,
                                gen_hidden_dim, gen_n_layers)
@@ -236,11 +248,17 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                     name="unc_eps")
                 eps_pen = None
 
+            temperature = tf.maximum(
+                init_temperature * (.9 ** ((epoch - 1) / 5)), .1,
+                "temperature")
+
             p_params = dict(
                 name=agent_name, col=agent_col, dim=agent_dim,
                 state_dim=state_dim, extra_dim=extra_dim,
-                GMM_NN=GMM_NN, GMM_NN_vars=GMM_NN_vars,
-                GMM_K=GMM_K, A_NN=A_NN, A_NN_vars=A_NN_vars,
+                # GMM_NN=GMM_NN, GMM_NN_vars=GMM_NN_vars,
+                GMM_mu = GMM_mu, GMM_mu_vars=GMM_mu_vars,
+                unc_GMM_lambda=unc_GMM_lambda, GMM_K=GMM_K,
+                A_NN=A_NN, A_NN_vars=A_NN_vars,
                 g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
                 g_prec_pen=goal_precision_penalty,
                 unc_eps=unc_eps_init, eps_trainable=epsilon_trainable,

@@ -64,7 +64,9 @@ class game_model(object):
                 npcs = tf.placeholder(
                     tf.float32, [None, None, extra_dim], "extra_conditions")
 
-                G_mu, G_lambda = self.p.get_GMM(s, npcs)
+                # G_mu, G_lambda = self.p.get_GMM(s, npcs)
+                G_mu = self.p.get_GMM_mu(s, npcs)
+                G_lambda = tf.identity(self.p.GMM_lambda, "lambda")
 
                 prev_z = tf.placeholder(
                     tf.float32, [None, None, K], "previous_state")

@@ -35,11 +35,12 @@ def blk_tridiag_chol(A, B):
 
         CC = tf.transpose(tf.matrix_solve(LL, BB), perm=[0, 2, 1])
         DD = AA - tf.matmul(CC, tf.transpose(CC, perm=[0, 2, 1]))
-        LL = tf.cholesky(DD)
+        # LL = tf.cholesky(DD)
+        LL = tf.cholesky(DD + 1e-6 * tf.eye(tf.shape(DD)[-1]))
 
         return [LL, CC]
 
-    L = tf.cholesky(A[:, 0])
+    L = tf.cholesky(A[:, 0] + 1e-6 * tf.eye(tf.shape(A)[-1]))
     C = tf.zeros_like(B[:, 0])
 
     R = tf.scan(_step,
