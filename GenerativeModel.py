@@ -43,8 +43,8 @@ class GBDS(RandomVariable, Distribution):
             #                  [self.unc_Kp])
             # self.log_vars = (params["GMM_NN_vars"] + params["A_NN_vars"] +
             #                  [self.Kp])
-            self.var_list = (params["GMM_mu_vars"] + [self.unc_GMM_lambda] +
-                             params["A_NN_vars"] + [self.unc_Kp])
+            # self.var_list = (params["GMM_mu_vars"] + [self.unc_GMM_lambda] +
+            #                  params["A_NN_vars"] + [self.unc_Kp])
             self.log_vars = (params["GMM_mu_vars"] + [self.GMM_lambda] +
                              params["A_NN_vars"] + [self.Kp])
 
@@ -74,8 +74,8 @@ class GBDS(RandomVariable, Distribution):
                 self.unc_eps = params["unc_eps"]
                 self.eps = tf.nn.softplus(self.unc_eps, "epsilon")
                 self.eps_pen = params["eps_pen"]
-                if params["eps_trainable"]:
-                    self.var_list += [self.unc_eps]
+                # if params["eps_trainable"]:
+                #     self.var_list += [self.unc_eps]
 
         if "name" not in kwargs:
             kwargs["name"] = name

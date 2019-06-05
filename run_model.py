@@ -251,22 +251,36 @@ def run_model(FLAGS):
             all_summary = tf.summary.merge(summary_list)
 
         # Variational Inference (Edward KLqp)
-        if FLAGS.profile:
-            options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-            run_metadata = tf.RunMetadata()
-            inference = KLqp_profile(options, run_metadata, model.latent_vars)
-        else:
-            inference = ed.KLqp(model.latent_vars)
-            # inference = KLqp_clipgrads(latent_vars=model.latent_vars)
+        # if FLAGS.profile:
+        #     options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+        #     run_metadata = tf.RunMetadata()
+        #     inference = KLqp_profile(options, run_metadata, model.latent_vars)
+        # else:
+        #     inference = ed.KLqp(model.latent_vars)
+        #     # inference = KLqp_clipgrads(latent_vars=model.latent_vars)
+
+        inference_g = ed.KLqp(model.latent_vars)
+        inference_z = ed.KLqp(model.latent_vars)
 
         if FLAGS.opt == "Adam":
             optimizer = tf.train.AdamOptimizer(FLAGS.lr)
 
-        inference.initialize(n_samples=FLAGS.n_samp,
-                             var_list=model.var_list,
-                             optimizer=optimizer,
-                             logdir=FLAGS.model_dir + "/log",
-                             log_vars=model.log_vars)
+        # inference.initialize(n_samples=FLAGS.n_samp,
+        #                      var_list=model.var_list,
+        #                      optimizer=optimizer,
+        #                      logdir=FLAGS.model_dir + "/log",
+        #                      log_vars=model.log_vars)
+
+        inference_g.initialize(
+            n_samples=FLAGS.n_samp, var_list=tf.get_collection('goal_model'),
+            optimizer=optimizer, logdir=FLAGS.model_dir + "/log",
+            log_vars=model.log_vars)
+
+        inference_z.initialize(
+            n_samples=FLAGS.n_samp,
+            var_list=tf.get_collection('latent_state_model'),
+            optimizer=optimizer, logdir=FLAGS.model_dir + "/log",
+            log_vars=model.log_vars)
 
     print("Computational graph constructed.")
 
@@ -288,6 +302,11 @@ def run_model(FLAGS):
     for i in range(FLAGS.n_epochs):
         if i == 0 or (i + 1) % 5 == 0:
             print("Entering epoch %s ..." % (i + 1))
+
+        if (i + 1) % 10 <= 5:
+            inference = inference_g
+        else:
+            inference = inference_z
 
         iterator.initializer.run({data_dir: FLAGS.train_data_dir})
         while True:
@@ -319,17 +338,19 @@ def run_model(FLAGS):
                 (i + 1), val_loss[-1]))
             np.save(FLAGS.model_dir + "/val_loss", val_loss)
 
-    if FLAGS.profile:
-        fetched_timeline = timeline.Timeline(run_metadata.step_stats)
-        chrome_trace = fetched_timeline.generate_chrome_trace_format()
-        # use absolute path for FLAGS.model_dir
-        with open(FLAGS.model_dir + "/timeline_01_step_%d.json" %
-                  (i + 1), "w") as f:
-            f.write(chrome_trace)
-            f.close()
+    # if FLAGS.profile:
+    #     fetched_timeline = timeline.Timeline(run_metadata.step_stats)
+    #     chrome_trace = fetched_timeline.generate_chrome_trace_format()
+    #     # use absolute path for FLAGS.model_dir
+    #     with open(FLAGS.model_dir + "/timeline_01_step_%d.json" %
+    #               (i + 1), "w") as f:
+    #         f.write(chrome_trace)
+    #         f.close()
 
     # seso_saver.save(sess, FLAGS.model_dir + "/final_model")
-    inference.finalize()
+    # inference.finalize()
+    inference_g.finalize()
+    inference_z.finalize()
     sess.close()
 
     print("Training completed.")

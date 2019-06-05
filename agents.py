@@ -26,7 +26,7 @@ class game_model(object):
             extra_conds = inputs["extra_conditions"]
             K = params["p_params"]["GMM_K"]
 
-            self.var_list = []
+            # self.var_list = []
             self.log_vars = []
 
             with tf.name_scope("variable_value_shape"):
@@ -45,7 +45,7 @@ class game_model(object):
             self.p = GBDS(
                 params["p_params"], states, ctrl_obs, extra_conds,
                 name="generative", value=tf.zeros(value_shape))
-            self.var_list += self.p.var_list
+            # self.var_list += self.p.var_list
             self.log_vars += self.p.log_vars
 
             # self.q = SmoothingPastLDSTimeSeries(
@@ -58,7 +58,7 @@ class game_model(object):
                 params["qz_params"], traj, K, model_dim, extra_conds,
                 name="recognition_latent_state")
             self.q = joint_recognition(qg, qz, name="recognition")
-            self.var_list += self.q.var_list
+            # self.var_list += self.q.var_list
             self.log_vars += self.q.log_vars
 
             self.latent_vars = {self.p: self.q}

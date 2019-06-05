@@ -218,27 +218,37 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                     input_shape=(None, state_dim + extra_dim),
                     name="GMM_mu_Dense"))
                 GMM_mu_vars = GMM_mu.variables
+                for var in GMM_mu_vars:
+                    tf.add_to_collection('goal_model', var)
 
                 unc_GMM_lambda = tf.Variable(
                     tf.random_normal([GMM_K, agent_dim]), name="unc_lambda")
+                tf.add_to_collection('goal_model', unc_GMM_lambda)
 
             A_NN = get_network("A", GMM_K + state_dim + extra_dim, GMM_K,
                                gen_hidden_dim, gen_n_layers)
             A_NN_vars = A_NN.variables
+            for var in A_NN_vars:
+                tf.add_to_collection('latent_state_model', var)
 
             unc_Kp = tf.Variable(
                 tf.multiply(softplus_inverse(1.),
                             tf.ones(agent_dim, tf.float32), "unc_Kp_init"),
                 name="unc_Kp")
-            Kp = tf.nn.softplus(unc_Kp, "Kp")
-            fix_ep = 40
-            Kp_cond = tf.cond(tf.greater(epoch, fix_ep),
-                              lambda: Kp, lambda: tf.stop_gradient(Kp))
+            tf.add_to_collection('goal_model', unc_Kp)
+
+            Kp = tf.nn.softplus(unc_Kp, "Kp_softplus")
+            fix_ep = 50
+            Kp_cond = tf.identity(tf.cond(
+                tf.greater(epoch, fix_ep), lambda: Kp,
+                lambda: tf.stop_gradient(Kp)), "Kp")
 
             if epsilon_trainable:
                 unc_eps_init = tf.Variable(
                     unc_epsilon * np.ones((1, agent_dim), np.float32),
                     name="unc_eps")
+                tf.add_to_collection('goal_model', unc_eps_init)
+
                 eps_pen = tf.to_float(tf.minimum(
                     epsilon_penalty * (10. ** ((epoch - 1) / 10)), 1e5),
                     "epsilon_penalty")
@@ -248,9 +258,8 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                     name="unc_eps")
                 eps_pen = None
 
-            temperature = tf.maximum(
-                init_temperature * (.9 ** ((epoch - 1) / 5)), .1,
-                "temperature")
+            temperature = tf.maximum(init_temperature * (.95 ** (
+                tf.maximum(epoch - fix_ep, 0) / 5)), .1, "temperature")
 
             p_params = dict(
                 name=agent_name, col=agent_col, dim=agent_dim,
@@ -272,10 +281,14 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
         qg_params = get_rec_params(
             agent_dim, extra_dim, agent_dim, rec_lag,
             rec_n_layers, rec_hidden_dim, penalty_Q, "posterior_goal")
+        for var in qg_params['trainable_variables']:
+            tf.add_to_collection('goal_model', var)
 
         qz_params = get_rec_params(
             agent_dim, extra_dim, GMM_K, rec_lag, rec_n_layers, rec_hidden_dim,
             penalty_Q, "posterior_latent_state")
+        for var in qz_params['trainable_variables']:
+            tf.add_to_collection('latent_state_model', var)
 
         params = dict(
             # name=game_name, p_params=p_params, q_params=q_params)
@@ -334,9 +347,14 @@ def get_rec_params(agent_dim, extra_dim, output_dim, lag, n_layers,
             Q0invChol=tf.Variable(
                 np.eye(output_dim), name="Q0invChol", dtype=tf.float32))
 
+        trainable_variables = (Mu_net.variables + Lambda_net.variables +
+                               LambdaX_net.variables +
+                               list(dyn_params.values()))
+
         rec_params = dict(
             dyn_params=dyn_params, NN_Mu=Mu_net, NN_Lambda=Lambda_net,
-            NN_LambdaX=LambdaX_net, lag=lag, extra_dim=extra_dim)
+            NN_LambdaX=LambdaX_net, trainable_variables=trainable_variables,
+            lag=lag, extra_dim=extra_dim)
 
         with tf.name_scope("penalty_Q"):
             if penalty_Q is not None:

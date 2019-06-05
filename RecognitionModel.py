@@ -96,11 +96,12 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
             with tf.name_scope("init_posterior"):
                 self._initialize_posterior_distribution(params)
 
-            var_list = (self.NN_Mu.variables + self.NN_Lambda.variables +
-                        self.NN_LambdaX.variables + [self.A] +
-                        [self.QinvChol] + [self.Q0invChol])
-            self.var_list = var_list
-            self.log_vars = var_list
+            # var_list = (self.NN_Mu.variables + self.NN_Lambda.variables +
+            #             self.NN_LambdaX.variables + [self.A] +
+            #             [self.QinvChol] + [self.Q0invChol])
+            # self.var_list = var_list
+            # self.log_vars = var_list
+            self.log_vars = params['trainable_variables']
 
         if "name" not in kwargs:
             kwargs["name"] = name
@@ -271,7 +272,7 @@ class joint_recognition(RandomVariable, Distribution):
         self.qz = qz
         self.agent_dim = self.qg.xDim
 
-        self.var_list = qg.var_list + qz.var_list
+        # self.var_list = qg.var_list + qz.var_list
         self.log_vars = qg.log_vars + qz.log_vars
 
         if "name" not in kwargs:
