@@ -7,7 +7,7 @@ https://github.com/earcher/vilds/blob/master/code/RecognitionModel.py
 import tensorflow as tf
 import numpy as np
 import lib.blk_tridiag_chol_tools as blk
-from edward.models import RandomVariable
+from edward.models import RandomVariable, ExpRelaxedOneHotCategorical
 from tensorflow.contrib.distributions import Distribution
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
 
@@ -54,54 +54,36 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
                 self.Tt = tf.shape(Input)[1]
 
             with tf.name_scope("pad_extra_conds"):
-                if extra_conds is not None:
-                    self.extra_conds = tf.identity(
-                        extra_conds, "extra_conditions")
-                    self.y = tf.concat([self.y_t, self.extra_conds], -1)
-                else:
-                    self.y = self.y_t
-                    self.extra_conds = None
+                self.extra_conds = tf.identity(
+                    extra_conds, "extra_conditions")
+                self.y = tf.concat([self.y_t, self.extra_conds], -1)
 
-            # self.trainable = trainable
-
-            self.NN_Mu = params["NN_Mu"]
+            self.Mu_NN = params["Mu_NN"]
             # Mu will automatically be of size [Batch_size x T x xDim]
-            self.Mu = tf.identity(self.NN_Mu(self.y), "Mu")
-            # self.Mu = tf.identity(tf.cond(
-            #     self.trainable, lambda: self.NN_Mu(self.y),
-            #     lambda: tf.stop_gradient(self.NN_Mu(self.y))), "Mu")
+            self.Mu = tf.identity(self.Mu_NN(self.y), "Mu")
 
-            self.NN_Lambda = params["NN_Lambda"]
-            self.NN_Lambda_output = tf.identity(
-                self.NN_Lambda(self.y), "flattened_LambdaChol")
-            # self.NN_Lambda_output = tf.identity(tf.cond(
-            #     self.trainable, lambda: self.NN_Lambda(self.y),
-            #     lambda: tf.stop_gradient(self.NN_Lambda(self.y))),
-            #     "flattened_LambdaChol")
+            self.Lambda_NN = params["Lambda_NN"]
+            self.Lambda_NN_output = tf.identity(
+                self.Lambda_NN(self.y), "flattened_LambdaChol")
             self.LambdaChol = tf.reshape(
-                self.NN_Lambda_output,
+                self.Lambda_NN_output,
                 [self.B, self.Tt, self.xDim, self.xDim], "LambdaChol")
 
-            self.NN_LambdaX = params["NN_LambdaX"]
-            self.NN_LambdaX_output = tf.identity(
-                self.NN_LambdaX(self.y[:, 1:]), "flattened_LambdaXChol")
-            # self.NN_LambdaX_output = tf.identity(tf.cond(
-            #     self.trainable, lambda: self.NN_LambdaX(self.y[:, 1:]),
-            #     lambda: tf.stop_gradient(self.NN_LambdaX(self.y[:, 1:]))),
-            #     "flattened_LambdaXChol")
+            self.LambdaX_NN = params["LambdaX_NN"]
+            self.LambdaX_NN_output = tf.identity(
+                self.LambdaX_NN(self.y[:, 1:]), "flattened_LambdaXChol")
             self.LambdaXChol = tf.reshape(
-                self.NN_LambdaX_output,
+                self.LambdaX_NN_output,
                 [self.B, self.Tt - 1, self.xDim, self.xDim], "LambdaXChol")
 
             with tf.name_scope("init_posterior"):
                 self._initialize_posterior_distribution(params)
 
-            # var_list = (self.NN_Mu.variables + self.NN_Lambda.variables +
-            #             self.NN_LambdaX.variables + [self.A] +
-            #             [self.QinvChol] + [self.Q0invChol])
-            # self.var_list = var_list
-            # self.log_vars = var_list
-            self.log_vars = params['trainable_variables']
+            var_list = (self.Mu_NN.variables + self.Lambda_NN.variables +
+                        self.LambdaX_NN.variables + [self.A] +
+                        [self.QinvChol] + [self.Q0invChol])
+            self.var_list = var_list
+            self.log_vars = var_list
 
         if "name" not in kwargs:
             kwargs["name"] = name
@@ -224,6 +206,19 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
         return entropy / tf.cast(self.Tt, tf.float32)
 
 
+def pad_lag(Input, lag, dim):
+    with tf.name_scope("pad_lag"):
+        Output = tf.identity(Input)
+        for i in range(lag):
+            lagged = tf.concat(
+                [tf.reshape(Output[:, 0, :dim], [-1, 1, dim], "t0"),
+                 Output[:, :-1, -dim:]],
+                1, "lagged")
+            Output = tf.concat([Output, lagged], -1)
+
+    return Output[:, 1:]
+
+
 class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
     """SmoothingLDSTimeSeries that uses past observations (lag) in addition to
     current to evaluate the latent.
@@ -233,19 +228,7 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
         """Initialize SmoothingPastLDSTimeSeries random variable (batch)
         """
         name = kwargs.get("name", "SmoothingPastLDSTimeSeries")
-        with tf.name_scope("pad_lag"):
-            # manipulate input to include past observations (up to lag)
-            if "lag" in params:
-                self.lag = params["lag"]
-            else:
-                self.lag = 1
-
-            Input_ = tf.identity(Input)
-            for i in range(self.lag):
-                lagged = tf.concat(
-                    [tf.reshape(Input_[:, 0, :yDim], [-1, 1, yDim], "t0"),
-                     Input_[:, :-1, -yDim:]], 1, "lagged")
-                Input_ = tf.concat([Input_, lagged], -1)
+        Input_ = pad_lag(Input, params["lag"], yDim)
 
         if "name" not in kwargs:
             kwargs["name"] = name
@@ -259,10 +242,48 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
             kwargs["allow_nan_stats"] = False
 
         super(SmoothingPastLDSTimeSeries, self).__init__(
-            # params, Input_, xDim, yDim, extra_conds, *args, **kwargs)
-            params, Input_[:, 1:], xDim, yDim, extra_conds[:, 1:],
-            *args, **kwargs)
+            params, Input_, xDim, yDim, extra_conds[:, 1:], *args, **kwargs)
         self._args = (params, Input, xDim, yDim, extra_conds)
+
+
+class latent_states_recognition(RandomVariable, Distribution):
+    def __init__(self, params, traj, extra_conds, *args, **kwargs):
+        name = kwargs.get("name", "latent_states_recognition")
+        with tf.name_scope(name):
+            self.y_t = tf.identity(traj, "trajectory")
+            self.extra_conds = tf.identity(
+                extra_conds, "extra_conditions")
+            self.NN = params["qz_NN"]
+            NN_input = tf.concat(
+                [pad_lag(self.y_t, params["lag"], params["dim"]),
+                 self.extra_conds[:, 1:]], -1, "NN_input")
+            self.probs = self.NN(NN_input)
+            self.temperature = params["t_q"]
+            self.dist = ExpRelaxedOneHotCategorical(
+                self.temperature, probs=self.probs, name="qz")
+
+            self.var_list = self.NN.variables
+            self.log_vars = self.NN.variables
+
+        if "name" not in kwargs:
+            kwargs["name"] = name
+        if "dtype" not in kwargs:
+            kwargs["dtype"] = tf.float32
+        if "reparameterization_type" not in kwargs:
+            kwargs["reparameterization_type"] = FULLY_REPARAMETERIZED
+        if "validate_args" not in kwargs:
+            kwargs["validate_args"] = True
+        if "allow_nan_stats" not in kwargs:
+            kwargs["allow_nan_stats"] = False
+
+        super(latent_states_recognition, self).__init__(*args, **kwargs)
+        self._args = (params, traj, extra_conds)
+
+    def _log_prob(self, value):
+        return self.dist.log_prob(value)
+
+    def _sample_n(self, n, seed=None):
+        return self.dist.sample(n)
 
 
 class joint_recognition(RandomVariable, Distribution):
@@ -272,7 +293,7 @@ class joint_recognition(RandomVariable, Distribution):
         self.qz = qz
         self.agent_dim = self.qg.xDim
 
-        # self.var_list = qg.var_list + qz.var_list
+        self.var_list = qg.var_list + qz.var_list
         self.log_vars = qg.log_vars + qz.log_vars
 
         if "name" not in kwargs:
@@ -290,11 +311,8 @@ class joint_recognition(RandomVariable, Distribution):
         self._args = (qg, qz)
 
     def _log_prob(self, value):
-
-        return tf.add(self.qg.log_prob(value[:, :, :self.agent_dim]),
-                      self.qz.log_prob(value[:, :, self.agent_dim:]))
+        return tf.add(self.qg.log_prob(value[..., :self.agent_dim]),
+                      self.qz.log_prob(value[..., self.agent_dim:]))
 
     def _sample_n(self, n, seed=None):
-
-        return tf.concat([self.qg.sample(n), self.qz.sample(n)], -1,
-                         name="sample")
+        return tf.concat([self.qg.sample(n), self.qz.sample(n)], -1, "sample")

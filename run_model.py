@@ -19,7 +19,7 @@ from utils import (load_data, get_vel, get_accel, get_model_params,
 
 
 # default flag values
-MODEL_DIR = "new_model"
+MODEL_DIR = "model_1"
 TRAINING_DATA_DIR = ""
 VALIDATION_DATA_DIR = ""
 SYNTHETIC_DATA = False
@@ -33,16 +33,17 @@ AGENT_NAME = "subject"
 AGENT_COLUMN = "0,1"
 OBSERVE_DIM = 2
 EXTRA_CONDITIONS = True
-EXTRA_DIM = 12
+EXTRA_DIM = 10
 ADD_ACCEL = False
 MAX_VEL = ".021,.021"
 
-GMM_K = 8
+GMM_K = 20
 GEN_N_LAYERS = 3
-GEN_HIDDEN_DIM = 64
+GEN_HIDDEN_DIM = 128
 REC_LAG = 10
 REC_N_LAYERS = 3
-REC_HIDDEN_DIM = 64
+REC_HIDDEN_DIM = 128
+LSTM_UNITS = 64
 
 GOAL_BOUNDARY_L = -1.
 GOAL_BOUNDARY_U = 1.
@@ -51,7 +52,7 @@ GOAL_PRECISION_PENALTY = 1
 
 EPSILON = -11.
 EPSILON_TRAINABLE = False
-EPSILON_PENALTY = 10
+EPSILON_PENALTY = 1e5
 
 SEED = 1234
 OPTIMIZER = "Adam"
@@ -110,6 +111,8 @@ flags.DEFINE_integer("rec_n_layers", REC_N_LAYERS, "Number of layers in \
 flags.DEFINE_integer("rec_hidden_dim", REC_HIDDEN_DIM,
                      "Number of hidden units in each dense layer of \
                      neural networks (recognition model)")
+flags.DEFINE_integer("lstm_units", LSTM_UNITS,
+                     "Number of units in LSTM layer of recognition model")
 
 flags.DEFINE_float("g_lb", GOAL_BOUNDARY_L, "Goal state lower boundary")
 flags.DEFINE_float("g_ub", GOAL_BOUNDARY_U, "Goal state upper boundary")
@@ -185,12 +188,14 @@ def run_model(FLAGS):
     print("--------------Recognition Parameters--------------")
     print("Number of layers in neural networks: %i" % FLAGS.rec_n_layers)
     print("Dimensions of hidden layers: %i" % FLAGS.rec_hidden_dim)
+    print("Number of units in LSTM layer: %i" % FLAGS.lstm_units)
     print("Lag of input: %i" % FLAGS.rec_lag)
 
     with tf.device("/cpu:0"):
         init_temperature = 1.
         epoch = tf.placeholder(tf.int64, name="epoch")
         data_dir = tf.placeholder(tf.string, name="dataset_directory")
+
         with tf.name_scope("load_data"):
             iterator = load_data(data_dir, FLAGS)
             data = iterator.get_next("data")
@@ -219,15 +224,15 @@ def run_model(FLAGS):
 
         params = get_model_params(
             FLAGS.game_name, FLAGS.agent_name, agent_col, agent_dim,
-            state_dim, FLAGS.extra_dim,
+            state_dim, FLAGS.extra_dim, FLAGS.GMM_K,
             FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
-            FLAGS.GMM_K, g_bounds, FLAGS.g_bounds_pen, FLAGS.g_prec_pen,
-            FLAGS.rec_lag, FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
-            penalty_Q, FLAGS.eps_init, FLAGS.eps_trainable, FLAGS.eps_pen,
+            g_bounds, FLAGS.g_bounds_pen, FLAGS.g_prec_pen,
+            FLAGS.rec_lag, FLAGS.lstm_units,
+            FLAGS.rec_n_layers, FLAGS.rec_hidden_dim, penalty_Q,
+            FLAGS.eps_init, FLAGS.eps_trainable, FLAGS.eps_pen,
             init_temperature, epoch)
 
-        model = game_model(params, inputs, max_vel, agent_dim, state_dim,
-                           FLAGS.extra_dim, FLAGS.n_post_samp)
+        model = game_model(params, inputs, max_vel, FLAGS.n_post_samp)
 
         with tf.name_scope("parameters_summary"):
             summary_list = []
@@ -251,36 +256,22 @@ def run_model(FLAGS):
             all_summary = tf.summary.merge(summary_list)
 
         # Variational Inference (Edward KLqp)
-        # if FLAGS.profile:
-        #     options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        #     run_metadata = tf.RunMetadata()
-        #     inference = KLqp_profile(options, run_metadata, model.latent_vars)
-        # else:
-        #     inference = ed.KLqp(model.latent_vars)
-        #     # inference = KLqp_clipgrads(latent_vars=model.latent_vars)
-
-        inference_g = ed.KLqp(model.latent_vars)
-        inference_z = ed.KLqp(model.latent_vars)
+        if FLAGS.profile:
+            options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+            run_metadata = tf.RunMetadata()
+            inference = KLqp_profile(options, run_metadata, model.latent_vars)
+        else:
+            inference = ed.KLqp(model.latent_vars)
+            # inference = KLqp_clipgrads(latent_vars=model.latent_vars)
 
         if FLAGS.opt == "Adam":
             optimizer = tf.train.AdamOptimizer(FLAGS.lr)
 
-        # inference.initialize(n_samples=FLAGS.n_samp,
-        #                      var_list=model.var_list,
-        #                      optimizer=optimizer,
-        #                      logdir=FLAGS.model_dir + "/log",
-        #                      log_vars=model.log_vars)
-
-        inference_g.initialize(
-            n_samples=FLAGS.n_samp, var_list=tf.get_collection('goal_model'),
-            optimizer=optimizer, logdir=FLAGS.model_dir + "/log",
-            log_vars=model.log_vars)
-
-        inference_z.initialize(
-            n_samples=FLAGS.n_samp,
-            var_list=tf.get_collection('latent_state_model'),
-            optimizer=optimizer, logdir=FLAGS.model_dir + "/log",
-            log_vars=model.log_vars)
+        inference.initialize(n_samples=FLAGS.n_samp,
+                             var_list=model.var_list,
+                             optimizer=optimizer,
+                             logdir=FLAGS.model_dir + "/log",
+                             log_vars=model.log_vars)
 
     print("Computational graph constructed.")
 
@@ -302,11 +293,6 @@ def run_model(FLAGS):
     for i in range(FLAGS.n_epochs):
         if i == 0 or (i + 1) % 5 == 0:
             print("Entering epoch %s ..." % (i + 1))
-
-        if (i + 1) % 10 <= 5:
-            inference = inference_g
-        else:
-            inference = inference_z
 
         iterator.initializer.run({data_dir: FLAGS.train_data_dir})
         while True:
@@ -348,9 +334,7 @@ def run_model(FLAGS):
     #         f.close()
 
     # seso_saver.save(sess, FLAGS.model_dir + "/final_model")
-    # inference.finalize()
-    inference_g.finalize()
-    inference_z.finalize()
+    inference.finalize()
     sess.close()
 
     print("Training completed.")
