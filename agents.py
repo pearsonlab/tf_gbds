@@ -1,9 +1,7 @@
 import tensorflow as tf
-from edward.models import RelaxedOneHotCategorical
+# from edward.models import RelaxedOneHotCategorical
 from GenerativeModel import GBDS
-from RecognitionModel import (SmoothingPastLDSTimeSeries,
-                              latent_states_recognition,
-                              joint_recognition)
+from RecognitionModel import joint_recognition
 # from utils import get_vel
 # from tf_generate_trial import (recover_orig_val, recover_normalized,
 #                                generate_weight, generate_rotation_mat,
@@ -53,42 +51,17 @@ class game_model(object):
             self.var_list += self.p.var_list
             self.log_vars += self.p.log_vars
 
-            qg = SmoothingPastLDSTimeSeries(
-                params["q_params"], traj, model_dim, model_dim, extra_conds,
-                name="recognition_goals")
-            qz = latent_states_recognition(
-                params["q_params"], traj, extra_conds,
-                name="recognition_latent_states")
-            self.q = joint_recognition(qg, qz, name="recognition")
+            self.q = joint_recognition(
+                params["q_params"], traj, extra_conds, name="recognition")
             self.var_list += self.q.var_list
             self.log_vars += self.q.log_vars
 
             self.latent_vars = {self.p: self.q}
 
-            with tf.name_scope("G"):
-                # game state includes both position and velocity
-                s = tf.placeholder(
-                    tf.float32, [None, None, state_dim], "state")
-                npcs = tf.placeholder(
-                    tf.float32, [None, None, extra_dim], "extra_conditions")
-
-                G_params = self.p.GMM_NN([s, npcs])
-                G_mu = tf.identity(G_params[0], "mu")
-                G_lambda = tf.identity(G_params[1], "lambda")
-                G_w_probs = tf.identity(G_params[2], "w_probs")
-                G_w = tf.identity(RelaxedOneHotCategorical(
-                    params["p_params"]["t_p"], probs=G_w_probs).sample(), "w")
-
-            with tf.name_scope("posterior"):
-                with tf.name_scope("expectation"):
-                    qg_mu = tf.identity(
-                        tf.squeeze(self.q.qg.postX, -1), "goals")
-                    qz_mu = tf.identity(self.q.qz.probs, "latent_states")
-                with tf.name_scope("samples"):
-                    qg_samp = tf.identity(
-                        self.q.qg.sample(n_samples), "goals")
-                    qz_samp = tf.identity(
-                        self.q.qz.sample(n_samples), "latent_states")
+            qg_samples = tf.identity(
+                self.q.qg.sample(n_samples), "qg_samples")
+            qz_samples = tf.identity(
+                self.q.qz.sample(n_samples), "qz_samples")
 
             # with tf.name_scope("update_one_step"):
             #     prev_y = tf.placeholder(

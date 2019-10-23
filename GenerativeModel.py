@@ -29,18 +29,26 @@ class GBDS(RandomVariable, Distribution):
             # number of GMM components
             self.K = params["GMM_K"]
             # neural network to generate state-dependent goals and transition
-            self.GMM_NN = params["GMM_NN"]
-            self.G_mu, self.G_lambda, self.G_w_probs = self.GMM_NN(
+            self.NN = params["GMM_NN"]
+            GMM_NN_outputs = self.NN(
                 [self.s[:, :-1], self.extra_conds[:, :-1]])
+            self.G_mu = tf.identity(GMM_NN_outputs[0], "mu")
+            self.G_lambda = tf.identity(GMM_NN_outputs[1], "lambda")
+            self.z_probs = tf.identity(GMM_NN_outputs[2], "z_probs")
+
             self.G = MultivariateNormalDiag(
-                self.G_mu, 1. / self.G_lambda, name="GMM")
+                self.G_mu, 1. / tf.sqrt(self.G_lambda), name="GMM")
+            self.G_sample = tf.identity(self.G.sample(), "GMM_sample")
             self.A = ExpRelaxedOneHotCategorical(
-                self.temperature, probs=self.G_w_probs, name="transition")
+                self.temperature, probs=self.z_probs[:, 1:],
+                name="transition")
+            self.A_sample = tf.identity(self.A.sample(), "z_sample")
 
-            self.Kp = params["Kp"]
+            self.unc_Kp = params["unc_Kp"]
+            self.Kp = tf.identity(params["Kp"], "Kp")
 
-            self.var_list = params["GMM_NN"].variables
-            self.log_vars = params["GMM_NN"].variables
+            self.var_list = self.NN.variables + [self.unc_Kp]
+            self.log_vars = self.NN.variables
 
             with tf.name_scope("goal_state_penalty"):
                 # penalty on goal state escaping boundaries
@@ -48,7 +56,7 @@ class GBDS(RandomVariable, Distribution):
                     self.g_pen = tf.constant(
                         params["g_bounds_pen"], tf.float32,
                         name="goal_boundary_penalty")
-                    with tf.name_scope("goal_state_boundary"):
+                    with tf.name_scope("boundary"):
                         # boundaries for penalty
                         if params["g_bounds"] is not None:
                             self.bounds = params["g_bounds"]
@@ -58,18 +66,18 @@ class GBDS(RandomVariable, Distribution):
                     self.g_pen = None
 
                 # penalty on the precision of GMM components
-                if params["g_prec_pen"] is not None:
-                    self.g_prec_pen = tf.constant(
-                        params["g_prec_pen"], tf.float32,
-                        name="goal_precision_penalty")
+                # if params["g_prec_pen"] is not None:
+                #     self.g_prec_pen = tf.constant(
+                #         params["g_prec_pen"], tf.float32,
+                #         name="goal_precision_penalty")
 
             with tf.name_scope("kinetic_noise"):
                 # noise of movement
                 self.unc_eps = params["unc_eps"]
                 self.eps = tf.nn.softplus(self.unc_eps, "epsilon")
                 self.eps_pen = params["eps_pen"]
-                # if params["eps_trainable"]:
-                #     self.var_list += [self.unc_eps]
+                if params["eps_trainable"]:
+                    self.var_list += [self.unc_eps]
 
         if "name" not in kwargs:
             kwargs["name"] = name
@@ -105,12 +113,19 @@ class GBDS(RandomVariable, Distribution):
                     logdensity_g -= tf.multiply(
                         self.g_pen, tf.reduce_mean(tf.reduce_sum(
                         tf.nn.relu(self.G_mu - self.bounds[1]) ** 2, -1)))
-
-                if self.g_prec_pen is not None:
-                    # penalty on GMM precision
                     logdensity_g -= tf.multiply(
-                        self.g_prec_pen, tf.reduce_mean(tf.reduce_sum(
-                        1. / self.G_lambda, -1)))
+                        self.g_pen, tf.reduce_mean(tf.reduce_sum(
+                        tf.nn.relu(self.bounds[0] - qg) ** 2, -1)))
+                    logdensity_g -= tf.multiply(
+                        self.g_pen, tf.reduce_mean(tf.reduce_sum(
+                        tf.nn.relu(qg - self.bounds[1]) ** 2, -1)))
+
+                # if self.g_prec_pen is not None:
+                #     # penalty on GMM precision
+                #     logdensity_g -= tf.multiply(
+                #         self.g_prec_pen,
+                #         tf.reduce_mean(tf.reduce_max(tf.reduce_sum(
+                #             1. / self.G_lambda, -1), -1)))
 
         with tf.name_scope("latent_states"):
             logdensity_z = tf.reduce_mean(tf.reduce_logsumexp(
@@ -119,14 +134,11 @@ class GBDS(RandomVariable, Distribution):
                 -1))
 
         with tf.name_scope("control_signal"):
-            logdensity_u = 0.0
-
-            du_obs = tf.subtract(
-                self.ctrl_obs[:, 1:], self.ctrl_obs[:, :-1], "observed")
-            du_pred = tf.multiply(
+            u_pred = tf.multiply(
                 qg - self.y[:, :-1], self.Kp, "predicted")
-            u_res = tf.subtract(du_obs, du_pred[:, :-1], "residual")
-            logdensity_u -= tf.reduce_mean(tf.reduce_sum(
+            u_res = tf.subtract(
+                u_pred, self.ctrl_obs[:, 1:], "residual")
+            logdensity_u = -tf.reduce_mean(tf.reduce_sum(
                 (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
                  u_res ** 2 / (2 * self.eps ** 2)), -1))
 

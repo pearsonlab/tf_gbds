@@ -7,7 +7,8 @@ https://github.com/earcher/vilds/blob/master/code/RecognitionModel.py
 import tensorflow as tf
 import numpy as np
 import lib.blk_tridiag_chol_tools as blk
-from edward.models import RandomVariable, ExpRelaxedOneHotCategorical
+from edward.models import (RandomVariable, MultivariateNormalDiag,
+                           ExpRelaxedOneHotCategorical)
 from tensorflow.contrib.distributions import Distribution
 from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
 
@@ -246,21 +247,28 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
         self._args = (params, Input, xDim, yDim, extra_conds)
 
 
-class latent_states_recognition(RandomVariable, Distribution):
+class joint_recognition(RandomVariable, Distribution):
     def __init__(self, params, traj, extra_conds, *args, **kwargs):
-        name = kwargs.get("name", "latent_states_recognition")
+        name = kwargs.get("name", "joint_recognition")
         with tf.name_scope(name):
+            self.agent_dim = params["dim"]
             self.y_t = tf.identity(traj, "trajectory")
             self.extra_conds = tf.identity(
                 extra_conds, "extra_conditions")
-            self.NN = params["qz_NN"]
-            NN_input = tf.concat(
-                [pad_lag(self.y_t, params["lag"], params["dim"]),
-                 self.extra_conds[:, 1:]], -1, "NN_input")
-            self.probs = self.NN(NN_input)
             self.temperature = params["t_q"]
-            self.dist = ExpRelaxedOneHotCategorical(
-                self.temperature, probs=self.probs, name="qz")
+
+            self.NN = params["q_NN"]
+            q_NN_outputs = self.NN(
+                [pad_lag(self.y_t, params["lag"], self.agent_dim),
+                 self.extra_conds[:, 1:]])
+            self.qg_mu = tf.identity(q_NN_outputs[0], "mu")
+            self.qg_lambda = tf.identity(q_NN_outputs[1], "lambda")
+            self.qz_probs = tf.identity(q_NN_outputs[2], "z_probs")
+
+            self.qg = MultivariateNormalDiag(
+                self.qg_mu, 1. / tf.sqrt(self.qg_lambda), name="qg")
+            self.qz = ExpRelaxedOneHotCategorical(
+                self.temperature, probs=self.qz_probs, name="qz")
 
             self.var_list = self.NN.variables
             self.log_vars = self.NN.variables
@@ -276,43 +284,14 @@ class latent_states_recognition(RandomVariable, Distribution):
         if "allow_nan_stats" not in kwargs:
             kwargs["allow_nan_stats"] = False
 
-        super(latent_states_recognition, self).__init__(*args, **kwargs)
+        super(joint_recognition, self).__init__(*args, **kwargs)
         self._args = (params, traj, extra_conds)
 
     def _log_prob(self, value):
-        return self.dist.log_prob(value)
+        return tf.reduce_mean(tf.add(
+            self.qg.log_prob(value[..., :self.agent_dim]),
+            self.qz.log_prob(value[..., self.agent_dim:])))
 
     def _sample_n(self, n, seed=None):
-        return self.dist.sample(n)
-
-
-class joint_recognition(RandomVariable, Distribution):
-    def __init__(self, qg, qz, *args, **kwargs):
-        name = kwargs.get("name", "joint_recognition")
-        self.qg = qg
-        self.qz = qz
-        self.agent_dim = self.qg.xDim
-
-        self.var_list = qg.var_list + qz.var_list
-        self.log_vars = qg.log_vars + qz.log_vars
-
-        if "name" not in kwargs:
-            kwargs["name"] = name
-        if "dtype" not in kwargs:
-            kwargs["dtype"] = tf.float32
-        if "reparameterization_type" not in kwargs:
-            kwargs["reparameterization_type"] = FULLY_REPARAMETERIZED
-        if "validate_args" not in kwargs:
-            kwargs["validate_args"] = True
-        if "allow_nan_stats" not in kwargs:
-            kwargs["allow_nan_stats"] = False
-
-        super(joint_recognition, self).__init__(*args, **kwargs)
-        self._args = (qg, qz)
-
-    def _log_prob(self, value):
-        return tf.add(self.qg.log_prob(value[..., :self.agent_dim]),
-                      self.qz.log_prob(value[..., self.agent_dim:]))
-
-    def _sample_n(self, n, seed=None):
-        return tf.concat([self.qg.sample(n), self.qz.sample(n)], -1, "sample")
+        return tf.concat(
+            [self.qg.sample(n), self.qz.sample(n)], -1, "sample")

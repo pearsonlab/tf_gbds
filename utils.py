@@ -12,7 +12,7 @@ from edward.util import get_session, get_variables, Progbar, transform
 import six
 import os
 from datetime import datetime
-from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
+# from tf_gbds.layers import PKBiasLayer, PKRowBiasLayer
 
 layers = tf.keras.layers
 models = tf.keras.models
@@ -94,7 +94,8 @@ def load_data(data_dir, hps):
 
         trajectory = tf.reshape(
             tf.decode_raw(parsed_features["trajectory"], tf.float32),
-            [-1, hps.obs_dim])
+            # [-1, hps.obs_dim])
+            [-1, hps.obs_dim * 2])
         data = (trajectory,)
 
         if "extra_conds" in parsed_features:
@@ -235,23 +236,33 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
             states = layers.Input((None, state_dim), name="states")
             extra_conds = layers.Input(
                 (None, extra_dim), name="extra_conditions")
+            GMM_NN_inputs = layers.Concatenate(
+                axis=-1, name="GMM_NN_inputs")(
+                [states, extra_conds])
+
+            GMM_NN_outputs_1 = layers.Dense(
+                GMM_K * agent_dim * 2, "linear",
+                kernel_initializer=tf.glorot_normal_initializer(),
+                name="GMM_NN_linear")(GMM_NN_inputs)
+            GMM_mu = layers.Reshape(
+                (-1, GMM_K, agent_dim), name="mu")(
+                layers.Lambda(lambda x: x[..., :(GMM_K * agent_dim)])(
+                    GMM_NN_outputs_1))
+            lambda_floor = 4e4
+            GMM_lambda = layers.Reshape(
+                (-1, GMM_K, agent_dim), name="lambda")(
+                layers.Lambda(lambda x: tf.nn.softplus(
+                    x[..., (GMM_K * agent_dim):]) + lambda_floor)(
+                    GMM_NN_outputs_1))
 
             GMM_NN_FCLayers = get_network(
                 "GMM_NN_FCLayers", state_dim + extra_dim,
-                GMM_K * (agent_dim * 2 + GMM_K), gen_hidden_dim, gen_n_layers)
-            GMM_NN_outputs = GMM_NN_FCLayers(layers.Concatenate(
-                axis=-1, name="GMM_NN_inputs")([states, extra_conds]))
-            GMM_mu = layers.Lambda(lambda x: tf.reshape(
-                x[..., :(GMM_K * agent_dim)],
-                [-1, GMM_K, agent_dim]), name="mu")(GMM_NN_outputs)
-            GMM_lambda = layers.Lambda(lambda x: tf.reshape(
-                tf.nn.softplus(
-                    x[..., (GMM_K * agent_dim):(GMM_K * agent_dim * 2)]),
-                [-1, GMM_K, agent_dim]), name="lambda")(GMM_NN_outputs)
-            GMM_w_probs = layers.Lambda(
-                lambda x: tf.nn.softmax(tf.reshape(
-                    x[..., -(GMM_K * GMM_K):], [-1, GMM_K, GMM_K])),
-                name="w_probs")(GMM_NN_outputs)
+                GMM_K * GMM_K, gen_hidden_dim, gen_n_layers)
+            GMM_NN_outputs_2 = GMM_NN_FCLayers(GMM_NN_inputs)
+            GMM_w_probs = layers.Softmax(name="w_probs")(
+                layers.Reshape(
+                    (-1, GMM_K, GMM_K), name="reshape_w_logits")(
+                    GMM_NN_outputs_2))
             GMM_NN = models.Model(
                 inputs=[states, extra_conds],
                 outputs=[GMM_mu, GMM_lambda, GMM_w_probs], name="GMM_NN")
@@ -260,7 +271,6 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                 unc_eps_init = tf.Variable(
                     unc_epsilon * np.ones((1, agent_dim), np.float32),
                     name="unc_eps")
-
                 eps_pen = tf.to_float(tf.minimum(
                     epsilon_penalty * (10. ** ((epoch - 1) / 10)), 1e5),
                     "epsilon_penalty")
@@ -274,7 +284,7 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
             #     tf.maximum(epoch - fix_ep, 0) / 5)), .1, "temperature")
             temperature_gen = init_temperature
 
-            fix_ep = 40
+            fix_ep = 10
             unc_Kp = tf.Variable(tf.multiply(
                 softplus_inverse(1.), tf.ones(agent_dim, tf.float32),
                 "unc_Kp_init"), name="unc_Kp")
@@ -289,7 +299,8 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                 g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
                 g_prec_pen=goal_precision_penalty,
                 unc_eps=unc_eps_init, eps_trainable=epsilon_trainable,
-                eps_pen=eps_pen, t_p=temperature_gen, Kp=Kp)
+                eps_pen=eps_pen, t_p=temperature_gen,
+                unc_Kp=unc_Kp, Kp=Kp)
 
         with tf.variable_scope("posterior"):
             Mu_NN = get_network(
@@ -310,26 +321,40 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                 Q0invChol=tf.Variable(
                     np.eye(agent_dim), name="Q0invChol", dtype=tf.float32))
 
-            qz_NN_inputs = layers.Input(
-                (None, agent_dim * (rec_lag + 1) + extra_dim),
-                name="qz_NN_inputs")
-            qz_NN_LSTM = layers.Bidirectional(
+            padded_traj = layers.Input(
+                (None, agent_dim * (rec_lag + 1)),
+                name="trajectory_with_lag")
+            extra_conds_ = layers.Input(
+                (None, extra_dim), name="extra_conditions")
+            q_NN_inputs = layers.Concatenate(
+                axis=-1, name="q_NN_inputs")(
+                [padded_traj, extra_conds_])
+            q_NN_LSTM = layers.Bidirectional(
                 layers.LSTM(lstm_units, return_sequences=True),
-                name="qz_LSTM")(qz_NN_inputs)
-            qz_NN_FCLayers = get_network(
-                "qz_NN_FCLayers", lstm_units * 2, GMM_K, rec_hidden_dim,
-                rec_n_layers)
-            qz_probs = layers.Softmax(name="qz_probs")(
-                qz_NN_FCLayers(qz_NN_LSTM))
-            qz_NN = models.Model(
-                inputs=qz_NN_inputs, outputs=qz_probs, name="qz_NN")
+                name="q_LSTM")(q_NN_inputs)
+
+            q_NN_FCLayers = get_network(
+                "q_NN_FCLayers", lstm_units * 2, agent_dim * 2 + GMM_K,
+                rec_hidden_dim, rec_n_layers)
+            q_NN_outputs = q_NN_FCLayers(q_NN_LSTM)
+            qg_mu = layers.Lambda(
+                lambda x: x[..., :agent_dim], name="qg_mu")(q_NN_outputs)
+            qg_lambda = layers.Lambda(
+                lambda x: tf.nn.softplus(x[..., agent_dim:(agent_dim * 2)]),
+                name="qg_lambda")(q_NN_outputs)
+            qz_probs = layers.Softmax(name="qz_probs")(layers.Lambda(
+                lambda x: x[..., -GMM_K:], name="qz_logits")(q_NN_outputs))
+            q_NN = models.Model(
+                inputs=[padded_traj, extra_conds_],
+                outputs=[qg_mu, qg_lambda, qz_probs],
+                name="q_NN")
 
             temperature_rec = init_temperature
 
             q_params = dict(
                 dim=agent_dim, extra_dim=extra_dim, lag=rec_lag,
                 Mu_NN=Mu_NN, Lambda_NN=Lambda_NN, LambdaX_NN=LambdaX_NN,
-                dyn_params=dyn_params, qz_NN=qz_NN, t_q=temperature_rec)
+                dyn_params=dyn_params, q_NN=q_NN, t_q=temperature_rec)
 
             with tf.name_scope("penalty_Q"):
                 if penalty_Q is not None:

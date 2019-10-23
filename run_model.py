@@ -37,22 +37,22 @@ EXTRA_DIM = 10
 ADD_ACCEL = False
 MAX_VEL = ".021,.021"
 
-GMM_K = 20
+GMM_K = 8
 GEN_N_LAYERS = 3
-GEN_HIDDEN_DIM = 128
+GEN_HIDDEN_DIM = 64
 REC_LAG = 10
 REC_N_LAYERS = 3
-REC_HIDDEN_DIM = 128
+REC_HIDDEN_DIM = 64
 LSTM_UNITS = 64
 
-GOAL_BOUNDARY_L = -1.
-GOAL_BOUNDARY_U = 1.
-GOAL_BOUNDARY_PENALTY = 1e3
-GOAL_PRECISION_PENALTY = 1
+GOAL_BOUNDARY_L = -1.1
+GOAL_BOUNDARY_U = 1.1
+GOAL_BOUNDARY_PENALTY = 1e5
+GOAL_PRECISION_PENALTY = 1.
 
-EPSILON = -11.
+EPSILON = -7.
 EPSILON_TRAINABLE = False
-EPSILON_PENALTY = 1e5
+EPSILON_PENALTY = 1e3
 
 SEED = 1234
 OPTIMIZER = "Adam"
@@ -201,22 +201,28 @@ def run_model(FLAGS):
             data = iterator.get_next("data")
 
             if FLAGS.extra_conds:
-                (trajectory, extra_conds) = data
+                (subject, npcs) = data
             else:
-                (trajectory,) = data
+                (subject,) = data
 
-            trajectory_in = tf.identity(trajectory, "trajectory")
-            states_in = tf.identity(get_state(trajectory_in, max_vel),
-                                    "states")
+            # trajectory_in = tf.identity(subject, "trajectory")
+            # states_in = tf.identity(get_state(trajectory_in, max_vel),
+            #                         "states")
+            states_in = tf.identity(subject, "states")
+            trajectory_in = tf.identity(
+                states_in[..., :agent_dim], "trajectory")
+
             if FLAGS.extra_conds:
-                extra_conds_in = tf.identity(extra_conds, "extra_conditions")
+                extra_conds_in = tf.identity(npcs, "extra_conditions")
             else:
                 extra_conds_in = None
 
-            with tf.name_scope("observed_control"):
-                ctrl_obs_in = tf.divide(tf.subtract(
-                    trajectory_in[:, 1:], trajectory_in[:, :-1],
-                    "diff"), max_vel, "standardize")
+            # with tf.name_scope("observed_control"):
+            #     ctrl_obs_in = tf.divide(tf.subtract(
+            #         trajectory_in[:, 1:], trajectory_in[:, :-1],
+            #         "diff"), max_vel, "standardize")
+            ctrl_obs_in = tf.identity(
+                states_in[..., agent_dim:], "observed_control")
 
             inputs = {"trajectory": trajectory_in, "states": states_in,
                       "observed_control": ctrl_obs_in,
@@ -246,12 +252,13 @@ def run_model(FLAGS):
                     "epsilon/x", model.p.eps[0, 0])
                 eps_subject_y = tf.summary.scalar(
                     "epsilon/y", model.p.eps[0, 1])
-                eps_pen = tf.summary.scalar(
-                    "epsilon/penalty", model.p.eps_pen)
-                summary_list += [eps_subject_x, eps_subject_y, eps_pen]
+                # eps_pen = tf.summary.scalar(
+                #     "epsilon/penalty", model.p.eps_pen)
+                # summary_list += [eps_subject_x, eps_subject_y, eps_pen]
+                summary_list += [eps_subject_x, eps_subject_y]
 
-            summary_list += [tf.summary.scalar(
-                "temperature", model.p.temperature)]
+            # summary_list += [tf.summary.scalar(
+            #     "temperature", model.p.temperature)]
 
             all_summary = tf.summary.merge(summary_list)
 
