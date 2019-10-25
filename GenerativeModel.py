@@ -12,8 +12,8 @@ class GBDS(RandomVariable, Distribution):
                  **kwargs):
         name = kwargs.get("name", "GBDS")
         with tf.name_scope(name):
-            self.col = params["col"]
-            self.dim = params["dim"]
+            self.col = params["agent_col"]
+            self.dim = params["agent_dim"]
             self.s_dim = params["state_dim"]
             self.extra_dim = params["extra_dim"]
             with tf.name_scope("trial_length"):
@@ -26,29 +26,26 @@ class GBDS(RandomVariable, Distribution):
             self.extra_conds = tf.identity(extra_conds, "extra_conditions")
             self.temperature = params["t_p"]
 
-            # number of GMM components
-            self.K = params["GMM_K"]
+            self.K_1 = params["K_1"]
+            self.K_2 = params["K_2"]
             # neural network to generate state-dependent goals and transition
-            self.NN = params["GMM_NN"]
-            GMM_NN_outputs = self.NN(
-                [self.s[:, :-1], self.extra_conds[:, :-1]])
+            self.g_NN = params["GMM_NN"]
+            GMM_NN_outputs = self.g_NN([self.s, self.extra_conds])
             self.G_mu = tf.identity(GMM_NN_outputs[0], "mu")
             self.G_lambda = tf.identity(GMM_NN_outputs[1], "lambda")
-            self.z_probs = tf.identity(GMM_NN_outputs[2], "z_probs")
-
             self.G = MultivariateNormalDiag(
-                self.G_mu, 1. / tf.sqrt(self.G_lambda), name="GMM")
-            self.G_sample = tf.identity(self.G.sample(), "GMM_sample")
-            self.A = ExpRelaxedOneHotCategorical(
-                self.temperature, probs=self.z_probs[:, 1:],
-                name="transition")
-            self.A_sample = tf.identity(self.A.sample(), "z_sample")
+                self.G_mu[:, -1], 1. / tf.sqrt(self.G_lambda[:, :-1]),
+                name="GMM")
+            self.z_1_NN = params["z_1_NN"]
+            self.z_2_NN = params["z_2_NN"]
 
             self.unc_Kp = params["unc_Kp"]
             self.Kp = tf.identity(params["Kp"], "Kp")
 
-            self.var_list = self.NN.variables + [self.unc_Kp]
-            self.log_vars = self.NN.variables
+            self.var_list = (self.g_NN.variables + self.z_1_NN.variables +
+                             self.z_2_NN.variables + [self.unc_Kp])
+            self.log_vars = (self.g_NN.variables + self.z_1_NN.variables +
+                             self.z_2_NN.variables)
 
             with tf.name_scope("goal_state_penalty"):
                 # penalty on goal state escaping boundaries
@@ -96,12 +93,14 @@ class GBDS(RandomVariable, Distribution):
     def _log_prob(self, value):
         with tf.name_scope("posterior"):
             qg = tf.identity(value[..., :self.dim], "goals")
-            qz = tf.identity(value[..., self.dim:], "latent_states")
+            qz_1 = tf.identity(value[..., -(self.K_1 + self.K_2):-self.K_2],
+                               "latent_states_1")
+            qz_2 = tf.identity(value[..., -self.K_2:], "latent_states_2")
 
         with tf.name_scope("goals"):
             logdensity_g = tf.reduce_mean(tf.reduce_logsumexp(
-                tf.add(qz, self.G.log_prob(tf.tile(
-                    tf.expand_dims(qg, 2), [1, 1, self.K, 1]))),
+                tf.add(qz_2, self.G.log_prob(tf.tile(
+                    tf.expand_dims(qg, 2), [1, 1, self.K_2, 1]))),
                 -1))
 
             with tf.name_scope("penalty"):
@@ -128,10 +127,23 @@ class GBDS(RandomVariable, Distribution):
                 #             1. / self.G_lambda, -1), -1)))
 
         with tf.name_scope("latent_states"):
-            logdensity_z = tf.reduce_mean(tf.reduce_logsumexp(
-                tf.add(qz[:, :-1], self.A.log_prob(tf.tile(
-                    tf.expand_dims(qz[:, 1:], 2), [1, 1, self.K, 1]))),
-                -1))
+            z_1_probs = self.z_1_NN(
+                [self.s[:, 1:-1], self.extra_conds[:, 1:-1], qz_2[:, :-1]])
+            z_1_dist = ExpRelaxedOneHotCategorical(
+                temperature=self.temperature, probs=z_1_probs, name="z_1")
+            z_2_probs = self.z_2_NN(
+                [self.s[:, 1:-1], self.extra_conds[:, 1:-1], qz_1[:, 1:]])
+            z_2_dist = ExpRelaxedOneHotCategorical(
+                temperature=self.temperature, probs=z_2_probs, name="z_2")
+            logdensity_z = tf.add(
+                tf.reduce_mean(tf.reduce_logsumexp(
+                    tf.add(qz_1[:, :-1], z_1_dist.log_prob(tf.tile(
+                        tf.expand_dims(qz_1[:, 1:], 2), [1, 1, self.K_1, 1]))),
+                    -1)),
+                tf.reduce_mean(tf.reduce_logsumexp(
+                    tf.add(qz_2[:, :-1], z_2_dist.log_prob(tf.tile(
+                        tf.expand_dims(qz_2[:, 1:], 2), [1, 1, self.K_2, 1]))),
+                    -1)))
 
         with tf.name_scope("control_signal"):
             u_pred = tf.multiply(

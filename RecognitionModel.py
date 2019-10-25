@@ -251,11 +251,13 @@ class joint_recognition(RandomVariable, Distribution):
     def __init__(self, params, traj, extra_conds, *args, **kwargs):
         name = kwargs.get("name", "joint_recognition")
         with tf.name_scope(name):
-            self.agent_dim = params["dim"]
+            self.agent_dim = params["agent_dim"]
             self.y_t = tf.identity(traj, "trajectory")
             self.extra_conds = tf.identity(
                 extra_conds, "extra_conditions")
             self.temperature = params["t_q"]
+            self.K_1 = params["K_1"]
+            self.K_2 = params["K_2"]
 
             self.NN = params["q_NN"]
             q_NN_outputs = self.NN(
@@ -263,12 +265,15 @@ class joint_recognition(RandomVariable, Distribution):
                  self.extra_conds[:, 1:]])
             self.qg_mu = tf.identity(q_NN_outputs[0], "mu")
             self.qg_lambda = tf.identity(q_NN_outputs[1], "lambda")
-            self.qz_probs = tf.identity(q_NN_outputs[2], "z_probs")
+            self.qz_1_probs = tf.identity(q_NN_outputs[2], "z_1_probs")
+            self.qz_2_probs = tf.identity(q_NN_outputs[3], "z_2_probs")
 
             self.qg = MultivariateNormalDiag(
                 self.qg_mu, 1. / tf.sqrt(self.qg_lambda), name="qg")
-            self.qz = ExpRelaxedOneHotCategorical(
-                self.temperature, probs=self.qz_probs, name="qz")
+            self.qz_1 = ExpRelaxedOneHotCategorical(
+                self.temperature, probs=self.qz_1_probs, name="qz_1")
+            self.qz_2 = ExpRelaxedOneHotCategorical(
+                self.temperature, probs=self.qz_2_probs, name="qz_2")
 
             self.var_list = self.NN.variables
             self.log_vars = self.NN.variables
@@ -288,10 +293,12 @@ class joint_recognition(RandomVariable, Distribution):
         self._args = (params, traj, extra_conds)
 
     def _log_prob(self, value):
-        return tf.reduce_mean(tf.add(
-            self.qg.log_prob(value[..., :self.agent_dim]),
-            self.qz.log_prob(value[..., self.agent_dim:])))
+        return tf.reduce_mean(tf.add_n(
+            [self.qg.log_prob(value[..., :self.agent_dim]),
+             self.qz_1.log_prob(value[..., -(self.K_1 + self.K_2):-self.K_2]),
+             self.qz_2.log_prob(value[..., -self.K_2:])]))
 
     def _sample_n(self, n, seed=None):
         return tf.concat(
-            [self.qg.sample(n), self.qz.sample(n)], -1, "sample")
+            [self.qg.sample(n), self.qz_1.sample(n), self.qz_2.sample(n)],
+            -1, "sample")

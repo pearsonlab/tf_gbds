@@ -10,24 +10,22 @@ from RecognitionModel import joint_recognition
 #                                generate_predator_trajectory)
 
 
-# q_g_init_ep = 10
-# q_u_init_ep = 0
-
 class game_model(object):
     """Auxiliary class to construct the computational graph
     (define generative and recognition models, draw samples, trial completion)
     """
     def __init__(self, params, inputs, max_vel, n_samples=50):
-        with tf.name_scope(params["name"]):
+        with tf.name_scope(params["game_name"]):
             traj = inputs["trajectory"]
             states = inputs["states"]
             ctrl_obs = inputs["observed_control"]
             extra_conds = inputs["extra_conditions"]
 
-            model_dim = params["p_params"]["dim"]
-            state_dim = params["p_params"]["state_dim"]
-            extra_dim = params["p_params"]["extra_dim"]
-            K = params["p_params"]["GMM_K"]
+            model_dim = params["agent_dim"]
+            state_dim = params["state_dim"]
+            extra_dim = params["extra_dim"]
+            K_1 = params["K_1"]
+            K_2 = params["K_2"]
 
             self.var_list = []
             self.log_vars = []
@@ -43,16 +41,16 @@ class game_model(object):
                 else:
                     Tt = traj_shape[1]
 
-                value_shape = [B, Tt, model_dim + K]
+                value_shape = [B, Tt, model_dim + K_1 + K_2]
 
             self.p = GBDS(
-                params["p_params"], states, ctrl_obs, extra_conds,
+                params, states, ctrl_obs, extra_conds,
                 name="generative", value=tf.zeros(value_shape))
             self.var_list += self.p.var_list
             self.log_vars += self.p.log_vars
 
             self.q = joint_recognition(
-                params["q_params"], traj, extra_conds, name="recognition")
+                params, traj, extra_conds, name="recognition")
             self.var_list += self.q.var_list
             self.log_vars += self.q.log_vars
 
@@ -60,8 +58,10 @@ class game_model(object):
 
             qg_samples = tf.identity(
                 self.q.qg.sample(n_samples), "qg_samples")
-            qz_samples = tf.identity(
-                self.q.qz.sample(n_samples), "qz_samples")
+            qz_1_samples = tf.identity(
+                self.q.qz_1.sample(n_samples), "qz_1_samples")
+            qz_2_samples = tf.identity(
+                self.q.qz_2.sample(n_samples), "qz_2_samples")
 
             # with tf.name_scope("update_one_step"):
             #     prev_y = tf.placeholder(

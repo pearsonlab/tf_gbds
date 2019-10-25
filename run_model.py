@@ -37,7 +37,8 @@ EXTRA_DIM = 10
 ADD_ACCEL = False
 MAX_VEL = ".021,.021"
 
-GMM_K = 8
+K_1 = 4
+K_2 = 20
 GEN_N_LAYERS = 3
 GEN_HIDDEN_DIM = 64
 REC_LAG = 10
@@ -98,7 +99,10 @@ flags.DEFINE_boolean("add_accel", ADD_ACCEL,
                      "Is acceleration included in state")
 flags.DEFINE_string("max_vel", MAX_VEL, "Maximum velocity of agent")
 
-flags.DEFINE_integer("GMM_K", GMM_K, "Number of components in GMM")
+flags.DEFINE_integer("K_1", K_1, "Dimension of state space in the higher \
+                     level of HHMM")
+flags.DEFINE_integer("K_2", K_2, "Dimension of state space in the lower \
+                     level of HHMM")
 flags.DEFINE_integer("gen_n_layers", GEN_N_LAYERS, "Number of layers in \
                      neural networks (generative model)")
 flags.DEFINE_integer("gen_hidden_dim", GEN_HIDDEN_DIM,
@@ -175,15 +179,15 @@ def run_model(FLAGS):
     penalty_Q = None
 
     print("--------------Generative Parameters---------------")
-    print("Number of GMM components: %i" % FLAGS.GMM_K)
+    print("Dimensions of HHMM state space: %i, %i" % (FLAGS.K_1, FLAGS.K_2))
     print("Number of layers in neural networks: %i" % FLAGS.gen_n_layers)
     print("Dimensions of hidden layers: %i" % FLAGS.gen_hidden_dim)
     if FLAGS.g_bounds_pen is not None:
         print("Penalty on goal states leaving boundary (Generative): %i"
               % FLAGS.g_bounds_pen)
-    if FLAGS.g_prec_pen is not None:
-        print("Penalty on the precision of GMM components (Generative) : %i"
-              % FLAGS.g_prec_pen)
+    # if FLAGS.g_prec_pen is not None:
+    #     print("Penalty on the precision of GMM components (Generative) : %i"
+    #           % FLAGS.g_prec_pen)
 
     print("--------------Recognition Parameters--------------")
     print("Number of layers in neural networks: %i" % FLAGS.rec_n_layers)
@@ -230,7 +234,7 @@ def run_model(FLAGS):
 
         params = get_model_params(
             FLAGS.game_name, FLAGS.agent_name, agent_col, agent_dim,
-            state_dim, FLAGS.extra_dim, FLAGS.GMM_K,
+            state_dim, FLAGS.extra_dim, FLAGS.K_1, FLAGS.K_2,
             FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
             g_bounds, FLAGS.g_bounds_pen, FLAGS.g_prec_pen,
             FLAGS.rec_lag, FLAGS.lstm_units,
@@ -344,7 +348,7 @@ def run_model(FLAGS):
     inference.finalize()
     sess.close()
 
-    print("Training completed.")
+    print("Training completed after %i trials." % FLAGS.n_epochs)
 
 
 def main(_):
