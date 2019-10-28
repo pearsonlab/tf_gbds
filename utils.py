@@ -239,8 +239,8 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
             z_1 = layers.Input((None, K_1), name="z_1")
             z_2 = layers.Input((None, K_2), name="z_2")
 
-            GMM_NN_inputs = layers.Concatenate(axis=-1, name="GMM_NN_inputs")(
-                [states, extra_conds])
+            GMM_NN_inputs = layers.Concatenate(
+                axis=-1, name="GMM_NN_inputs")([states, extra_conds])
             GMM_NN_outputs = layers.Dense(
                 K_2 * agent_dim * 2, "linear",
                 kernel_initializer=tf.random_normal_initializer(stddev=0.1),
@@ -257,20 +257,31 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                 inputs=[states, extra_conds],
                 outputs=[GMM_mu, GMM_lambda], name="GMM_NN")
 
-            z_1_NN_inputs = layers.Concatenate(axis=-1, name="z_1_NN_inputs")(
-                [states, extra_conds, z_2])
-            z_1_NN_FCLayers = get_network(
-                "z_1_NN_FCLayers", state_dim + extra_dim + K_2, K_1 * K_1,
+            exit_NN_inputs = layers.Concatenate(
+                axis=-1, name="exit_NN_inputs")([states, extra_conds, z_2])
+            exit_NN_FCLayers = get_network(
+                "exit_NN_FCLayers", state_dim + extra_dim + K_2, 2,
                 gen_hidden_dim, gen_n_layers)
-            z_1_probs = layers.Softmax(name="z_1_probs")(
-                layers.Reshape((-1, K_1, K_1), name="z_1_logits")(
-                    z_1_NN_FCLayers(z_1_NN_inputs)))
-            z_1_NN = models.Model(
+            exit_logits = layers.Lambda(
+                lambda x: tf.nn.log_softmax(x), name="exit_logits")(
+                exit_NN_FCLayers(exit_NN_inputs))
+            exit_NN = models.Model(
                 inputs=[states, extra_conds, z_2],
-                outputs=z_1_probs, name="z_1_NN")
+                outputs=exit_logits, name="exit_NN")
 
-            z_2_NN_inputs = layers.Concatenate(axis=-1, name="z_2_NN_inputs")(
-                [states, extra_conds, z_1])
+            z_1_init_NN_inputs = layers.Concatenate(
+                axis=-1, name="z_1_init_NN_inputs")([states, extra_conds])
+            z_1_init_NN_FCLayers = get_network(
+                "z_1_init_NN_FCLayers", state_dim + extra_dim, K_1,
+                gen_hidden_dim, gen_n_layers)
+            z_1_init_probs = layers.Softmax(name="z_1_init_probs")(
+                z_1_init_NN_FCLayers(z_1_init_NN_inputs))
+            z_1_init_NN = models.Model(
+                inputs=[states, extra_conds],
+                outputs=z_1_init_probs, name="z_1_init_NN")
+
+            z_2_NN_inputs = layers.Concatenate(
+                axis=-1, name="z_2_NN_inputs")([states, extra_conds, z_1])
             z_2_NN_FCLayers = get_network(
                 "z_2_NN_FCLayers", state_dim + extra_dim + K_1, K_2 * K_2,
                 gen_hidden_dim, gen_n_layers)
@@ -346,7 +357,8 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
         params = dict(
             game_name=game_name, agent_name=agent_name, agent_col=agent_col,
             agent_dim=agent_dim, state_dim=state_dim, extra_dim=extra_dim,
-            K_1=K_1, K_2=K_2, GMM_NN=GMM_NN, z_1_NN=z_1_NN, z_2_NN=z_2_NN,
+            K_1=K_1, K_2=K_2, GMM_NN=GMM_NN, exit_NN=exit_NN,
+            z_1_init_NN=z_1_init_NN, z_2_NN=z_2_NN,
             g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
             g_prec_pen=goal_precision_penalty, unc_eps=unc_eps_init,
             eps_trainable=epsilon_trainable, eps_pen=eps_pen,
