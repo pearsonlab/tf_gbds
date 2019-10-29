@@ -236,7 +236,7 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
             states = layers.Input((None, state_dim), name="states")
             extra_conds = layers.Input(
                 (None, extra_dim), name="extra_conditions")
-            z_1 = layers.Input((None, K_1), name="z_1")
+            # z_1 = layers.Input((None, K_1), name="z_1")
             z_2 = layers.Input((None, K_2), name="z_2")
 
             GMM_NN_inputs = layers.Concatenate(
@@ -269,27 +269,41 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                 inputs=[states, extra_conds, z_2],
                 outputs=exit_logits, name="exit_NN")
 
-            z_1_init_NN_inputs = layers.Concatenate(
-                axis=-1, name="z_1_init_NN_inputs")([states, extra_conds])
-            z_1_init_NN_FCLayers = get_network(
-                "z_1_init_NN_FCLayers", state_dim + extra_dim, K_1,
-                gen_hidden_dim, gen_n_layers)
-            z_1_init_probs = layers.Softmax(name="z_1_init_probs")(
-                z_1_init_NN_FCLayers(z_1_init_NN_inputs))
-            z_1_init_NN = models.Model(
-                inputs=[states, extra_conds],
-                outputs=z_1_init_probs, name="z_1_init_NN")
+            # z_1_init_NN_inputs = layers.Concatenate(
+            #     axis=-1, name="z_1_init_NN_inputs")([states, extra_conds])
+            # z_1_init_NN_FCLayers = get_network(
+            #     "z_1_init_NN_FCLayers", state_dim + extra_dim, K_1,
+            #     gen_hidden_dim, gen_n_layers)
+            # z_1_init_probs = layers.Softmax(name="z_1_init_probs")(
+            #     z_1_init_NN_FCLayers(z_1_init_NN_inputs))
+            # z_1_init_NN = models.Model(
+            #     inputs=[states, extra_conds],
+            #     outputs=z_1_init_probs, name="z_1_init_NN")
+            z_1_init_logits = tf.Variable(
+                np.log(np.ones((K_1), np.float32) / K_1),
+                name="z_1_initial_logits")
 
+            # z_2_NN_inputs = layers.Concatenate(
+            #     axis=-1, name="z_2_NN_inputs")([states, extra_conds, z_1])
+            # z_2_NN_FCLayers = get_network(
+            #     "z_2_NN_FCLayers", state_dim + extra_dim + K_1, K_2 * K_2,
+            #     gen_hidden_dim, gen_n_layers)
+            # z_2_probs = layers.Softmax(name="z_2_probs")(
+            #     layers.Reshape((-1, K_2, K_2), name="z_2_logits")(
+            #         z_2_NN_FCLayers(z_2_NN_inputs)))
+            # z_2_NN = models.Model(
+            #     inputs=[states, extra_conds, z_1],
+            #     outputs=z_2_probs, name="z_2_NN")
             z_2_NN_inputs = layers.Concatenate(
-                axis=-1, name="z_2_NN_inputs")([states, extra_conds, z_1])
+                axis=-1, name="z_2_NN_inputs")([states, extra_conds])
             z_2_NN_FCLayers = get_network(
-                "z_2_NN_FCLayers", state_dim + extra_dim + K_1, K_2 * K_2,
+                "z_2_NN_FCLayers", state_dim + extra_dim, K_1 * K_2 * K_2,
                 gen_hidden_dim, gen_n_layers)
             z_2_probs = layers.Softmax(name="z_2_probs")(
-                layers.Reshape((-1, K_2, K_2), name="z_2_logits")(
+                layers.Reshape((-1, K_1, K_2, K_2), name="z_2_logits")(
                     z_2_NN_FCLayers(z_2_NN_inputs)))
             z_2_NN = models.Model(
-                inputs=[states, extra_conds, z_1],
+                inputs=[states, extra_conds],
                 outputs=z_2_probs, name="z_2_NN")
 
             if epsilon_trainable:
@@ -358,7 +372,8 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
             game_name=game_name, agent_name=agent_name, agent_col=agent_col,
             agent_dim=agent_dim, state_dim=state_dim, extra_dim=extra_dim,
             K_1=K_1, K_2=K_2, GMM_NN=GMM_NN, exit_NN=exit_NN,
-            z_1_init_NN=z_1_init_NN, z_2_NN=z_2_NN,
+            # z_1_init_NN=z_1_init_NN, z_2_NN=z_2_NN,
+            z_1_init_logits=z_1_init_logits, z_2_NN=z_2_NN,
             g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
             g_prec_pen=goal_precision_penalty, unc_eps=unc_eps_init,
             eps_trainable=epsilon_trainable, eps_pen=eps_pen,

@@ -68,17 +68,20 @@ class game_model(object):
                     tf.float32, (None, None, state_dim), "states")
                 extra_conds_i = tf.placeholder(
                     tf.float32, (None, None, extra_dim), "extra_conditions")
-                z_1_i = tf.placeholder(tf.float32, (None, None, K_1), "z_1")
+                # z_1_i = tf.placeholder(tf.float32, (None, None, K_1), "z_1")
                 z_2_i = tf.placeholder(tf.float32, (None, None, K_2), "z_2")
 
                 exit_probs_i = tf.exp(
                     self.p.exit_NN([states_i, extra_conds_i, z_2_i]),
                     "exit_probability")
-                z_1_init_probs_i = tf.identity(
-                    self.p.z_1_init_NN([states_i, extra_conds_i]),
-                    "z_1_initial_probability")
+                # z_1_init_probs_i = tf.identity(
+                #     self.p.z_1_init_NN([states_i, extra_conds_i]),
+                #     "z_1_initial_probability")
+                # z_2_probs_i = tf.identity(
+                #     self.p.z_2_NN([states_i, extra_conds_i, z_1_i]),
+                #     "z_2_probability")
                 z_2_probs_i = tf.identity(
-                    self.p.z_2_NN([states_i, extra_conds_i, z_1_i]),
+                    self.p.z_2_NN([states_i, extra_conds_i]),
                     "z_2_probability")
 
             # with tf.name_scope("update_one_step"):

@@ -38,17 +38,30 @@ class GBDS(RandomVariable, Distribution):
                 name="GMM")
 
             self.exit_NN = params["exit_NN"]
-            self.z_1_init_NN = params["z_1_init_NN"]
+            # self.z_1_init_NN = params["z_1_init_NN"]
+            self.z_1_init_logits = params["z_1_init_logits"]
+            self.z_1_init_probs = tf.nn.softmax(
+                self.z_1_init_logits, name="z_1_initial_probability")
+            self.z_1_init_dist = ExpRelaxedOneHotCategorical(
+                temperature=self.temperature, logits=self.z_1_init_logits,
+                name="z_1_initial_distribution")
             self.z_2_NN = params["z_2_NN"]
+            self.z_2_probs = tf.identity(
+                self.z_2_NN([self.s[:, 1:-1], self.extra_conds[:, 1:-1]]),
+                "z_2_probability")
+            self.z_2_dist = ExpRelaxedOneHotCategorical(
+                temperature=self.temperature, probs=self.z_2_probs,
+                name="z_2_distribution")
 
             self.unc_Kp = params["unc_Kp"]
             self.Kp = tf.identity(params["Kp"], "Kp")
 
             self.var_list = (self.g_NN.variables + self.exit_NN.variables +
-                             self.z_1_init_NN.variables +
+                             # self.z_1_init_NN.variables +
+                             [self.z_1_init_logits] +
                              self.z_2_NN.variables + [self.unc_Kp])
             self.log_vars = (self.g_NN.variables + self.exit_NN.variables +
-                             self.z_1_init_NN.variables +
+                             # self.z_1_init_NN.variables +
                              self.z_2_NN.variables)
 
             with tf.name_scope("goal_state_penalty"):
@@ -133,27 +146,33 @@ class GBDS(RandomVariable, Distribution):
         with tf.name_scope("latent_states"):
             exit_logits = self.exit_NN(
                 [self.s[:, 1:-1], self.extra_conds[:, 1:-1], qz_2[:, :-1]])
-            z_1_init_probs = self.z_1_init_NN(
-                [self.s[:, 1:-1], self.extra_conds[:, 1:-1]])
-            z_1_init_dist = ExpRelaxedOneHotCategorical(
-                temperature=self.temperature, probs=z_1_init_probs,
-                name="z_1_init")
+            # z_1_init_probs = self.z_1_init_NN(
+            #     [self.s[:, 1:-1], self.extra_conds[:, 1:-1]])
+            # z_1_init_dist = ExpRelaxedOneHotCategorical(
+            #     temperature=self.temperature, probs=z_1_init_probs,
+            #     name="z_1_init")
             z_1_cont_dist = MultivariateNormalDiag(
-                qz_1[:, :-1], 1e-3 * tf.ones([self.K_1]), name="z_1_cont")
-            z_2_probs = self.z_2_NN(
-                [self.s[:, 1:-1], self.extra_conds[:, 1:-1], qz_1[:, 1:]])
-            z_2_dist = ExpRelaxedOneHotCategorical(
-                temperature=self.temperature, probs=z_2_probs, name="z_2")
+                qz_1[:, :-1], 1e-2 * tf.ones([self.K_1]), name="z_1_cont")
+            # z_2_probs = self.z_2_NN(
+            #     [self.s[:, 1:-1], self.extra_conds[:, 1:-1], qz_1[:, 1:]])
 
             logdensity_z = tf.add(
                 tf.reduce_mean(tf.reduce_logsumexp(
                     tf.add(exit_logits, tf.stack(
-                        [z_1_init_dist.log_prob(qz_1[:, 1:]),
+                        # [z_1_init_dist.log_prob(qz_1[:, 1:]),
+                        [self.z_1_init_dist.log_prob(qz_1[:, 1:]),
                          z_1_cont_dist.log_prob(qz_1[:, 1:])], -1)), -1)),
-                tf.reduce_mean(tf.reduce_logsumexp(
-                    tf.add(qz_2[:, :-1], z_2_dist.log_prob(tf.tile(
-                        tf.expand_dims(qz_2[:, 1:], 2),
-                        [1, 1, self.K_2, 1]))), -1)))
+                # tf.reduce_mean(tf.reduce_logsumexp(
+                #     tf.add(qz_2[:, :-1], z_2_dist.log_prob(tf.tile(
+                #         tf.expand_dims(qz_2[:, 1:], 2),
+                #         [1, 1, self.K_2, 1]))), -1)))
+                tf.reduce_mean(tf.reduce_logsumexp(tf.add(
+                    qz_1[:, :-1],
+                    tf.reduce_logsumexp(tf.add(
+                        tf.expand_dims(qz_2[:, :-1], 2),
+                        self.z_2_dist.log_prob(tf.tile(
+                            tf.expand_dims(tf.expand_dims(qz_2[:, 1:], 2), 3),
+                            [1, 1, self.K_1, self.K_2, 1]))), -1)), -1)))
 
         with tf.name_scope("control_signal"):
             u_pred = tf.multiply(
