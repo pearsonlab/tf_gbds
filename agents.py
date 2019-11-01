@@ -1,7 +1,7 @@
 import tensorflow as tf
 # from edward.models import RelaxedOneHotCategorical
-from GenerativeModel import GBDS
-from RecognitionModel import joint_recognition
+from GenerativeModel import HHMM
+from RecognitionModel import qHHMM
 # from utils import get_vel
 # from tf_generate_trial import (recover_orig_val, recover_normalized,
 #                                generate_weight, generate_rotation_mat,
@@ -41,16 +41,14 @@ class game_model(object):
                 else:
                     Tt = traj_shape[1]
 
-                value_shape = [B, Tt, model_dim + K_1 + K_2]
+                value_shape = [B, Tt, model_dim + K_1 + K_2 + 2]
 
-            self.p = GBDS(
-                params, states, ctrl_obs, extra_conds,
-                name="generative", value=tf.zeros(value_shape))
+            self.p = HHMM(params, states, ctrl_obs, extra_conds,
+                          name="generative", value=tf.zeros(value_shape))
             self.var_list += self.p.var_list
             self.log_vars += self.p.log_vars
 
-            self.q = joint_recognition(
-                params, traj, extra_conds, name="recognition")
+            self.q = qHHMM(params, traj, extra_conds, name="recognition")
             self.var_list += self.q.var_list
             self.log_vars += self.q.log_vars
 
@@ -62,27 +60,8 @@ class game_model(object):
                 self.q.qz_1.sample(n_samples), "qz_1_samples")
             qz_2_samples = tf.identity(
                 self.q.qz_2.sample(n_samples), "qz_2_samples")
-
-            with tf.name_scope("transition_dynamics"):
-                states_i = tf.placeholder(
-                    tf.float32, (None, None, state_dim), "states")
-                extra_conds_i = tf.placeholder(
-                    tf.float32, (None, None, extra_dim), "extra_conditions")
-                # z_1_i = tf.placeholder(tf.float32, (None, None, K_1), "z_1")
-                z_2_i = tf.placeholder(tf.float32, (None, None, K_2), "z_2")
-
-                exit_probs_i = tf.exp(
-                    self.p.exit_NN([states_i, extra_conds_i, z_2_i]),
-                    "exit_probability")
-                # z_1_init_probs_i = tf.identity(
-                #     self.p.z_1_init_NN([states_i, extra_conds_i]),
-                #     "z_1_initial_probability")
-                # z_2_probs_i = tf.identity(
-                #     self.p.z_2_NN([states_i, extra_conds_i, z_1_i]),
-                #     "z_2_probability")
-                z_2_probs_i = tf.identity(
-                    self.p.z_2_NN([states_i, extra_conds_i]),
-                    "z_2_probability")
+            q_exit_samples = tf.identity(
+                self.q.exit.sample(n_samples), "q_exit_samples")
 
             # with tf.name_scope("update_one_step"):
             #     prev_y = tf.placeholder(

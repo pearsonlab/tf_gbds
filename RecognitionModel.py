@@ -247,9 +247,9 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
         self._args = (params, Input, xDim, yDim, extra_conds)
 
 
-class joint_recognition(RandomVariable, Distribution):
+class qHHMM(RandomVariable, Distribution):
     def __init__(self, params, traj, extra_conds, *args, **kwargs):
-        name = kwargs.get("name", "joint_recognition")
+        name = kwargs.get("name", "qHHMM")
         with tf.name_scope(name):
             self.agent_dim = params["agent_dim"]
             self.y_t = tf.identity(traj, "trajectory")
@@ -267,6 +267,7 @@ class joint_recognition(RandomVariable, Distribution):
             self.qg_lambda = tf.identity(q_NN_outputs[1], "lambda")
             self.qz_1_probs = tf.identity(q_NN_outputs[2], "z_1_probs")
             self.qz_2_probs = tf.identity(q_NN_outputs[3], "z_2_probs")
+            self.exit_probs = tf.identity(q_NN_outputs[4], "exit_probs")
 
             self.qg = MultivariateNormalDiag(
                 self.qg_mu, 1. / tf.sqrt(self.qg_lambda), name="qg")
@@ -274,6 +275,8 @@ class joint_recognition(RandomVariable, Distribution):
                 self.temperature, probs=self.qz_1_probs, name="qz_1")
             self.qz_2 = ExpRelaxedOneHotCategorical(
                 self.temperature, probs=self.qz_2_probs, name="qz_2")
+            self.exit = ExpRelaxedOneHotCategorical(
+                self.temperature, probs=self.exit_probs, name="exit")
 
             self.var_list = self.NN.variables
             self.log_vars = self.NN.variables
@@ -289,16 +292,22 @@ class joint_recognition(RandomVariable, Distribution):
         if "allow_nan_stats" not in kwargs:
             kwargs["allow_nan_stats"] = False
 
-        super(joint_recognition, self).__init__(*args, **kwargs)
+        super(qHHMM, self).__init__(*args, **kwargs)
         self._args = (params, traj, extra_conds)
 
     def _log_prob(self, value):
-        return tf.reduce_mean(tf.add_n(
-            [self.qg.log_prob(value[..., :self.agent_dim]),
-             self.qz_1.log_prob(value[..., -(self.K_1 + self.K_2):-self.K_2]),
-             self.qz_2.log_prob(value[..., -self.K_2:])]))
+        return tf.reduce_mean(tf.add_n([
+            self.qg.log_prob(value[..., :self.agent_dim]),
+            self.qz_1.log_prob(
+                value[..., self.agent_dim:(self.agent_dim + self.K_1)]),
+            self.qz_2.log_prob(
+                value[..., (self.agent_dim + self.K_1):(
+                    self.agent_dim + self.K_1 + self.K_2)]),
+            self.exit.log_prob(value[..., -2:])
+            ]))
 
     def _sample_n(self, n, seed=None):
-        return tf.concat(
-            [self.qg.sample(n), self.qz_1.sample(n), self.qz_2.sample(n)],
-            -1, "sample")
+        return tf.concat([
+            self.qg.sample(n), self.qz_1.sample(n), self.qz_2.sample(n),
+            self.exit.sample(n)
+            ], -1, "sample")

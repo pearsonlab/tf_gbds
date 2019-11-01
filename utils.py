@@ -142,6 +142,7 @@ def get_max_velocities(data_dirs, dim, clip):
     n_trials = []
 
     feature = {"trajectory": tf.FixedLenFeature((), tf.string)}
+
     def _get_trial(example):
         data_dict = tf.parse_single_example(example, feature)
         traj = tf.reshape(
@@ -160,7 +161,7 @@ def get_max_velocities(data_dirs, dim, clip):
         with tf.Session() as sess:
             while True:
                 try:
-                    max_vel = np.maximum(trial_max_vel.eval(), max_vel)
+                    max_vel = np.maximum(sess.run(trial_max_vel), max_vel)
                     dataset_size += 1
                 except tf.errors.OutOfRangeError:
                     break
@@ -236,15 +237,13 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
             states = layers.Input((None, state_dim), name="states")
             extra_conds = layers.Input(
                 (None, extra_dim), name="extra_conditions")
-            # z_1 = layers.Input((None, K_1), name="z_1")
-            z_2 = layers.Input((None, K_2), name="z_2")
+            NN_inputs = layers.Concatenate(
+                axis=-1, name="NN_inputs")([states, extra_conds])
 
-            GMM_NN_inputs = layers.Concatenate(
-                axis=-1, name="GMM_NN_inputs")([states, extra_conds])
             GMM_NN_outputs = layers.Dense(
                 K_2 * agent_dim * 2, "linear",
                 kernel_initializer=tf.random_normal_initializer(stddev=0.1),
-                name="GMM_NN_linear")(GMM_NN_inputs)
+                name="GMM_NN_Dense")(NN_inputs)
             GMM_mu = layers.Reshape((-1, K_2, agent_dim), name="mu")(
                 layers.Lambda(lambda x: x[..., :(K_2 * agent_dim)])(
                     GMM_NN_outputs))
@@ -253,58 +252,37 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                 layers.Lambda(lambda x: tf.nn.softplus(
                     x[..., (K_2 * agent_dim):]) + lambda_floor)(
                     GMM_NN_outputs))
-            GMM_NN = models.Model(
-                inputs=[states, extra_conds],
-                outputs=[GMM_mu, GMM_lambda], name="GMM_NN")
 
-            exit_NN_inputs = layers.Concatenate(
-                axis=-1, name="exit_NN_inputs")([states, extra_conds, z_2])
             exit_NN_FCLayers = get_network(
-                "exit_NN_FCLayers", state_dim + extra_dim + K_2, 2,
+                "exit_NN_FCLayers", state_dim + extra_dim, K_1 * K_2 * 2,
                 gen_hidden_dim, gen_n_layers)
-            exit_logits = layers.Lambda(
-                lambda x: tf.nn.log_softmax(x), name="exit_logits")(
-                exit_NN_FCLayers(exit_NN_inputs))
-            exit_NN = models.Model(
-                inputs=[states, extra_conds, z_2],
-                outputs=exit_logits, name="exit_NN")
+            exit_probs = layers.Softmax(name="exit_probs")(
+                layers.Reshape((-1, K_1, K_2, 2), name="exit_logits")(
+                    exit_NN_FCLayers(NN_inputs)))
 
-            # z_1_init_NN_inputs = layers.Concatenate(
-            #     axis=-1, name="z_1_init_NN_inputs")([states, extra_conds])
             # z_1_init_NN_FCLayers = get_network(
             #     "z_1_init_NN_FCLayers", state_dim + extra_dim, K_1,
             #     gen_hidden_dim, gen_n_layers)
             # z_1_init_probs = layers.Softmax(name="z_1_init_probs")(
-            #     z_1_init_NN_FCLayers(z_1_init_NN_inputs))
-            # z_1_init_NN = models.Model(
-            #     inputs=[states, extra_conds],
-            #     outputs=z_1_init_probs, name="z_1_init_NN")
+            #     z_1_init_NN_FCLayers(NN_inputs))
             z_1_init_logits = tf.Variable(
                 np.log(np.ones((K_1), np.float32) / K_1),
                 name="z_1_initial_logits")
 
-            # z_2_NN_inputs = layers.Concatenate(
-            #     axis=-1, name="z_2_NN_inputs")([states, extra_conds, z_1])
-            # z_2_NN_FCLayers = get_network(
-            #     "z_2_NN_FCLayers", state_dim + extra_dim + K_1, K_2 * K_2,
-            #     gen_hidden_dim, gen_n_layers)
-            # z_2_probs = layers.Softmax(name="z_2_probs")(
-            #     layers.Reshape((-1, K_2, K_2), name="z_2_logits")(
-            #         z_2_NN_FCLayers(z_2_NN_inputs)))
-            # z_2_NN = models.Model(
-            #     inputs=[states, extra_conds, z_1],
-            #     outputs=z_2_probs, name="z_2_NN")
-            z_2_NN_inputs = layers.Concatenate(
-                axis=-1, name="z_2_NN_inputs")([states, extra_conds])
-            z_2_NN_FCLayers = get_network(
-                "z_2_NN_FCLayers", state_dim + extra_dim, K_1 * K_2 * K_2,
-                gen_hidden_dim, gen_n_layers)
+            z_2_NN_outputs = layers.Dense(
+                K_1 * K_2 * K_2, "linear",
+                kernel_initializer=tf.random_normal_initializer(stddev=0.1),
+                name="z_2_NN_Dense")(NN_inputs)
             z_2_probs = layers.Softmax(name="z_2_probs")(
                 layers.Reshape((-1, K_1, K_2, K_2), name="z_2_logits")(
-                    z_2_NN_FCLayers(z_2_NN_inputs)))
-            z_2_NN = models.Model(
+                    z_2_NN_outputs))
+
+            p_NN = models.Model(
                 inputs=[states, extra_conds],
-                outputs=z_2_probs, name="z_2_NN")
+                # outputs=[GMM_mu, GMM_lambda, exit_probs, z_1_init_probs,
+                #          z_2_probs],
+                outputs=[GMM_mu, GMM_lambda, exit_probs, z_2_probs],
+                name="p_NN")
 
             if epsilon_trainable:
                 unc_eps_init = tf.Variable(
@@ -343,24 +321,27 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                 layers.LSTM(lstm_units, return_sequences=True),
                 name="q_LSTM")(q_NN_inputs)
             q_NN_FCLayers = get_network(
-                "q_NN_FCLayers", lstm_units * 2, agent_dim * 2 + K_1 + K_2,
-                rec_hidden_dim, rec_n_layers)
+                "q_NN_FCLayers", lstm_units * 2,
+                agent_dim * 2 + K_1 + K_2 + 2, rec_hidden_dim, rec_n_layers)
             q_NN_outputs = q_NN_FCLayers(q_NN_LSTM)
             qg_mu = layers.Lambda(
                 lambda x: x[..., :agent_dim], name="qg_mu")(q_NN_outputs)
             qg_lambda = layers.Lambda(
                 lambda x: tf.nn.softplus(x[..., agent_dim:(agent_dim * 2)]),
                 name="qg_lambda")(q_NN_outputs)
-            qz_1_probs = layers.Softmax(name="qz_1_probs")(
-                layers.Lambda(lambda x: x[..., -(K_1 + K_2):-K_2],
-                              name="qz_1_logits")(q_NN_outputs))
-            qz_2_probs = layers.Softmax(name="qz_2_probs")(
-                layers.Lambda(lambda x: x[..., -K_2:],
-                              name="qz_2_logits")(q_NN_outputs))
+            qz_1_probs = layers.Softmax(name="qz_1_probs")(layers.Lambda(
+                lambda x: x[..., (agent_dim * 2):(agent_dim * 2 + K_1)],
+                name="qz_1_logits")(q_NN_outputs))
+            qz_2_probs = layers.Softmax(name="qz_2_probs")(layers.Lambda(
+                lambda x: x[..., (agent_dim * 2 + K_1):(
+                    agent_dim * 2 + K_1 + K_2)],
+                name="qz_2_logits")(q_NN_outputs))
+            exit_probs = layers.Softmax(name="exit_probs")(layers.Lambda(
+                lambda x: x[..., -2:], name="exit_logits")(q_NN_outputs))
             q_NN = models.Model(
                 inputs=[padded_traj, q_extra_conds],
-                outputs=[qg_mu, qg_lambda, qz_1_probs, qz_2_probs],
-                name="q_NN")
+                outputs=[qg_mu, qg_lambda, qz_1_probs, qz_2_probs,
+                         exit_probs], name="q_NN")
 
             temperature_rec = init_temperature
 
@@ -371,9 +352,8 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
         params = dict(
             game_name=game_name, agent_name=agent_name, agent_col=agent_col,
             agent_dim=agent_dim, state_dim=state_dim, extra_dim=extra_dim,
-            K_1=K_1, K_2=K_2, GMM_NN=GMM_NN, exit_NN=exit_NN,
-            # z_1_init_NN=z_1_init_NN, z_2_NN=z_2_NN,
-            z_1_init_logits=z_1_init_logits, z_2_NN=z_2_NN,
+            # K_1=K_1, K_2=K_2, p_NN=p_NN,
+            K_1=K_1, K_2=K_2, p_NN=p_NN, z_1_init_logits=z_1_init_logits,
             g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
             g_prec_pen=goal_precision_penalty, unc_eps=unc_eps_init,
             eps_trainable=epsilon_trainable, eps_pen=eps_pen,
