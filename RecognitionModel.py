@@ -9,8 +9,9 @@ import numpy as np
 import lib.blk_tridiag_chol_tools as blk
 from edward.models import (RandomVariable, MultivariateNormalDiag,
                            ExpRelaxedOneHotCategorical)
-from tensorflow.contrib.distributions import Distribution
-from tensorflow.contrib.distributions import FULLY_REPARAMETERIZED
+from tensorflow.contrib.distributions import (Distribution,
+                                              FULLY_REPARAMETERIZED)
+from utils import pad_lag
 
 
 class SmoothingLDSTimeSeries(RandomVariable, Distribution):
@@ -207,19 +208,6 @@ class SmoothingLDSTimeSeries(RandomVariable, Distribution):
         return entropy / tf.cast(self.Tt, tf.float32)
 
 
-def pad_lag(Input, lag, dim):
-    with tf.name_scope("pad_lag"):
-        Output = tf.identity(Input)
-        for i in range(lag):
-            lagged = tf.concat(
-                [tf.reshape(Output[:, 0, :dim], [-1, 1, dim], "t0"),
-                 Output[:, :-1, -dim:]],
-                1, "lagged")
-            Output = tf.concat([Output, lagged], -1)
-
-    return Output[:, 1:]
-
-
 class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
     """SmoothingLDSTimeSeries that uses past observations (lag) in addition to
     current to evaluate the latent.
@@ -248,19 +236,25 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
 
 
 class joint_recognition(RandomVariable, Distribution):
-    def __init__(self, params, traj, extra_conds, *args, **kwargs):
+    def __init__(self, params, traj, npcs, *args, **kwargs):
         name = kwargs.get("name", "joint_recognition")
         with tf.name_scope(name):
-            self.agent_dim = params["dim"]
-            self.y_t = tf.identity(traj, "trajectory")
-            self.extra_conds = tf.identity(
-                extra_conds, "extra_conditions")
+            self.dim = params["dim"]
+            self.n_npcs = params["n_npcs"]
+            self.lag = params["lag"]
             self.temperature = params["t_q"]
 
+            self.traj = tf.identity(traj, "trajectory")
+            self.padded_traj = tf.identity(
+                pad_lag(self.traj, self.lag), "padded_trajectory")
+            self.npcs = tf.identity(npcs, "npcs")
+            self.padded_npcs = tf.concat(
+                [pad_lag(self.npcs[..., (self.dim * i):(self.dim * (i + 1))],
+                         self.lag) for i in range(self.n_npcs)] +
+                [self.npcs[:, 1:, -self.n_npcs:]], -1, "padded_npcs")
+
             self.NN = params["q_NN"]
-            q_NN_outputs = self.NN(
-                [pad_lag(self.y_t, params["lag"], self.agent_dim),
-                 self.extra_conds[:, 1:]])
+            q_NN_outputs = self.NN([self.padded_traj, self.padded_npcs])
             self.qg_mu = tf.identity(q_NN_outputs[0], "mu")
             self.qg_lambda = tf.identity(q_NN_outputs[1], "lambda")
             self.qz_probs = tf.identity(q_NN_outputs[2], "z_probs")
@@ -285,12 +279,12 @@ class joint_recognition(RandomVariable, Distribution):
             kwargs["allow_nan_stats"] = False
 
         super(joint_recognition, self).__init__(*args, **kwargs)
-        self._args = (params, traj, extra_conds)
+        self._args = (params, traj, npcs)
 
     def _log_prob(self, value):
         return tf.reduce_mean(tf.add(
-            self.qg.log_prob(value[..., :self.agent_dim]),
-            self.qz.log_prob(value[..., self.agent_dim:])))
+            self.qg.log_prob(value[..., :self.dim]),
+            self.qz.log_prob(value[..., self.dim:])))
 
     def _sample_n(self, n, seed=None):
         return tf.concat(

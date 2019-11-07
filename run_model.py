@@ -30,14 +30,13 @@ PROFILE = False
 
 GAME_NAME = "pacman"
 AGENT_NAME = "subject"
-AGENT_COLUMN = "0,1"
 OBSERVE_DIM = 2
-EXTRA_CONDITIONS = True
-EXTRA_DIM = 10
-ADD_ACCEL = False
+NPCS = True
+N_NPCS = 2
 MAX_VEL = ".021,.021"
 
-GMM_K = 8
+GMM_K = 20
+GEN_LAG = 2
 GEN_N_LAYERS = 3
 GEN_HIDDEN_DIM = 64
 REC_LAG = 10
@@ -47,7 +46,7 @@ LSTM_UNITS = 64
 
 GOAL_BOUNDARY_L = -1.1
 GOAL_BOUNDARY_U = 1.1
-GOAL_BOUNDARY_PENALTY = 1e5
+GOAL_BOUNDARY_PENALTY = 1e6
 GOAL_PRECISION_PENALTY = 1.
 
 EPSILON = -7.
@@ -88,17 +87,15 @@ flags.DEFINE_boolean("profile", PROFILE, "Is the model being profiled \
 flags.DEFINE_string("game_name", GAME_NAME, "Name of the game")
 flags.DEFINE_string("agent_name", AGENT_NAME, "Name of each agent \
                     (separated by ,)")
-flags.DEFINE_string("agent_col", AGENT_COLUMN, "Columns of data \
-                    corresponding to each agent (separated by ; and ,)")
 flags.DEFINE_integer("obs_dim", OBSERVE_DIM, "Dimension of observation")
-flags.DEFINE_boolean("extra_conds", EXTRA_CONDITIONS, "Are extra conditions \
-                     included in the dataset")
-flags.DEFINE_integer("extra_dim", EXTRA_DIM, "Dimension of extra conditions")
-flags.DEFINE_boolean("add_accel", ADD_ACCEL,
-                     "Is acceleration included in state")
+flags.DEFINE_boolean("npcs", NPCS, "Are npcs information included in the \
+                     dataset")
+flags.DEFINE_integer("n_npcs", N_NPCS, "Number of npcs")
 flags.DEFINE_string("max_vel", MAX_VEL, "Maximum velocity of agent")
 
 flags.DEFINE_integer("GMM_K", GMM_K, "Number of components in GMM")
+flags.DEFINE_integer("gen_lag", GEN_LAG, "Number of previous timepoints \
+                     included as input to generate model")
 flags.DEFINE_integer("gen_n_layers", GEN_N_LAYERS, "Number of layers in \
                      neural networks (generative model)")
 flags.DEFINE_integer("gen_hidden_dim", GEN_HIDDEN_DIM,
@@ -153,43 +150,31 @@ def run_model(FLAGS):
     if not os.path.exists(FLAGS.model_dir):
         os.makedirs(FLAGS.model_dir)
 
-    # Check agent information
-    agent_col = [int(c) for c in FLAGS.agent_col.split(",")]
-    agent_dim = len(agent_col)
-
     max_vel = np.array([float(n) for n in FLAGS.max_vel.split(",")],
                        dtype=np.float32)
-
-    if FLAGS.add_accel:
-        state_dim = agent_dim * 3
-        get_state = get_accel
-    else:
-        state_dim = agent_dim * 2
-        get_state = get_vel
 
     if FLAGS.g_lb is not None and FLAGS.g_ub is not None:
         g_bounds = [FLAGS.g_lb, FLAGS.g_ub]
     else:
         g_bounds = None
 
-    penalty_Q = None
-
     print("--------------Generative Parameters---------------")
     print("Number of GMM components: %i" % FLAGS.GMM_K)
+    print("Lag of input: %i" % FLAGS.gen_lag)
     print("Number of layers in neural networks: %i" % FLAGS.gen_n_layers)
     print("Dimensions of hidden layers: %i" % FLAGS.gen_hidden_dim)
     if FLAGS.g_bounds_pen is not None:
         print("Penalty on goal states leaving boundary (Generative): %i"
               % FLAGS.g_bounds_pen)
-    if FLAGS.g_prec_pen is not None:
-        print("Penalty on the precision of GMM components (Generative) : %i"
-              % FLAGS.g_prec_pen)
+    # if FLAGS.g_prec_pen is not None:
+    #     print("Penalty on the precision of GMM components (Generative) : %i"
+    #           % FLAGS.g_prec_pen)
 
     print("--------------Recognition Parameters--------------")
+    print("Lag of input: %i" % FLAGS.rec_lag)
     print("Number of layers in neural networks: %i" % FLAGS.rec_n_layers)
     print("Dimensions of hidden layers: %i" % FLAGS.rec_hidden_dim)
     print("Number of units in LSTM layer: %i" % FLAGS.lstm_units)
-    print("Lag of input: %i" % FLAGS.rec_lag)
 
     with tf.device("/cpu:0"):
         init_temperature = 1.
@@ -200,41 +185,37 @@ def run_model(FLAGS):
             iterator = load_data(data_dir, FLAGS)
             data = iterator.get_next("data")
 
-            if FLAGS.extra_conds:
+            if FLAGS.npcs:
                 (subject, npcs) = data
             else:
                 (subject,) = data
 
-            # trajectory_in = tf.identity(subject, "trajectory")
-            # states_in = tf.identity(get_state(trajectory_in, max_vel),
-            #                         "states")
-            states_in = tf.identity(subject, "states")
-            trajectory_in = tf.identity(
-                states_in[..., :agent_dim], "trajectory")
+            subject_in = tf.identity(subject, "subject")
+            traj_in = tf.identity(
+                subject[..., :FLAGS.obs_dim], "trajectory")
 
-            if FLAGS.extra_conds:
-                extra_conds_in = tf.identity(npcs, "extra_conditions")
+            if FLAGS.npcs:
+                npcs_in = tf.identity(npcs, "npcs")
             else:
-                extra_conds_in = None
+                npcs_in = None
 
             # with tf.name_scope("observed_control"):
-            #     ctrl_obs_in = tf.divide(tf.subtract(
-            #         trajectory_in[:, 1:], trajectory_in[:, :-1],
-            #         "diff"), max_vel, "standardize")
+            #     ctrl_obs_in = tf.divide(
+            #         tf.subtract(traj_in[:, 1:], traj_in[:, :-1], "diff"),
+            #         max_vel, "standardize")
             ctrl_obs_in = tf.identity(
-                states_in[..., agent_dim:], "observed_control")
+                subject[..., FLAGS.obs_dim:], "observed_control")
 
-            inputs = {"trajectory": trajectory_in, "states": states_in,
-                      "observed_control": ctrl_obs_in,
-                      "extra_conditions": extra_conds_in}
+            inputs = {"trajectory": traj_in, "npcs": npcs_in,
+                      "observed_control": ctrl_obs_in}
 
         params = get_model_params(
-            FLAGS.game_name, FLAGS.agent_name, agent_col, agent_dim,
-            state_dim, FLAGS.extra_dim, FLAGS.GMM_K,
+            FLAGS.game_name, FLAGS.agent_name, FLAGS.obs_dim, FLAGS.n_npcs,
+            FLAGS.gen_lag, FLAGS.GMM_K,
             FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
             g_bounds, FLAGS.g_bounds_pen, FLAGS.g_prec_pen,
             FLAGS.rec_lag, FLAGS.lstm_units,
-            FLAGS.rec_n_layers, FLAGS.rec_hidden_dim, penalty_Q,
+            FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
             FLAGS.eps_init, FLAGS.eps_trainable, FLAGS.eps_pen,
             init_temperature, epoch)
 
@@ -254,8 +235,8 @@ def run_model(FLAGS):
                     "epsilon/y", model.p.eps[0, 1])
                 # eps_pen = tf.summary.scalar(
                 #     "epsilon/penalty", model.p.eps_pen)
-                # summary_list += [eps_subject_x, eps_subject_y, eps_pen]
                 summary_list += [eps_subject_x, eps_subject_y]
+                # summary_list += [eps_subject_x, eps_subject_y, eps_pen]
 
             # summary_list += [tf.summary.scalar(
             #     "temperature", model.p.temperature)]

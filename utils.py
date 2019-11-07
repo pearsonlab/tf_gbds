@@ -16,6 +16,7 @@ from datetime import datetime
 
 layers = tf.keras.layers
 models = tf.keras.models
+regularizers = tf.keras.regularizers
 
 
 class set_cbar_zero(Normalize):
@@ -85,24 +86,31 @@ def load_data(data_dir, hps):
     """ Load data from given directory
     """
     features = {"trajectory": tf.FixedLenFeature((), tf.string)}
-    if hps.extra_conds:
+    if hps.npcs:
         features.update({"extra_conds": tf.FixedLenFeature(
             (), tf.string)})
 
     def _read_data(example):
         parsed_features = tf.parse_single_example(example, features)
 
-        trajectory = tf.reshape(
+        subject = tf.reshape(
             tf.decode_raw(parsed_features["trajectory"], tf.float32),
             # [-1, hps.obs_dim])
             [-1, hps.obs_dim * 2])
-        data = (trajectory,)
+        data = (subject,)
 
         if "extra_conds" in parsed_features:
-            extra_conds = tf.reshape(
+            npcs = tf.reshape(
                 tf.decode_raw(parsed_features["extra_conds"], tf.float32),
-                [-1, hps.extra_dim])
-            data += (extra_conds,)
+                [-1, (hps.obs_dim * 2 + 1) * hps.n_npcs])
+            npcs = tf.gather(
+                npcs,
+                [*range(hps.obs_dim)] +
+                [*range(hps.obs_dim * 2 + 1,
+                        hps.obs_dim * 2 + 1 + hps.obs_dim)] +
+                [hps.obs_dim * 2, hps.obs_dim * 2 * 2 + 1],
+                axis=-1)
+            data += (npcs,)
 
         return data
 
@@ -223,16 +231,18 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers):
         return M
 
 
-def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
-                     extra_dim, GMM_K, gen_n_layers, gen_hidden_dim,
+def get_model_params(game_name, agent_name, obs_dim, n_npcs,
+                     gen_lag, GMM_K, gen_n_layers, gen_hidden_dim,
                      goal_boundaries, goal_boundary_penalty,
-                     goal_precision_penalty, rec_lag, lstm_units,
-                     rec_n_layers, rec_hidden_dim, penalty_Q,
+                     goal_precision_penalty,
+                     rec_lag, lstm_units, rec_n_layers, rec_hidden_dim,
                      unc_epsilon, epsilon_trainable, epsilon_penalty,
                      init_temperature, epoch):
 
     with tf.variable_scope("model_parameters"):
         with tf.variable_scope(agent_name):
+            state_dim = obs_dim * (gen_lag + 1)
+            extra_dim = (obs_dim * (gen_lag + 1) + 1) * n_npcs
             states = layers.Input((None, state_dim), name="states")
             extra_conds = layers.Input(
                 (None, extra_dim), name="extra_conditions")
@@ -241,18 +251,19 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                 [states, extra_conds])
 
             GMM_NN_outputs_1 = layers.Dense(
-                GMM_K * agent_dim * 2, "linear",
+                GMM_K * obs_dim * 2, "linear",
                 kernel_initializer=tf.glorot_normal_initializer(),
+                kernel_regularizer=regularizers.l1(),
                 name="GMM_NN_linear")(GMM_NN_inputs)
             GMM_mu = layers.Reshape(
-                (-1, GMM_K, agent_dim), name="mu")(
-                layers.Lambda(lambda x: x[..., :(GMM_K * agent_dim)])(
+                (-1, GMM_K, obs_dim), name="mu")(
+                layers.Lambda(lambda x: x[..., :(GMM_K * obs_dim)])(
                     GMM_NN_outputs_1))
-            lambda_floor = 4e4
+            lambda_floor = 4e2
             GMM_lambda = layers.Reshape(
-                (-1, GMM_K, agent_dim), name="lambda")(
+                (-1, GMM_K, obs_dim), name="lambda")(
                 layers.Lambda(lambda x: tf.nn.softplus(
-                    x[..., (GMM_K * agent_dim):]) + lambda_floor)(
+                    x[..., (GMM_K * obs_dim):]) + lambda_floor)(
                     GMM_NN_outputs_1))
 
             GMM_NN_FCLayers = get_network(
@@ -263,20 +274,23 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                 layers.Reshape(
                     (-1, GMM_K, GMM_K), name="reshape_w_logits")(
                     GMM_NN_outputs_2))
+
             GMM_NN = models.Model(
                 inputs=[states, extra_conds],
                 outputs=[GMM_mu, GMM_lambda, GMM_w_probs], name="GMM_NN")
 
             if epsilon_trainable:
                 unc_eps_init = tf.Variable(
-                    unc_epsilon * np.ones((1, agent_dim), np.float32),
+                    unc_epsilon * np.ones((1, obs_dim), np.float32),
                     name="unc_eps")
-                eps_pen = tf.to_float(tf.minimum(
-                    epsilon_penalty * (10. ** ((epoch - 1) / 10)), 1e5),
-                    "epsilon_penalty")
+                # eps_pen = tf.to_float(tf.minimum(
+                #     epsilon_penalty * (10. ** ((epoch - 1) / 10)), 1e5),
+                #     "epsilon_penalty")
+                eps_pen = tf.constant(
+                    epsilon_penalty, tf.float32, name="epsilon_penalty")
             else:
                 unc_eps_init = tf.constant(
-                    unc_epsilon * np.ones((1, agent_dim), np.float32),
+                    unc_epsilon * np.ones((1, obs_dim), np.float32),
                     name="unc_eps")
                 eps_pen = None
 
@@ -286,15 +300,14 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
 
             fix_ep = 10
             unc_Kp = tf.Variable(tf.multiply(
-                softplus_inverse(1.), tf.ones(agent_dim, tf.float32),
+                softplus_inverse(1.), tf.ones(obs_dim, tf.float32),
                 "unc_Kp_init"), name="unc_Kp")
             Kp_ = tf.nn.softplus(unc_Kp)
             Kp = tf.cond(tf.greater(epoch, fix_ep),
                          lambda: Kp_, lambda: tf.stop_gradient(Kp_))
 
             p_params = dict(
-                name=agent_name, col=agent_col, dim=agent_dim,
-                state_dim=state_dim, extra_dim=extra_dim,
+                name=agent_name, dim=obs_dim, n_npcs=n_npcs, lag=gen_lag,
                 GMM_K=GMM_K, GMM_NN=GMM_NN,
                 g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
                 g_prec_pen=goal_precision_penalty,
@@ -303,62 +316,40 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
                 unc_Kp=unc_Kp, Kp=Kp)
 
         with tf.variable_scope("posterior"):
-            Mu_NN = get_network(
-                "Mu_NN", (agent_dim * (rec_lag + 1) + extra_dim),
-                agent_dim, rec_hidden_dim, rec_n_layers)
-            Lambda_NN = get_network(
-                "Lambda_NN", agent_dim * (rec_lag + 1) + extra_dim,
-                agent_dim ** 2, rec_hidden_dim, rec_n_layers)
-            LambdaX_NN = get_network(
-                "LambdaX_NN", agent_dim * (rec_lag + 1) + extra_dim,
-                agent_dim ** 2, rec_hidden_dim, rec_n_layers)
-
-            dyn_params = dict(
-                A=tf.Variable(
-                    .9 * np.eye(agent_dim), name="A", dtype=tf.float32),
-                QinvChol=tf.Variable(
-                    np.eye(agent_dim), name="QinvChol", dtype=tf.float32),
-                Q0invChol=tf.Variable(
-                    np.eye(agent_dim), name="Q0invChol", dtype=tf.float32))
-
             padded_traj = layers.Input(
-                (None, agent_dim * (rec_lag + 1)),
+                (None, obs_dim * (rec_lag + 1)),
                 name="trajectory_with_lag")
-            extra_conds_ = layers.Input(
-                (None, extra_dim), name="extra_conditions")
+            padded_npcs = layers.Input(
+                (None, (obs_dim * (rec_lag + 1) + 1) * n_npcs),
+                name="extra_conditions")
             q_NN_inputs = layers.Concatenate(
                 axis=-1, name="q_NN_inputs")(
-                [padded_traj, extra_conds_])
+                [padded_traj, padded_npcs])
             q_NN_LSTM = layers.Bidirectional(
                 layers.LSTM(lstm_units, return_sequences=True),
                 name="q_LSTM")(q_NN_inputs)
 
             q_NN_FCLayers = get_network(
-                "q_NN_FCLayers", lstm_units * 2, agent_dim * 2 + GMM_K,
+                "q_NN_FCLayers", lstm_units * 2, obs_dim * 2 + GMM_K,
                 rec_hidden_dim, rec_n_layers)
             q_NN_outputs = q_NN_FCLayers(q_NN_LSTM)
             qg_mu = layers.Lambda(
-                lambda x: x[..., :agent_dim], name="qg_mu")(q_NN_outputs)
+                lambda x: x[..., :obs_dim], name="qg_mu")(q_NN_outputs)
             qg_lambda = layers.Lambda(
-                lambda x: tf.nn.softplus(x[..., agent_dim:(agent_dim * 2)]),
+                lambda x: tf.nn.softplus(x[..., obs_dim:(obs_dim * 2)]),
                 name="qg_lambda")(q_NN_outputs)
             qz_probs = layers.Softmax(name="qz_probs")(layers.Lambda(
                 lambda x: x[..., -GMM_K:], name="qz_logits")(q_NN_outputs))
             q_NN = models.Model(
-                inputs=[padded_traj, extra_conds_],
+                inputs=[padded_traj, padded_npcs],
                 outputs=[qg_mu, qg_lambda, qz_probs],
                 name="q_NN")
 
             temperature_rec = init_temperature
 
             q_params = dict(
-                dim=agent_dim, extra_dim=extra_dim, lag=rec_lag,
-                Mu_NN=Mu_NN, Lambda_NN=Lambda_NN, LambdaX_NN=LambdaX_NN,
-                dyn_params=dyn_params, q_NN=q_NN, t_q=temperature_rec)
-
-            with tf.name_scope("penalty_Q"):
-                if penalty_Q is not None:
-                    q_params["p"] = penalty_Q
+                dim=obs_dim, n_npcs=n_npcs, lag=rec_lag, q_NN=q_NN,
+                t_q=temperature_rec)
 
         params = dict(
             name=game_name, p_params=p_params, q_params=q_params)
@@ -452,6 +443,20 @@ def get_model_params(game_name, agent_name, agent_col, agent_dim, state_dim,
 #                         "unc_Kd_init"), name="unc_Kd")
 
 #     return PID
+
+
+def pad_lag(Input, lag):
+    dim = Input.shape.as_list()[-1]
+    with tf.name_scope("pad_lag"):
+        Output = tf.identity(Input)
+        for i in range(lag):
+            lagged = tf.concat(
+                [tf.reshape(Output[:, 0, :dim], [-1, 1, dim], "t0"),
+                 Output[:, :-1, -dim:]],
+                1, "lagged")
+            Output = tf.concat([Output, lagged], -1)
+
+    return Output[:, 1:]
 
 
 # def pad_batch(arrays, mode="edge"):

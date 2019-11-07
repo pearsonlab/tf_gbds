@@ -10,9 +10,6 @@ from RecognitionModel import joint_recognition
 #                                generate_predator_trajectory)
 
 
-# q_g_init_ep = 10
-# q_u_init_ep = 0
-
 class game_model(object):
     """Auxiliary class to construct the computational graph
     (define generative and recognition models, draw samples, trial completion)
@@ -20,17 +17,11 @@ class game_model(object):
     def __init__(self, params, inputs, max_vel, n_samples=50):
         with tf.name_scope(params["name"]):
             traj = inputs["trajectory"]
-            states = inputs["states"]
+            npcs = inputs["npcs"]
             ctrl_obs = inputs["observed_control"]
-            extra_conds = inputs["extra_conditions"]
 
             model_dim = params["p_params"]["dim"]
-            state_dim = params["p_params"]["state_dim"]
-            extra_dim = params["p_params"]["extra_dim"]
             K = params["p_params"]["GMM_K"]
-
-            self.var_list = []
-            self.log_vars = []
 
             with tf.name_scope("variable_value_shape"):
                 traj_shape = traj.shape.as_list()
@@ -39,20 +30,23 @@ class game_model(object):
                 else:
                     B = traj_shape[0]
                 if traj_shape[1] is None:
-                    Tt = 2
+                    Tt = 3
                 else:
                     Tt = traj_shape[1]
 
                 value_shape = [B, Tt, model_dim + K]
 
+            self.var_list = []
+            self.log_vars = []
+
             self.p = GBDS(
-                params["p_params"], states, ctrl_obs, extra_conds,
+                params["p_params"], traj, ctrl_obs, npcs,
                 name="generative", value=tf.zeros(value_shape))
             self.var_list += self.p.var_list
             self.log_vars += self.p.log_vars
 
             self.q = joint_recognition(
-                params["q_params"], traj, extra_conds, name="recognition")
+                params["q_params"], traj, npcs, name="recognition")
             self.var_list += self.q.var_list
             self.log_vars += self.q.log_vars
 
