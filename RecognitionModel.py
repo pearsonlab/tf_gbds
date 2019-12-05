@@ -235,14 +235,13 @@ class SmoothingPastLDSTimeSeries(SmoothingLDSTimeSeries):
         self._args = (params, Input, xDim, yDim, extra_conds)
 
 
-class joint_recognition(RandomVariable, Distribution):
+class recognition(RandomVariable, Distribution):
     def __init__(self, params, traj, npcs, *args, **kwargs):
-        name = kwargs.get("name", "joint_recognition")
+        name = kwargs.get("name", "recognition")
         with tf.name_scope(name):
             self.dim = params["dim"]
             self.n_npcs = params["n_npcs"]
             self.lag = params["lag"]
-            self.temperature = params["t_q"]
 
             self.traj = tf.identity(traj, "trajectory")
             self.padded_traj = tf.identity(
@@ -257,12 +256,8 @@ class joint_recognition(RandomVariable, Distribution):
             q_NN_outputs = self.NN([self.padded_traj, self.padded_npcs])
             self.qg_mu = tf.identity(q_NN_outputs[0], "mu")
             self.qg_lambda = tf.identity(q_NN_outputs[1], "lambda")
-            self.qz_probs = tf.identity(q_NN_outputs[2], "z_probs")
-
             self.qg = MultivariateNormalDiag(
                 self.qg_mu, 1. / tf.sqrt(self.qg_lambda), name="qg")
-            self.qz = ExpRelaxedOneHotCategorical(
-                self.temperature, probs=self.qz_probs, name="qz")
 
             self.var_list = self.NN.variables
             self.log_vars = self.NN.variables
@@ -278,14 +273,11 @@ class joint_recognition(RandomVariable, Distribution):
         if "allow_nan_stats" not in kwargs:
             kwargs["allow_nan_stats"] = False
 
-        super(joint_recognition, self).__init__(*args, **kwargs)
+        super(recognition, self).__init__(*args, **kwargs)
         self._args = (params, traj, npcs)
 
     def _log_prob(self, value):
-        return tf.reduce_mean(tf.add(
-            self.qg.log_prob(value[..., :self.dim]),
-            self.qz.log_prob(value[..., self.dim:])))
+        return tf.reduce_mean(self.qg.log_prob(value[..., :self.dim]))
 
     def _sample_n(self, n, seed=None):
-        return tf.concat(
-            [self.qg.sample(n), self.qz.sample(n)], -1, "sample")
+        return self.qg.sample(n)

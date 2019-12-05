@@ -35,7 +35,6 @@ NPCS = True
 N_NPCS = 2
 MAX_VEL = ".021,.021"
 
-GMM_K = 20
 GEN_LAG = 2
 GEN_N_LAYERS = 3
 GEN_HIDDEN_DIM = 64
@@ -93,7 +92,6 @@ flags.DEFINE_boolean("npcs", NPCS, "Are npcs information included in the \
 flags.DEFINE_integer("n_npcs", N_NPCS, "Number of npcs")
 flags.DEFINE_string("max_vel", MAX_VEL, "Maximum velocity of agent")
 
-flags.DEFINE_integer("GMM_K", GMM_K, "Number of components in GMM")
 flags.DEFINE_integer("gen_lag", GEN_LAG, "Number of previous timepoints \
                      included as input to generate model")
 flags.DEFINE_integer("gen_n_layers", GEN_N_LAYERS, "Number of layers in \
@@ -159,7 +157,6 @@ def run_model(FLAGS):
         g_bounds = None
 
     print("--------------Generative Parameters---------------")
-    print("Number of GMM components: %i" % FLAGS.GMM_K)
     print("Lag of input: %i" % FLAGS.gen_lag)
     print("Number of layers in neural networks: %i" % FLAGS.gen_n_layers)
     print("Dimensions of hidden layers: %i" % FLAGS.gen_hidden_dim)
@@ -177,7 +174,6 @@ def run_model(FLAGS):
     print("Number of units in LSTM layer: %i" % FLAGS.lstm_units)
 
     with tf.device("/cpu:0"):
-        init_temperature = 1.
         epoch = tf.placeholder(tf.int64, name="epoch")
         data_dir = tf.placeholder(tf.string, name="dataset_directory")
 
@@ -192,7 +188,7 @@ def run_model(FLAGS):
 
             subject_in = tf.identity(subject, "subject")
             traj_in = tf.identity(
-                subject[..., :FLAGS.obs_dim], "trajectory")
+                subject_in[..., :FLAGS.obs_dim], "trajectory")
 
             if FLAGS.npcs:
                 npcs_in = tf.identity(npcs, "npcs")
@@ -204,20 +200,18 @@ def run_model(FLAGS):
             #         tf.subtract(traj_in[:, 1:], traj_in[:, :-1], "diff"),
             #         max_vel, "standardize")
             ctrl_obs_in = tf.identity(
-                subject[..., FLAGS.obs_dim:], "observed_control")
+                subject_in[..., FLAGS.obs_dim:], "observed_control")
 
             inputs = {"trajectory": traj_in, "npcs": npcs_in,
                       "observed_control": ctrl_obs_in}
 
         params = get_model_params(
             FLAGS.game_name, FLAGS.agent_name, FLAGS.obs_dim, FLAGS.n_npcs,
-            FLAGS.gen_lag, FLAGS.GMM_K,
-            FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
+            FLAGS.gen_lag, FLAGS.gen_n_layers, FLAGS.gen_hidden_dim,
             g_bounds, FLAGS.g_bounds_pen, FLAGS.g_prec_pen,
             FLAGS.rec_lag, FLAGS.lstm_units,
             FLAGS.rec_n_layers, FLAGS.rec_hidden_dim,
-            FLAGS.eps_init, FLAGS.eps_trainable, FLAGS.eps_pen,
-            init_temperature, epoch)
+            FLAGS.eps_init, FLAGS.eps_trainable, FLAGS.eps_pen, epoch)
 
         model = game_model(params, inputs, max_vel, FLAGS.n_post_samp)
 

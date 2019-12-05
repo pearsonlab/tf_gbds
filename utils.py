@@ -232,12 +232,11 @@ def get_network(name, input_dim, output_dim, hidden_dim, num_layers):
 
 
 def get_model_params(game_name, agent_name, obs_dim, n_npcs,
-                     gen_lag, GMM_K, gen_n_layers, gen_hidden_dim,
+                     gen_lag, gen_n_layers, gen_hidden_dim,
                      goal_boundaries, goal_boundary_penalty,
                      goal_precision_penalty,
                      rec_lag, lstm_units, rec_n_layers, rec_hidden_dim,
-                     unc_epsilon, epsilon_trainable, epsilon_penalty,
-                     init_temperature, epoch):
+                     unc_epsilon, epsilon_trainable, epsilon_penalty, epoch):
 
     with tf.variable_scope("model_parameters"):
         with tf.variable_scope(agent_name):
@@ -246,38 +245,23 @@ def get_model_params(game_name, agent_name, obs_dim, n_npcs,
             states = layers.Input((None, state_dim), name="states")
             extra_conds = layers.Input(
                 (None, extra_dim), name="extra_conditions")
-            GMM_NN_inputs = layers.Concatenate(
-                axis=-1, name="GMM_NN_inputs")(
+            G_NN_inputs = layers.Concatenate(axis=-1, name="G_NN_inputs")(
                 [states, extra_conds])
 
-            GMM_NN_outputs_1 = layers.Dense(
-                GMM_K * obs_dim * 2, "linear",
+            G_NN_outputs = layers.Dense(
+                obs_dim * 2, "linear",
                 kernel_initializer=tf.glorot_normal_initializer(),
-                kernel_regularizer=regularizers.l1(),
-                name="GMM_NN_linear")(GMM_NN_inputs)
-            GMM_mu = layers.Reshape(
-                (-1, GMM_K, obs_dim), name="mu")(
-                layers.Lambda(lambda x: x[..., :(GMM_K * obs_dim)])(
-                    GMM_NN_outputs_1))
-            lambda_floor = 4e2
-            GMM_lambda = layers.Reshape(
-                (-1, GMM_K, obs_dim), name="lambda")(
-                layers.Lambda(lambda x: tf.nn.softplus(
-                    x[..., (GMM_K * obs_dim):]) + lambda_floor)(
-                    GMM_NN_outputs_1))
+                name="G_NN_linear")(G_NN_inputs)
+            G_mu = layers.Lambda(lambda x: x[..., :obs_dim], name="mu")(
+                G_NN_outputs)
+            lambda_floor = 1e4
+            G_lambda = layers.Lambda(lambda x: tf.nn.softplus(
+                x[..., obs_dim:]) + lambda_floor, name="lambda")(
+                G_NN_outputs)
 
-            GMM_NN_FCLayers = get_network(
-                "GMM_NN_FCLayers", state_dim + extra_dim,
-                GMM_K * GMM_K, gen_hidden_dim, gen_n_layers)
-            GMM_NN_outputs_2 = GMM_NN_FCLayers(GMM_NN_inputs)
-            GMM_w_probs = layers.Softmax(name="w_probs")(
-                layers.Reshape(
-                    (-1, GMM_K, GMM_K), name="reshape_w_logits")(
-                    GMM_NN_outputs_2))
-
-            GMM_NN = models.Model(
-                inputs=[states, extra_conds],
-                outputs=[GMM_mu, GMM_lambda, GMM_w_probs], name="GMM_NN")
+            G_NN = models.Model(
+                inputs=[states, extra_conds], outputs=[G_mu, G_lambda],
+                name="G_NN")
 
             if epsilon_trainable:
                 unc_eps_init = tf.Variable(
@@ -294,11 +278,7 @@ def get_model_params(game_name, agent_name, obs_dim, n_npcs,
                     name="unc_eps")
                 eps_pen = None
 
-            # temperature_gen = tf.maximum(init_temperature * (.95 ** (
-            #     tf.maximum(epoch - fix_ep, 0) / 5)), .1, "temperature")
-            temperature_gen = init_temperature
-
-            fix_ep = 10
+            fix_ep = 5
             unc_Kp = tf.Variable(tf.multiply(
                 softplus_inverse(1.), tf.ones(obs_dim, tf.float32),
                 "unc_Kp_init"), name="unc_Kp")
@@ -307,13 +287,12 @@ def get_model_params(game_name, agent_name, obs_dim, n_npcs,
                          lambda: Kp_, lambda: tf.stop_gradient(Kp_))
 
             p_params = dict(
-                name=agent_name, dim=obs_dim, n_npcs=n_npcs, lag=gen_lag,
-                GMM_K=GMM_K, GMM_NN=GMM_NN,
+                name=agent_name, dim=obs_dim, n_npcs=n_npcs,
+                lag=gen_lag, G_NN=G_NN,
                 g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
                 g_prec_pen=goal_precision_penalty,
                 unc_eps=unc_eps_init, eps_trainable=epsilon_trainable,
-                eps_pen=eps_pen, t_p=temperature_gen,
-                unc_Kp=unc_Kp, Kp=Kp)
+                eps_pen=eps_pen, unc_Kp=unc_Kp, Kp=Kp)
 
         with tf.variable_scope("posterior"):
             padded_traj = layers.Input(
@@ -330,26 +309,21 @@ def get_model_params(game_name, agent_name, obs_dim, n_npcs,
                 name="q_LSTM")(q_NN_inputs)
 
             q_NN_FCLayers = get_network(
-                "q_NN_FCLayers", lstm_units * 2, obs_dim * 2 + GMM_K,
+                "q_NN_FCLayers", lstm_units * 2, obs_dim * 2,
                 rec_hidden_dim, rec_n_layers)
             q_NN_outputs = q_NN_FCLayers(q_NN_LSTM)
             qg_mu = layers.Lambda(
                 lambda x: x[..., :obs_dim], name="qg_mu")(q_NN_outputs)
             qg_lambda = layers.Lambda(
-                lambda x: tf.nn.softplus(x[..., obs_dim:(obs_dim * 2)]),
+                lambda x: tf.nn.softplus(x[..., obs_dim:]),
                 name="qg_lambda")(q_NN_outputs)
-            qz_probs = layers.Softmax(name="qz_probs")(layers.Lambda(
-                lambda x: x[..., -GMM_K:], name="qz_logits")(q_NN_outputs))
+
             q_NN = models.Model(
-                inputs=[padded_traj, padded_npcs],
-                outputs=[qg_mu, qg_lambda, qz_probs],
+                inputs=[padded_traj, padded_npcs], outputs=[qg_mu, qg_lambda],
                 name="q_NN")
 
-            temperature_rec = init_temperature
-
             q_params = dict(
-                dim=obs_dim, n_npcs=n_npcs, lag=rec_lag, q_NN=q_NN,
-                t_q=temperature_rec)
+                dim=obs_dim, n_npcs=n_npcs, lag=rec_lag, q_NN=q_NN)
 
         params = dict(
             name=game_name, p_params=p_params, q_params=q_params)

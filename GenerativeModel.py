@@ -15,7 +15,6 @@ class GBDS(RandomVariable, Distribution):
             self.dim = params["dim"]
             self.n_npcs = params["n_npcs"]
             self.lag = params["lag"]
-            self.temperature = params["t_p"]
 
             self.y = tf.identity(traj, "trajectory")
             self.s = tf.identity(pad_lag(traj, self.lag), "states")
@@ -26,23 +25,15 @@ class GBDS(RandomVariable, Distribution):
                          self.lag) for i in range(self.n_npcs)] +
                 [self.npcs[:, 1:, -self.n_npcs:]], -1, "extra_conditions")
 
-            # number of GMM components
-            self.K = params["GMM_K"]
-            # neural network to generate state-dependent goals and transition
-            self.NN = params["GMM_NN"]
-            GMM_NN_outputs = self.NN([self.s, self.extra_conds])
-            self.G_mu = tf.identity(GMM_NN_outputs[0], "mu")
-            self.G_lambda = tf.identity(GMM_NN_outputs[1], "lambda")
-            self.z_probs = tf.identity(GMM_NN_outputs[2], "z_probs")
+            self.NN = params["G_NN"]
+            G_NN_outputs = self.NN([self.s, self.extra_conds])
+            self.G_mu = tf.identity(G_NN_outputs[0], "mu")
+            self.G_lambda = tf.identity(G_NN_outputs[1], "lambda")
 
             self.G = MultivariateNormalDiag(
                 self.G_mu[:, :-1], 1. / tf.sqrt(self.G_lambda[:, :-1]),
                 name="GMM")
             self.G_sample = tf.identity(self.G.sample(), "GMM_sample")
-            self.A = ExpRelaxedOneHotCategorical(
-                self.temperature, probs=self.z_probs[:, :-1],
-                name="transition")
-            self.A_sample = tf.identity(self.A.sample(), "z_sample")
 
             self.unc_Kp = params["unc_Kp"]
             self.Kp = tf.identity(params["Kp"], "Kp")
@@ -65,7 +56,7 @@ class GBDS(RandomVariable, Distribution):
                 else:
                     self.g_pen = None
 
-                # penalty on the precision of GMM components
+                # # penalty on the precision of GMM components
                 # if params["g_prec_pen"] is not None:
                 #     self.g_prec_pen = tf.constant(
                 #         params["g_prec_pen"], tf.float32,
@@ -94,15 +85,10 @@ class GBDS(RandomVariable, Distribution):
         self._args = (params, traj, ctrl_obs, npcs)
 
     def _log_prob(self, value):
-        with tf.name_scope("posterior"):
-            qg = tf.identity(value[..., :self.dim], "goals")
-            qz = tf.identity(value[..., self.dim:], "latent_states")
+        qg = tf.identity(value, "posterior_goals")
 
         with tf.name_scope("goals"):
-            logdensity_g = tf.reduce_mean(tf.reduce_logsumexp(
-                tf.add(qz[:, 1:], self.G.log_prob(tf.tile(
-                    tf.expand_dims(qg[:, 1:], 2), [1, 1, self.K, 1]))),
-                -1))
+            logdensity_g = tf.reduce_mean(self.G.log_prob(qg[:, 1:]))
 
             with tf.name_scope("penalty"):
                 if self.g_pen is not None:
@@ -127,12 +113,6 @@ class GBDS(RandomVariable, Distribution):
                 #         tf.reduce_mean(tf.reduce_max(tf.reduce_sum(
                 #             1. / self.G_lambda, -1), -1)))
 
-        with tf.name_scope("latent_states"):
-            logdensity_z = tf.reduce_mean(tf.reduce_logsumexp(
-                tf.add(qz[:, :-1], self.A.log_prob(tf.tile(
-                    tf.expand_dims(qz[:, 1:], 2), [1, 1, self.K, 1]))),
-                -1))
-
         with tf.name_scope("control_signal"):
             u_pred = tf.multiply(
                 qg - self.y[:, :-1], self.Kp, "predicted")
@@ -146,4 +126,4 @@ class GBDS(RandomVariable, Distribution):
                 if self.eps_pen is not None:
                     logdensity_u -= self.eps_pen * tf.reduce_sum(self.unc_eps)
 
-        return tf.add_n([logdensity_g, logdensity_z, logdensity_u])
+        return tf.add(logdensity_g, logdensity_u)

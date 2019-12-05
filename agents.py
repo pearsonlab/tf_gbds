@@ -1,7 +1,7 @@
 import tensorflow as tf
 # from edward.models import RelaxedOneHotCategorical
 from GenerativeModel import GBDS
-from RecognitionModel import joint_recognition
+from RecognitionModel import recognition
 # from utils import get_vel
 # from tf_generate_trial import (recover_orig_val, recover_normalized,
 #                                generate_weight, generate_rotation_mat,
@@ -19,9 +19,7 @@ class game_model(object):
             traj = inputs["trajectory"]
             npcs = inputs["npcs"]
             ctrl_obs = inputs["observed_control"]
-
             model_dim = params["p_params"]["dim"]
-            K = params["p_params"]["GMM_K"]
 
             with tf.name_scope("variable_value_shape"):
                 traj_shape = traj.shape.as_list()
@@ -34,7 +32,7 @@ class game_model(object):
                 else:
                     Tt = traj_shape[1]
 
-                value_shape = [B, Tt, model_dim + K]
+                value_shape = [B, Tt, model_dim]
 
             self.var_list = []
             self.log_vars = []
@@ -45,7 +43,7 @@ class game_model(object):
             self.var_list += self.p.var_list
             self.log_vars += self.p.log_vars
 
-            self.q = joint_recognition(
+            self.q = recognition(
                 params["q_params"], traj, npcs, name="recognition")
             self.var_list += self.q.var_list
             self.log_vars += self.q.log_vars
@@ -54,8 +52,6 @@ class game_model(object):
 
             qg_samples = tf.identity(
                 self.q.qg.sample(n_samples), "qg_samples")
-            qz_samples = tf.identity(
-                self.q.qz.sample(n_samples), "qz_samples")
 
             # with tf.name_scope("update_one_step"):
             #     prev_y = tf.placeholder(
