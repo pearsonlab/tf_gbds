@@ -1,6 +1,5 @@
 import tensorflow as tf
 import numpy as np
-# import edward as ed
 from edward.models import (RandomVariable, MultivariateNormalDiag,
                            ExpRelaxedOneHotCategorical)
 from tensorflow.contrib.distributions import (Distribution,
@@ -17,28 +16,38 @@ class GBDS(RandomVariable, Distribution):
             self.lag = params["lag"]
 
             self.y = tf.identity(traj, "trajectory")
-            self.s = tf.identity(pad_lag(traj, self.lag), "states")
-            self.ctrl_obs = tf.identity(ctrl_obs, "observed_control")
+            # self.s = tf.identity(pad_lag(traj, self.lag), "states")
+            self.u_obs = tf.identity(ctrl_obs, "observed_control")
             self.npcs = tf.identity(npcs, "npcs")
+            # self.extra_conds = tf.concat(
+            #     [pad_lag(self.npcs[..., (self.dim * i):(self.dim * (i + 1))],
+            #              self.lag) for i in range(self.n_npcs)] +
+            #     [self.npcs[:, 1:, -self.n_npcs:]], -1, "extra_conditions")
+            # discount prey values for now
             self.extra_conds = tf.concat(
                 [pad_lag(self.npcs[..., (self.dim * i):(self.dim * (i + 1))],
-                         self.lag) for i in range(self.n_npcs)] +
-                [self.npcs[:, 1:, -self.n_npcs:]], -1, "extra_conditions")
+                         self.lag) for i in range(self.n_npcs)],
+                -1, "extra_conditions")
 
             self.NN = params["G_NN"]
-            G_NN_outputs = self.NN([self.s, self.extra_conds])
-            self.G_mu = tf.identity(G_NN_outputs[0], "mu")
-            self.G_lambda = tf.identity(G_NN_outputs[1], "lambda")
-
+            self.G_mu = tf.identity(self.NN(self.extra_conds), "mu")
+            self.G_lambda = tf.identity(params["G_lambda"], "lambda")
             self.G = MultivariateNormalDiag(
-                self.G_mu[:, :-1], 1. / tf.sqrt(self.G_lambda[:, :-1]),
-                name="GMM")
+                self.G_mu[:, :-1], 1. / tf.sqrt(self.G_lambda), name="GMM")
             self.G_sample = tf.identity(self.G.sample(), "GMM_sample")
 
-            self.unc_Kp = params["unc_Kp"]
             self.Kp = tf.identity(params["Kp"], "Kp")
+            self.Ki = tf.identity(params["Ki"], "Ki")
+            self.Kd = tf.identity(params["Kd"], "Kd")
+            t_coeff = self.Kp + self.Ki + self.Kd
+            t1_coeff = -self.Kp - 2 * self.Kd
+            t2_coeff = self.Kd
+            # concatenate coefficients into a filter
+            self.filt = tf.stack([t2_coeff, t1_coeff, t_coeff], axis=1,
+                                 name="convolution_filter")
 
-            self.var_list = self.NN.variables + [self.unc_Kp]
+            self.var_list = (self.NN.variables + params["G_lambda"] +
+                             params["PID_vars"])
             self.log_vars = self.NN.variables
 
             with tf.name_scope("goal_state_penalty"):
@@ -50,9 +59,9 @@ class GBDS(RandomVariable, Distribution):
                     with tf.name_scope("boundary"):
                         # boundaries for penalty
                         if params["g_bounds"] is not None:
-                            self.bounds = params["g_bounds"]
+                            self.g_bounds = params["g_bounds"]
                         else:
-                            self.bounds = [-1., 1.]
+                            self.g_bounds = [-1., 1.]
                 else:
                     self.g_pen = None
 
@@ -94,17 +103,12 @@ class GBDS(RandomVariable, Distribution):
                 if self.g_pen is not None:
                     # penalty on goal state escaping game space
                     logdensity_g -= tf.multiply(
-                        self.g_pen, tf.reduce_mean(tf.reduce_sum(
-                        tf.nn.relu(self.bounds[0] - self.G_mu) ** 2, -1)))
-                    logdensity_g -= tf.multiply(
-                        self.g_pen, tf.reduce_mean(tf.reduce_sum(
-                        tf.nn.relu(self.G_mu - self.bounds[1]) ** 2, -1)))
-                    logdensity_g -= tf.multiply(
-                        self.g_pen, tf.reduce_mean(tf.reduce_sum(
-                        tf.nn.relu(self.bounds[0] - qg) ** 2, -1)))
-                    logdensity_g -= tf.multiply(
-                        self.g_pen, tf.reduce_mean(tf.reduce_sum(
-                        tf.nn.relu(qg - self.bounds[1]) ** 2, -1)))
+                        self.g_pen,
+                        tf.reduce_mean(tf.reduce_sum(tf.add_n(
+                            [tf.nn.relu(self.g_bounds[0] - self.G_mu) ** 2,
+                             tf.nn.relu(self.G_mu - self.g_bounds[1]) ** 2,
+                             tf.nn.relu(self.g_bounds[0] - qg) ** 2,
+                             tf.nn.relu(qg - self.g_bounds[1]) ** 2]), -1)))
 
                 # if self.g_prec_pen is not None:
                 #     # penalty on GMM precision
@@ -114,10 +118,22 @@ class GBDS(RandomVariable, Distribution):
                 #             1. / self.G_lambda, -1), -1)))
 
         with tf.name_scope("control_signal"):
-            u_pred = tf.multiply(
-                qg - self.y[:, :-1], self.Kp, "predicted")
-            u_res = tf.subtract(
-                u_pred, self.ctrl_obs[:, 1:], "residual")
+            error = tf.subtract(qg, self.y[:, :-1], "error")
+            u_diff = []
+            # get current error signal and corresponding filter
+            for i in range(self.dim):
+                # pad the beginning of control signal with zero
+                signal = tf.expand_dims(
+                    tf.pad(error[..., i], [[0, 0], [2, 0]], name="pad_zero"),
+                    -1, name="signal")
+                filt = tf.reshape(self.filt[i], [-1, 1, 1], "reshape_filter")
+                res = tf.nn.convolution(signal, filt, padding="VALID",
+                                        name="convolve_signal")
+                u_diff.append(res)
+            u_diff = tf.concat([*u_diff], -1, "control_signal_change")
+            u_pred = tf.add(
+                self.u_obs[:, :-1], u_diff, "predicted_control_signal")
+            u_res = tf.subtract(self.u_obs[:, 1:], u_pred, "residual")
             logdensity_u = -tf.reduce_mean(tf.reduce_sum(
                 (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
                  u_res ** 2 / (2 * self.eps ** 2)), -1))

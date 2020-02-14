@@ -240,28 +240,17 @@ def get_model_params(game_name, agent_name, obs_dim, n_npcs,
 
     with tf.variable_scope("model_parameters"):
         with tf.variable_scope(agent_name):
-            state_dim = obs_dim * (gen_lag + 1)
-            extra_dim = (obs_dim * (gen_lag + 1) + 1) * n_npcs
-            states = layers.Input((None, state_dim), name="states")
+            # extra_dim = (obs_dim * (gen_lag + 1) + 1) * n_npcs
+            extra_dim = obs_dim * (gen_lag + 1) * n_npcs
             extra_conds = layers.Input(
                 (None, extra_dim), name="extra_conditions")
-            G_NN_inputs = layers.Concatenate(axis=-1, name="G_NN_inputs")(
-                [states, extra_conds])
-
-            G_NN_outputs = layers.Dense(
-                obs_dim * 2, "linear",
+            G_mu = layers.Dense(
+                obs_dim, "linear",
                 kernel_initializer=tf.glorot_normal_initializer(),
-                name="G_NN_linear")(G_NN_inputs)
-            G_mu = layers.Lambda(lambda x: x[..., :obs_dim], name="mu")(
-                G_NN_outputs)
-            lambda_floor = 1e4
-            G_lambda = layers.Lambda(lambda x: tf.nn.softplus(
-                x[..., obs_dim:]) + lambda_floor, name="lambda")(
-                G_NN_outputs)
-
-            G_NN = models.Model(
-                inputs=[states, extra_conds], outputs=[G_mu, G_lambda],
-                name="G_NN")
+                name="G_Dense_layer")(extra_conds)
+            G_NN = models.Model(inputs=extra_conds, outputs=G_mu, name="G_NN")
+            G_lambda = tf.Variable(
+                1e4 * np.ones((1, obs_dim), np.float32), name="G_lambda")
 
             if epsilon_trainable:
                 unc_eps_init = tf.Variable(
@@ -282,17 +271,30 @@ def get_model_params(game_name, agent_name, obs_dim, n_npcs,
             unc_Kp = tf.Variable(tf.multiply(
                 softplus_inverse(1.), tf.ones(obs_dim, tf.float32),
                 "unc_Kp_init"), name="unc_Kp")
+            unc_Ki = tf.Variable(tf.multiply(
+                softplus_inverse(1e-6), tf.ones(obs_dim, tf.float32),
+                "unc_Ki_init"), name="unc_Ki")
+            unc_Kd = tf.Variable(tf.multiply(
+                softplus_inverse(1e-6), tf.ones(obs_dim, tf.float32),
+                "unc_Kd_init"), name="unc_Kd")
             Kp_ = tf.nn.softplus(unc_Kp)
             Kp = tf.cond(tf.greater(epoch, fix_ep),
                          lambda: Kp_, lambda: tf.stop_gradient(Kp_))
+            Ki_ = tf.nn.softplus(unc_Ki)
+            Ki = tf.cond(tf.greater(epoch, fix_ep),
+                         lambda: Ki_, lambda: tf.stop_gradient(Ki_))
+            Kd_ = tf.nn.softplus(unc_Kd)
+            Kd = tf.cond(tf.greater(epoch, fix_ep),
+                         lambda: Kd_, lambda: tf.stop_gradient(Kd_))
 
             p_params = dict(
                 name=agent_name, dim=obs_dim, n_npcs=n_npcs,
-                lag=gen_lag, G_NN=G_NN,
+                lag=gen_lag, G_NN=G_NN, G_lambda=G_lambda,
                 g_bounds=goal_boundaries, g_bounds_pen=goal_boundary_penalty,
                 g_prec_pen=goal_precision_penalty,
                 unc_eps=unc_eps_init, eps_trainable=epsilon_trainable,
-                eps_pen=eps_pen, unc_Kp=unc_Kp, Kp=Kp)
+                eps_pen=eps_pen, PID_vars=[unc_Kp, unc_Ki, unc_Kd],
+                Kp=Kp, Ki=Ki, Kd=Kd)
 
         with tf.variable_scope("posterior"):
             padded_traj = layers.Input(

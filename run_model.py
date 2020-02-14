@@ -218,9 +218,18 @@ def run_model(FLAGS):
         with tf.name_scope("parameters_summary"):
             summary_list = []
 
+            G_prec_x = tf.summary.scalar(
+                "G_precision/x", model.p.G_lambda[0, 0])
+            G_prec_y = tf.summary.scalar(
+                "G_precision/y", model.p.G_lambda[0, 1])
             Kp_x = tf.summary.scalar("Kp/x", model.p.Kp[0])
             Kp_y = tf.summary.scalar("Kp/y", model.p.Kp[1])
-            summary_list += [Kp_x, Kp_y]
+            Ki_x = tf.summary.scalar("Ki/x", model.p.Ki[0])
+            Ki_y = tf.summary.scalar("Ki/y", model.p.Ki[1])
+            Kd_x = tf.summary.scalar("Kd/x", model.p.Kd[0])
+            Kd_y = tf.summary.scalar("Kd/y", model.p.Kd[1])
+            summary_list += [G_prec_x, G_prec_y,
+                             Kp_x, Kp_y, Ki_x, Ki_y, Kd_x, Kd_y]
 
             if FLAGS.eps_trainable:
                 eps_subject_x = tf.summary.scalar(
