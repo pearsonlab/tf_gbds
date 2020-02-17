@@ -46,7 +46,7 @@ class GBDS(RandomVariable, Distribution):
             self.filt = tf.stack([t2_coeff, t1_coeff, t_coeff], axis=1,
                                  name="convolution_filter")
 
-            self.var_list = (self.NN.variables + params["G_lambda"] +
+            self.var_list = (self.NN.variables + [params["G_lambda"]] +
                              params["PID_vars"])
             self.log_vars = self.NN.variables
 
