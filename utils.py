@@ -267,7 +267,7 @@ def get_model_params(game_name, agent_name, obs_dim, n_npcs,
                     name="unc_eps")
                 eps_pen = None
 
-            fix_ep = 5
+            fix_ep = 20
             unc_Kp = tf.Variable(tf.multiply(
                 softplus_inverse(1.), tf.ones(obs_dim, tf.float32),
                 "unc_Kp_init"), name="unc_Kp")
