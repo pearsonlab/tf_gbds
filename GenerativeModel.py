@@ -16,7 +16,7 @@ class GBDS(RandomVariable, Distribution):
             self.lag = params["lag"]
 
             self.y = tf.identity(traj, "trajectory")
-            # self.s = tf.identity(pad_lag(traj, self.lag), "states")
+            self.s = tf.identity(pad_lag(traj, self.lag), "states")
             self.u_obs = tf.identity(ctrl_obs, "observed_control")
             self.npcs = tf.identity(npcs, "npcs")
             # self.extra_conds = tf.concat(
@@ -30,7 +30,7 @@ class GBDS(RandomVariable, Distribution):
                 -1, "extra_conditions")
 
             self.NN = params["G_NN"]
-            self.G_mu = tf.identity(self.NN(self.extra_conds), "mu")
+            self.G_mu = tf.identity(self.NN([self.s, self.extra_conds]), "mu")
             self.G_lambda = tf.identity(params["G_lambda"], "lambda")
             self.G = MultivariateNormalDiag(
                 self.G_mu[:, :-1], 1. / tf.sqrt(self.G_lambda), name="GMM")
@@ -118,8 +118,8 @@ class GBDS(RandomVariable, Distribution):
                 #             1. / self.G_lambda, -1), -1)))
 
         with tf.name_scope("control_signal"):
-            # error = tf.subtract(qg, self.y[:, :-1], "error")
-            error = tf.subtract(self.G_sample, self.y[:, 1:-1], "error")
+            error = tf.subtract(qg, self.y[:, :-1], "error")
+            # error = tf.subtract(self.G_sample, self.y[:, 1:-1], "error")
             u_diff = []
             # get current error signal and corresponding filter
             for i in range(self.dim):
@@ -132,12 +132,12 @@ class GBDS(RandomVariable, Distribution):
                                         name="convolve_signal")
                 u_diff.append(res)
             u_diff = tf.concat([*u_diff], -1, "control_signal_change")
-            # u_pred = tf.add(
-            #     self.u_obs[:, :-1], u_diff, "predicted_control_signal")
-            # u_res = tf.subtract(self.u_obs[:, 1:], u_pred, "residual")
             u_pred = tf.add(
-                self.u_obs[:, :-2], u_diff, "predicted_control_signal")
-            u_res = tf.subtract(self.u_obs[:, 1:-1], u_pred, "residual")
+                self.u_obs[:, :-1], u_diff, "predicted_control_signal")
+            u_res = tf.subtract(self.u_obs[:, 1:], u_pred, "residual")
+            # u_pred = tf.add(
+            #     self.u_obs[:, :-2], u_diff, "predicted_control_signal")
+            # u_res = tf.subtract(self.u_obs[:, 1:-1], u_pred, "residual")
             logdensity_u = -tf.reduce_mean(tf.reduce_sum(
                 (0.5 * tf.log(2 * np.pi) + tf.log(self.eps) +
                  u_res ** 2 / (2 * self.eps ** 2)), -1))

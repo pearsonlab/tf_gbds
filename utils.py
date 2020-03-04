@@ -240,15 +240,23 @@ def get_model_params(game_name, agent_name, obs_dim, n_npcs,
 
     with tf.variable_scope("model_parameters"):
         with tf.variable_scope(agent_name):
+            s_dim = obs_dim * (gen_lag + 1)
+            states = layers.Input((None, s_dim), name="states")
             # extra_dim = (obs_dim * (gen_lag + 1) + 1) * n_npcs
             extra_dim = obs_dim * (gen_lag + 1) * n_npcs
             extra_conds = layers.Input(
                 (None, extra_dim), name="extra_conditions")
+            G_NN_inputs = layers.Concatenate(
+                axis=-1, name="G_NN_inputs")([states, extra_conds])
             G_mu = layers.Dense(
                 obs_dim, "linear",
                 kernel_initializer=tf.glorot_normal_initializer(),
-                name="G_Dense_layer")(extra_conds)
-            G_NN = models.Model(inputs=extra_conds, outputs=G_mu, name="G_NN")
+                name="G_Dense_layer")(G_NN_inputs)
+                # name="G_Dense_layer")(extra_conds)
+            G_NN = models.Model(
+                inputs=[states, extra_conds], outputs=G_mu, name="G_NN")
+            # G_NN = models.Model(
+            #     inputs=extra_conds, outputs=G_mu, name="G_NN")
             G_lambda = tf.Variable(
                 1e4 * np.ones((1, obs_dim), np.float32), name="G_lambda")
 
